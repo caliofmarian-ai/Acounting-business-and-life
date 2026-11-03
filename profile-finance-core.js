@@ -1136,18 +1136,33 @@ export async function listProfileFundScopes(pool,accountId){
   return out;
 }
 
-export async function listProfileFundTransfers(pool,accountId){
-  const {rows}=await pool.query(`
-    SELECT * FROM profile_fund_transfers
-    WHERE account_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100
-  `,[Number(accountId)]);
-  return rows.map(r=>({
+function publicProfileFundTransfer(r){
+  return{
     id:Number(r.id),public_id:r.public_id,
     source_profile_role:r.source_profile_role,source_business_id:r.source_business_id==null?null:Number(r.source_business_id),
     destination_profile_role:r.destination_profile_role,destination_business_id:r.destination_business_id==null?null:Number(r.destination_business_id),
     amount:Number(r.amount),currency_code:r.currency_code,status:r.status,note:r.note||'',created_at:r.created_at,reversed_at:r.reversed_at,
     provider_money_moved:false,transfer_type:'INTERNAL_PROFILE_FUNDS'
-  }));
+  };
+}
+
+export async function listProfileFundTransfers(pool,accountId){
+  const {rows}=await pool.query(`
+    SELECT * FROM profile_fund_transfers
+    WHERE account_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100
+  `,[Number(accountId)]);
+  return rows.map(publicProfileFundTransfer);
+}
+
+// Recovery of an accepted transfer must not depend on its position in the
+// capped history page (100 rows), including concurrent post-commit reads.
+async function loadProfileFundTransfer(pool,{accountId,id}){
+  const {rows}=await pool.query(
+    'SELECT * FROM profile_fund_transfers WHERE id=$1 AND account_id=$2',
+    [Number(id),Number(accountId)]
+  );
+  if(rows.length!==1)fail('Committed profile transfer could not be reloaded',500);
+  return publicProfileFundTransfer(rows[0]);
 }
 
 async function writeProfileFundLedgerEntry(db,{accountId,scope,direction,amount,currencyCode,transferId,transferKey,note}){
@@ -1182,6 +1197,12 @@ export async function transferFundsBetweenProfiles(pool,{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    // The transfer key is globally unique. Lock it before the account-level
+    // balance lock so different account workers cannot race to raw SQL 23505.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_fund_transfers:' || $1::text, 871))",
+      [key]
+    );
     await client.query('SELECT pg_advisory_xact_lock($1)',[Number(accountId)]);
     const existing=await client.query('SELECT * FROM profile_fund_transfers WHERE transfer_key=$1',[key]);
     if(existing.rowCount){
@@ -1195,7 +1216,7 @@ export async function transferFundsBetweenProfiles(pool,{
          String(x.note??'')!==clean(note,700))
         fail('Idempotency key already belongs to a different profile transfer',409);
       await client.query('COMMIT');
-      return{...(await listProfileFundTransfers(pool,accountId)).find(t=>t.id===Number(x.id)),idempotent:true};
+      return{...(await loadProfileFundTransfer(pool,{accountId,id:Number(x.id)})),idempotent:true};
     }
     const ownedSource=await assertOwnedActiveFundScope(client,{accountId,profileRole:source.profileRole,businessId:source.businessId});
     const ownedDestination=await assertOwnedActiveFundScope(client,{accountId,profileRole:destination.profileRole,businessId:destination.businessId});
@@ -1224,8 +1245,11 @@ export async function transferFundsBetweenProfiles(pool,{
       ]);
     }
     await client.query('COMMIT');
-    const [transfers,scopes]=await Promise.all([listProfileFundTransfers(pool,accountId),listProfileFundScopes(pool,accountId)]);
-    return{...transfers.find(t=>t.id===transferId),source_balance_before:available,scopes};
+    const [transfer,scopes]=await Promise.all([
+      loadProfileFundTransfer(pool,{accountId,id:transferId}),
+      listProfileFundScopes(pool,accountId)
+    ]);
+    return{...transfer,source_balance_before:available,scopes};
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
   finally{client.release()}
 }

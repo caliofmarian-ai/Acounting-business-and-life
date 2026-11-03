@@ -247,10 +247,13 @@ test('internal profile transfer replay rejects changed money instruction',async(
   }};
   const pool={
     async connect(){return client},
-    async query(sql){
+    async query(sql,args=[]){
       calls.push(sql);
-      if(sql.includes('FROM profile_fund_transfers')&&sql.includes('WHERE account_id='))return{rowCount:1,rows:[prior]};
-      throw Error('Unexpected transfer list SQL: '+sql);
+      if(sql.includes('FROM profile_fund_transfers')&&sql.includes('WHERE id=$1 AND account_id=$2')){
+        assert.deepEqual(args,[73,11],'replay fetch is scoped by exact ID/account');
+        return{rowCount:1,rows:[prior]};
+      }
+      throw Error('Unexpected direct transfer lookup SQL: '+sql);
     }
   };
   const input={
@@ -267,6 +270,12 @@ test('internal profile transfer replay rejects changed money instruction',async(
   const restored=await transferFundsBetweenProfiles(pool,input);
   assert.equal(restored.id,73);
   assert.equal(restored.idempotent,true);
+  assert.equal(calls.filter(x=>x.includes("hashtextextended('profile_fund_transfers:")).length,7,
+    'global transfer-key lock is acquired for every conflicting/replayed request');
+  assert.equal(calls.filter(x=>x==='SELECT pg_advisory_xact_lock($1)').length,7,
+    'original per-account balance lock remains in place');
+  assert.equal(calls.filter(x=>x.includes('LIMIT 100')).length,0,
+    'replay must never depend on a capped 100-transfer history list');
   assert.equal(calls.filter(x=>x==='ROLLBACK').length,6);
   assert.equal(calls.filter(x=>x==='COMMIT').length,1);
 });

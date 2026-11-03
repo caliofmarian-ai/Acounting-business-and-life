@@ -677,6 +677,54 @@ try{
   eq(await rowCount('profile_money_preferences'),1,'upsert preserves one scope row');
   eq(await rowCount('profile_finance_audit_events'),prefAuditBefore+2,'update adds one preference audit');
 
+
+  // A valid transfer can be older than the 100-row dashboard history.
+  // Recover the exact committed instruction without returning undefined or
+  // accidentally acknowledging a key belonging to another account.
+  await pool.query(`
+    CREATE TABLE profile_fund_transfers(
+      id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,
+      transfer_key TEXT NOT NULL UNIQUE,account_id BIGINT NOT NULL,
+      source_profile_role TEXT NOT NULL,source_business_id BIGINT,
+      destination_profile_role TEXT NOT NULL,destination_business_id BIGINT,
+      amount NUMERIC(14,2) NOT NULL,currency_code TEXT NOT NULL,
+      status TEXT NOT NULL,note TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),reversed_at TIMESTAMPTZ
+    );
+    INSERT INTO profile_fund_transfers(
+      public_id,transfer_key,account_id,source_profile_role,
+      destination_profile_role,amount,currency_code,status,note,created_at
+    )
+    SELECT 'ci-old-fund-'||n,'ci-old-fund-key-'||n,11,'customer',
+           'courier',4.56,'PHP','succeeded','old fund transfer',
+           NOW() - interval '1 day' * (103-n)
+    FROM generate_series(1,102) AS n;
+  `);
+  const oldestQuery=await pool.query(
+    'SELECT id FROM profile_fund_transfers WHERE transfer_key=$1',
+    ['ci-old-fund-key-1']);
+  const oldestId=Number(oldestQuery.rows[0].id);
+  const replayOldFunds=()=>transferFundsBetweenProfiles(pool,{
+    publicId:'ignored-on-replay',transferKey:'ci-old-fund-key-1',accountId:11,
+    sourceProfileRole:'customer',destinationProfileRole:'courier',
+    amount:'4.56',currencyCode:'PHP',note:'old fund transfer'
+  });
+  const existingOld=await replayOldFunds();
+  eq(existingOld.id,oldestId,'replay beyond 100-history limit returns exact committed transfer');
+  eq(existingOld.idempotent,true,'historical transfer replay is idempotent');
+  eq(existingOld.provider_money_moved,false,'internal transfer replay claims no provider money');
+  const [concurrentOldA,concurrentOldB]=await Promise.all([replayOldFunds(),replayOldFunds()]);
+  eq(concurrentOldA.id,oldestId,'parallel old-key replay A returns same transfer');
+  eq(concurrentOldB.id,oldestId,'parallel old-key replay B returns same transfer');
+  await assert.rejects(transferFundsBetweenProfiles(pool,{
+    publicId:'foreign-replay',transferKey:'ci-old-fund-key-1',accountId:12,
+    sourceProfileRole:'customer',destinationProfileRole:'courier',
+    amount:'4.56',currencyCode:'PHP',note:'old fund transfer'
+  }),error=>error.status===409,'foreign account cannot reuse a transfer key');
+  assertions++;
+  eq(await rowCount('profile_fund_transfers'),102,
+    'replaying historical transfer does not insert any new transfer');
+
   console.log('PROFILE_FINANCE_REAL_POSTGRES_871_PASS assertions='+assertions+
     ' database=abl_finance_precision_ci no external payments');
 }finally{
