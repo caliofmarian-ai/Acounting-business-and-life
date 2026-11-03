@@ -179,6 +179,71 @@ try{
     await interleavedPool.end();
     interleavedPool=null;
 
+    // Real cross-process analogue for the DEFERRED FK path: two independent
+    // Pools have ALREADY booted readiness without businesses. When businesses
+    // is added later, each Pool must observe the same database advisory lock,
+    // attach exactly one FK, and avoid a second table/index bootstrap.
+    poolA=new pg.Pool({database:ciDbName,max:1});
+    poolB=new pg.Pool({database:ciDbName,max:1});
+    await poolA.query('DROP TABLE businesses');
+    await Promise.all([
+      ensureMicrobusinessReadinessSchema(poolA),
+      ensureMicrobusinessReadinessSchema(poolB)
+    ]);
+    const noDeferredFk=await poolA.query(`SELECT count(*)::int AS count FROM pg_constraint
+      WHERE conname='microbusiness_readiness_business_fk'
+      AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(noDeferredFk.rows[0].count),0,'both independent Pools boot before businesses without the optional FK');
+    await poolA.query('CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+    lockPool=new pg.Pool({database:ciDbName,max:1});
+    lockClient=await lockPool.connect();
+    await lockClient.query('SELECT pg_advisory_lock(87320261031::bigint)');
+    lockHeld=true;
+    settledTasks=Promise.allSettled([
+      ensureMicrobusinessReadinessSchema(poolA),
+      ensureMicrobusinessReadinessSchema(poolB)
+    ]);
+    let deferredWaiting=0;
+    for(let attempt=0;attempt<100;attempt++){
+      const probe=await maintenance.query(`SELECT count(*)::int AS waiting
+        FROM pg_stat_activity
+        WHERE datname=$1 AND wait_event_type='Lock'
+          AND wait_event='advisory'
+          AND query LIKE '%pg_advisory_xact_lock(87320261031::bigint)%'`,[ciDbName]);
+      deferredWaiting=Number(probe.rows[0].waiting);
+      if(deferredWaiting===2)break;
+      await new Promise(resolve=>setTimeout(resolve,30));
+    }
+    await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)');
+    lockHeld=false;
+    const deferredResults=await settledTasks;
+    settledTasks=null;
+    for(const result of deferredResults){
+      if(result.status==='rejected')throw result.reason;
+    }
+    same(deferredWaiting,2,'two existing Pools genuinely wait for the deferred-FK database advisory lock');
+    const sharedDeferredFk=await poolB.query(`SELECT count(*)::int AS count FROM pg_constraint
+      WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(sharedDeferredFk.rows[0].count),1,'two separate Pools attach precisely one deferred FK');
+    await Promise.all([
+      ensureMicrobusinessReadinessSchema(poolA),
+      ensureMicrobusinessReadinessSchema(poolB)
+    ]);
+    const stableDeferredFk=await poolA.query(`SELECT count(*)::int AS count FROM pg_constraint
+      WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(stableDeferredFk.rows[0].count),1,'subsequent Pool calls retain the single attached FK');
+    const deferredDeadlocks=await maintenance.query('SELECT deadlocks FROM pg_stat_database WHERE datname=$1',[ciDbName]);
+    same(Number(deferredDeadlocks.rows[0].deadlocks),0,'concurrent deferred-FK attachment caused no PostgreSQL deadlocks');
+    await poolA.query('DROP TABLE microbusiness_readiness_events; DROP TABLE microbusiness_readiness');
+    lockClient.release();
+    lockClient=null;
+    await Promise.all([poolA.end(),poolB.end(),lockPool.end()]);
+    poolA=null;
+    poolB=null;
+    lockPool=null;
+
     // Now verify a genuinely COLD initialization in two separate Pools.
     lockPool=new pg.Pool({database:ciDbName,max:1});
     poolA=new pg.Pool({database:ciDbName,max:1});
