@@ -42,5 +42,6 @@ test('Profile Settings consumes canonical state identity without browser caching
   assert.match(payments,/profile_id:p\.profile_id\|\|null/);
   assert.match(payments,/private, no-store, max-age=0/);
   assert.match(settings,/cache:'no-store'/);
-  assert.match(settings,/settingsData=await sapi\('\/api\/settings\/finance'\)/);
+  assert.match(settings,/const data=await sapi\('\/api\/settings\/finance'\)/);
+  assert.match(settings,/settingsData=data/);
 });
