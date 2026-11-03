@@ -55,7 +55,9 @@ try{
   const browser=(await send('Browser.getVersion')).product;
   const measure='(() => {if(document.readyState!=="complete"||!document.styleSheets.length)return null;'+
     'const chooser=document.querySelector(".adminNavChooser"),select=chooser.querySelector("select"),button=document.querySelector(".adminNav button");'+
+    'const nav=document.querySelector(".adminNav").getBoundingClientRect(),sr=select.getBoundingClientRect();'+
     'return {viewport:innerWidth,chooserVisible:getComputedStyle(chooser).display!=="none"&&chooser.getBoundingClientRect().width>0,'+
+    'selectFullyVisible:sr.left>=nav.left&&sr.right<=nav.right,selectWidth:Math.round(sr.width),navWidth:Math.round(nav.width),'+
     'selectHeight:Math.round(select.getBoundingClientRect().height),buttonMinHeight:parseFloat(getComputedStyle(button).minHeight),'+
     'pageWidth:document.documentElement.scrollWidth,physicalScreenWidth:screen.width,physicalScreenHeight:screen.height,'+
     'smallPhysicalTouch:matchMedia("(pointer:coarse) and (max-device-width:600px)").matches,'+
@@ -90,6 +92,7 @@ try{
     assert.equal(m.viewport,width,'unexpected CSS viewport '+width);
     assert.equal(m.chooserVisible,expectedChooser,name+' All sections visibility');
     if(expectedChooser){
+      assert.equal(m.selectFullyVisible,true,name+' selector/arrow must fit inside the navigation');
       assert.ok(m.selectHeight>=44,name+' select touch target');
       assert.ok(m.buttonMinHeight>=44,name+' navigation touch target');
     }else{
