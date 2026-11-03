@@ -90,6 +90,22 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       }
       assert.equal(await count('payment_intents'),1);
     });
+    await t.test('padded/control/nonstring keys never alias a committed intent',async()=>{
+      const before=await count('payment_intents');
+      for(const invalid of [
+        'two-orders-one-key ',' two-orders-one-key',
+        'two-orders-one-key\n','\ttwo-orders-one-key',12345,false
+      ]){
+        await assert.rejects(
+          createOrderPaymentIntent(pool,{...b,idempotencyKey:invalid}),
+          e=>e?.status===400&&e?.code==='PAYMENT_IDEMPOTENCY_KEY_INVALID'
+        );
+      }
+      assert.equal(await count('payment_intents'),before,
+        'rejected aliases cannot create or mutate payment intents');
+      assert.equal(await count('payment_allocations'),before,
+        'rejected aliases cannot create allocations');
+    });
     await t.test('allocation error rolls back key; original attempt may be safely retried',async()=>{
       const key='rollback-only-key';
       const injected={connect:async()=>{

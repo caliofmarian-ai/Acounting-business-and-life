@@ -5,14 +5,15 @@ const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
 const hash=v=>crypto.createHash('sha256').update(String(v??''),'utf8').digest('hex');
 const paymentIntentIdempotencyKey=raw=>{
-  const key=String(raw??'').trim();
-  // Reject overlength identity; truncation conflates distinct caller intents.
-  if(!key||key.length>220){
-    throw Object.assign(new Error('Payment idempotency key must contain 1-220 characters'),{
+  // This is a literal caller-owned identity, not display text. Trimming or
+  // coercing a number can alias a different caller's already-committed intent.
+  if(typeof raw!=='string'||!raw.length||raw.length>220||
+     raw!==raw.trim()||/[\u0000-\u001F\u007F]/.test(raw)){
+    throw Object.assign(new Error('Payment idempotency key must be a literal, unpadded 1-220-character string'),{
       status:400,code:'PAYMENT_IDEMPOTENCY_KEY_INVALID'
     });
   }
-  return key;
+  return raw;
 };
 // Serializes the global key across both Order and Service Job transactions.
 // A SELECT of an absent row cannot lock another concurrent insert.

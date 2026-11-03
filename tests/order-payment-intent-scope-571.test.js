@@ -65,6 +65,20 @@ for(const [scenario,changedFields] of [
   });
 }
 
+test('Payment intent keys reject padding, controls and nonstring aliases before key lookup',async()=>{
+  for(const invalid of [
+    ' scope-key-31','scope-key-31 ','\tscope-key-31','scope-key-31\n',
+    '\u0000scope-key-31',1234,false,new String('scope-key-31')
+  ]){
+    const f=paymentReplayFixture({...authorizedIntent});
+    await assert.rejects(createOrderPaymentIntent(f.pool,{...args,idempotencyKey:invalid}),
+      e=>e?.status===400&&e?.code==='PAYMENT_IDEMPOTENCY_KEY_INVALID');
+    assert.equal(f.statements.some(x=>x.sql.includes('pg_advisory_xact_lock')),false);
+    assert.equal(f.statements.some(x=>x.sql.includes('FROM payment_intents')),false);
+    assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,1);
+  }
+});
+
 test('An oversized payment key is rejected without truncation or lookup',async()=>{
   const f=paymentReplayFixture({...authorizedIntent});
   await assert.rejects(createOrderPaymentIntent(f.pool,{...args,idempotencyKey:'x'.repeat(221)}),
