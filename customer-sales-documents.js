@@ -190,13 +190,27 @@ async function merchantPermission(pool,accountId,businessId){
 async function requireMerchantBusiness(pool,actor,businessId){
   if(!(await merchantPermission(pool,actor,businessId)))throw err(403,'Merchant business is not available');
 }
-// A private DB read may finish after logout, account switch, or Merchant revocation.
-// Recheck at the response boundary; the client must still reject its own late replies.
-async function requireCurrentDocumentReader(req,identity,actor,pool,document=null){
+// A Merchant may belong to businesses A and B at once. A late read of A
+// cannot be returned after the account selects B, even if A remains authorized.
+async function requireSelectedMerchantBusiness(pool,actor,businessId){
+  const q=await pool.query(
+    "SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role='merchant'",
+    [actor]
+  );
+  if(Number(q.rows[0]?.business_id)!==businessId)
+    throw err(409,'Merchant business changed; reopen documents');
+}
+// A private DB read may finish after logout, account/workspace switch or
+// Merchant revocation. Recheck every access boundary before its response.
+async function requireCurrentDocumentReader(req,identity,actor,pool,document=null,businessId=null){
   const current=id((await identity(req)).account.id,'Account');
   if(current!==actor)throw err(401,'Document session changed');
-  if(document&&Number(document.customer_account_id)!==actor)
-    await requireMerchantBusiness(pool,actor,Number(document.business_id));
+  const merchantBusiness=document&&Number(document.customer_account_id)!==actor
+    ?Number(document.business_id):businessId;
+  if(merchantBusiness!==null){
+    await requireMerchantBusiness(pool,actor,merchantBusiness);
+    await requireSelectedMerchantBusiness(pool,actor,merchantBusiness);
+  }
 }
 async function authorizedDocument(pool,actor,documentId){
   const q=await pool.query('SELECT * FROM customer_sales_documents WHERE id=$1',[id(documentId)]);
@@ -339,8 +353,7 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
           AND (o.paid_amount>0 OR o.order_status='completed')
         ORDER BY o.created_at DESC,o.id DESC LIMIT 100
       `,[businessId]);
-      await requireCurrentDocumentReader(req,identity,actor,pool);
-      await requireMerchantBusiness(pool,actor,businessId);
+      await requireCurrentDocumentReader(req,identity,actor,pool,null,businessId);
       res.json({orders:q.rows});
     }catch(e){next(e)}
   });
@@ -350,8 +363,7 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
       const businessId=id(req.query.business_id,'business_id');
       await requireMerchantBusiness(pool,actor,businessId);
       const q=await pool.query('SELECT * FROM customer_sales_documents WHERE business_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100',[businessId]);
-      await requireCurrentDocumentReader(req,identity,actor,pool);
-      await requireMerchantBusiness(pool,actor,businessId);
+      await requireCurrentDocumentReader(req,identity,actor,pool,null,businessId);
       res.json({documents:q.rows.map(documentPublic)});
     }catch(e){next(e)}
   });

@@ -384,6 +384,97 @@ test('Merchant document detail/print recheck binding after slow private lookup',
   }
 });
 
+test('Merchant list read A cannot return after workspace switches to B with both memberships still active',async()=>{
+  for(const path of ['/business','/merchant-orders']){
+    const hold=heldQuery();
+    let selected=44,permissions=0,preferenceReads=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:81}}),
+      pool:{query:async sql=>{
+        if(sql.includes('FROM accounts a')){permissions++;return{rowCount:1}}
+        if(sql.includes('FROM account_business_preferences')){
+          preferenceReads++;return{rows:[{business_id:selected}]};
+        }
+        if(sql.includes('FROM orders o')||sql.includes('FROM customer_sales_documents WHERE business_id=')){
+          hold.onRead();await hold.wait;
+          return{rows:[{id:72,order_id:123,business_id:44,customer_account_id:99,
+            snapshot_json:{order_number:'A-private-record'}}]};
+        }
+        throw Error('Unexpected SQL in Merchant read test: '+sql.slice(0,100));
+      }}
+    });
+    const pending=run(path,{query:{business_id:'44'}});
+    await hold.started;
+    selected=45; // Account preference changes while A's original read is pending.
+    hold.release();
+    const result=await pending;
+    assert.equal(result.error?.status,409,path);
+    assert.match(result.error?.message||'',/Merchant business changed/);
+    assert.equal(result.response,null,'A data must not be returned in B workspace');
+    assert.equal(permissions,2,'membership remains valid before and after read');
+    assert.equal(preferenceReads,1,'response requires selected workspace, not membership alone');
+  }
+});
+
+test('Merchant private detail and print deny late A document after switching selected business to B',async()=>{
+  for(const path of ['/72','/72/print']){
+    const hold=heldQuery();
+    let selected=44,permissions=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:81}}),
+      pool:{query:async sql=>{
+        if(sql.includes('FROM customer_sales_documents WHERE id=')){
+          hold.onRead();await hold.wait;
+          return{rowCount:1,rows:[{id:72,order_id:123,business_id:44,
+            customer_account_id:99,snapshot_json:commercialOrderDocument(makeOrder())}]};
+        }
+        if(sql.includes('FROM accounts a')){permissions++;return{rowCount:1}}
+        if(sql.includes('FROM account_business_preferences'))return{rows:[{business_id:selected}]};
+        throw Error('Unexpected SQL in Merchant document read: '+sql.slice(0,100));
+      }}
+    });
+    const pending=run(path);
+    await hold.started;
+    selected=45;
+    hold.release();
+    const result=await pending;
+    assert.equal(result.error?.status,409,path);
+    assert.equal(result.response,null,path);
+    assert.equal(permissions,2,'A membership is still active; selected B must block A');
+  }
+});
+
+test('Current Merchant business and the recipient Customer retain legitimate private document access',async()=>{
+  const snapshot=commercialOrderDocument(makeOrder());
+  let selected=44,preferences=0;
+  const doc={id:72,order_id:123,business_id:44,customer_account_id:99,snapshot_json:snapshot};
+  const pool={query:async sql=>{
+    if(sql.includes('FROM customer_sales_documents WHERE id='))return{rowCount:1,rows:[doc]};
+    if(sql.includes('FROM customer_sales_documents WHERE business_id='))return{rows:[doc]};
+    if(sql.includes('FROM accounts a'))return{rowCount:1};
+    if(sql.includes('FROM account_business_preferences')){
+      preferences++;return{rows:[{business_id:selected}]};
+    }
+    throw Error('Unexpected SQL in legitimate document read: '+sql.slice(0,100));
+  }};
+  const merchant=documentRouteHarness({pool,identity:async()=>({account:{id:81}})});
+  const view=await merchant('/72');
+  assert.equal(view.error,null);
+  assert.equal(view.response.document.order_id,123);
+  const list=await merchant('/business',{query:{business_id:'44'}});
+  assert.equal(list.error,null);
+  assert.equal(list.response.documents.length,1);
+  assert.equal(preferences,2);
+  selected=45;
+  const customer=documentRouteHarness({pool,identity:async()=>({account:{id:99}})});
+  const own=await customer('/72');
+  assert.equal(own.error,null,'Customer access must not depend on Merchant business selection');
+  const ownPrint=await customer('/72/print');
+  assert.equal(ownPrint.error,null);
+  assert.match(ownPrint.response,/Order BL-20261030-00123/);
+  assert.equal(preferences,2,'Customer reads never query Merchant workspace preference');
+});
+
 function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,authorized=()=>true,account=()=>81,activeBusiness=()=>44,recipient=()=>({email:'verified@example.test',email_verified_at:'2026-10-30'})}={}){
   const state={permissions:0,identities:0,documentWrites:0,queueStarts:0,queuePendingMarks:0,recipientReads:0,workspaceReads:0};
   const order=makeOrder(),snapshot=commercialOrderDocument(order);
