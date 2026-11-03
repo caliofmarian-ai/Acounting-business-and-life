@@ -32,9 +32,11 @@ const short=(v,max=250)=>String(v??'').trim().slice(0,max);
 // Identifying economic source text must never be silently truncated before
 // immutable snapshot hashing: two distinct labels must not alias a document.
 const evidenceText=(value,max,label)=>{
-  const literal=String(value??'');
-  if(literal.length>max)throw err(409,label+' evidence exceeds supported length');
-  return literal;
+  // Business and purchased-product identity must exist in a commercial record.
+  // Keep valid text literal for hashing; trimming it would alias distinct evidence.
+  if(typeof value!=='string'||!value.trim())throw err(409,label+' evidence is missing');
+  if(value.length>max)throw err(409,label+' evidence exceeds supported length');
+  return value;
 };
 const evidenceCurrency=value=>{
   const raw=value??'PHP';
@@ -72,7 +74,7 @@ export function commercialOrderDocument(order,clock=new Date()){
   const kind=paid>0?'payment_record':'order_summary';
   return {
     document_class:kind,fiscal_status:'internal_evidence',jurisdiction:'PH',
-    source_order_id:id(order.id),order_number:evidenceText(order.order_number||order.id,100,'Order number'),
+    source_order_id:id(order.id),order_number:evidenceText(order.order_number||String(order.id),100,'Order number'),
     business_id:id(order.business_id),business_name:evidenceText(order.business_name,200,'Merchant name'),
     customer_account_id:id(order.customer_account_id),
     currency_code:evidenceCurrency(order.currency_code),
