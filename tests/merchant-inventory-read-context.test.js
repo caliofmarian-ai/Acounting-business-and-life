@@ -564,3 +564,11 @@ for(const replacement of ['account','session','profile','form','edit']){
     assert.equal(h.requests.length,1);
   });
 }
+
+
+test('queued Storage prefetch cannot dispatch against B after its A context changes',async()=>{
+  const h=harness(),locations=h.installComponent('inventory-location-ui.js','createInventoryLocationUi');
+  const prefetched=locations.prefetch();h.switchBusiness(2);
+  const result=await prefetched;
+  assert.equal(result.ok,false);assert.equal(h.requests.length,0);
+});

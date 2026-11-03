@@ -137,7 +137,11 @@ export function createInventoryLocationUi({
   // Consume failures here to avoid an unhandled rejection if Inventory is unavailable.
   function prefetch(){
     if(!byId('inventoryLocationsCard'))return null;
-    return Promise.resolve().then(()=>api('/api/inventory/location-summary'))
+    const isCurrent=getReadGuard();
+    return Promise.resolve().then(()=>{
+      if(!isCurrent())throw new Error('Inventory context changed before Storage prefetch.');
+      return api('/api/inventory/location-summary');
+    })
       .then(storage=>({ok:true,storage}),error=>({ok:false,error}));
   }
 

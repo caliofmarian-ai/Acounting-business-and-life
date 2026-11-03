@@ -29,7 +29,11 @@ try{
         if(blocked.rowCount){waiting=true;break}
         await new Promise(resolve=>setTimeout(resolve,50));
       }
-      assert.equal(waiting,true,'actual HTTP auth/context resolution must wait on real PostgreSQL binding lock');
+      if(!waiting){
+        await locker.query('ROLLBACK');locker.release();locker=null;
+        await request.catch(()=>{});
+        assert.fail('actual HTTP auth/context resolution did not wait on real PostgreSQL binding lock');
+      }
       await locker.query("UPDATE account_business_preferences SET business_id=$2 WHERE account_id=$1 AND role='merchant'",[1,b]);
       await locker.query('COMMIT');locker.release();locker=null;
       return await request;
