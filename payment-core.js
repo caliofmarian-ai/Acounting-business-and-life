@@ -29,6 +29,22 @@ export function paymentRequestIdempotencyKey(headers={},body={}){
   return paymentIntentIdempotencyKey(header!==undefined?header:payload);
 }
 
+// A replay is authoritative only for its original payment channel and source
+// currency. Reusing the same key for a different method/provider must not
+// acknowledge an unrelated checkout, even when the Order/Job identity matches.
+// Amount is intentionally NOT compared: a legitimate settled retry may see a
+// smaller (or zero) outstanding balance than its original committed intent.
+function assertPaymentIntentReplayDetails(existing,{logicalMethod,providerCode,currencyCode}){
+  const method=normalizeMethod(logicalMethod),provider=clean(providerCode,80);
+  const currency=String(currencyCode||'PHP').toUpperCase();
+  if(existing.logical_method!==method||String(existing.provider_code??'')!==provider||
+     String(existing.currency_code??'').toUpperCase()!==currency){
+    throw Object.assign(new Error('Idempotency key belongs to different payment details'),{
+      status:409,code:'PAYMENT_INTENT_DETAILS_CONFLICT'
+    });
+  }
+}
+
 // Serializes the global key across both Order and Service Job transactions.
 // A SELECT of an absent row cannot lock another concurrent insert.
 const lockPaymentIntentIdempotencyKey=(client,key)=>
@@ -203,6 +219,7 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
           status:409,code:'PAYMENT_INTENT_SCOPE_CONFLICT'
         });
       }
+      assertPaymentIntentReplayDetails(old,{logicalMethod,providerCode,currencyCode:o.currency_code});
       await client.query('COMMIT');
       return old;
     }
@@ -374,6 +391,7 @@ export async function createServiceJobPaymentIntent(pool,{
       if(old.source_type!=='service_job'||Number(old.source_id)!==id||Number(old.payer_account_id)!==Number(payerAccountId)){
         throw Object.assign(new Error('Idempotency key belongs to another payment scope'),{status:409});
       }
+      assertPaymentIntentReplayDetails(old,{logicalMethod,providerCode,currencyCode:job.currency_code});
       await client.query('COMMIT');
       return old;
     }

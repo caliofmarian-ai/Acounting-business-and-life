@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createOrderPaymentIntent,paymentRequestIdempotencyKey} from '../payment-core.js';
+import {createOrderPaymentIntent,createServiceJobPaymentIntent,paymentRequestIdempotencyKey} from '../payment-core.js';
 
 // Source-executing synthetic SQL controls. No real account, database or provider.
 function paymentReplayFixture(existing,outstanding='200.00'){
@@ -34,7 +34,7 @@ function paymentReplayFixture(existing,outstanding='200.00'){
 const authorizedIntent=Object.freeze({
   id:95,public_id:'pi_fixture_95',idempotency_key:'scope-key-31',
   source_type:'order',source_id:31,payer_account_id:7,business_id:6,
-  currency_code:'PHP',amount:'200.00',status:'requires_provider'
+  currency_code:'PHP',amount:'200.00',logical_method:'online_other',provider_code:'',status:'requires_provider'
 });
 const args={orderId:31,payerAccountId:7,idempotencyKey:'scope-key-31'};
 
@@ -132,4 +132,68 @@ test('Committed Order payment key still replays after outstanding balance reache
   await assert.rejects(createOrderPaymentIntent(fresh.pool,args),
     e=>e?.status===409&&/already paid/.test(e.message));
   assert.equal(fresh.statements.filter(x=>x.sql==='ROLLBACK').length,1);
+});
+
+test('Same Order key cannot silently replay another provider, method or source currency',async()=>{
+  for(const [change,original] of [
+    [{logicalMethod:'card'},authorizedIntent],
+    [{providerCode:'provider_b'},authorizedIntent],
+    [{}, {...authorizedIntent,currency_code:'USD'}],
+    [{}, {...authorizedIntent,logical_method:'ewallet'}],
+    [{}, {...authorizedIntent,provider_code:'provider_a'}]
+  ]){
+    const f=paymentReplayFixture({...original});
+    await assert.rejects(createOrderPaymentIntent(f.pool,{...args,...change}),
+      e=>e?.status===409&&e?.code==='PAYMENT_INTENT_DETAILS_CONFLICT');
+    assert.equal(f.statements.some(x=>x.sql==='COMMIT'),false);
+    assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,1);
+    assert.equal(f.statements.some(x=>/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(x.sql)),false);
+    assert.equal(f.releases(),1);
+  }
+});
+
+// A literal source-executed Service Job fixture: read-only, no provider calls.
+function serviceJobReplayFixture(existing){
+  const statements=[];let releases=0;
+  const job={id:91,customer_account_id:7,provider_account_id:10,
+    status:'completed',customer_confirmed_at:'2026-11-03T00:00:00Z',
+    accepted_quote_id:19,agreed_total:'200.00',final_price:'200.00',
+    pricing_locked_at:'2026-11-02T00:00:00Z',currency_code:'PHP'};
+  const quote={id:19,job_id:91,status:'accepted',total_amount:'200.00',
+    currency_code:'PHP',legacy_record:false};
+  const client={async query(sql,args=[]){
+    statements.push(sql);
+    if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+    if(sql.includes('FROM service_jobs WHERE id=$1 FOR UPDATE'))return{rowCount:1,rows:[job]};
+    if(sql.includes('gross_confirmed'))return{rowCount:1,rows:[{gross_confirmed:'0',pending_amount:'0',confirmed_count:0,pending_count:0}]};
+    if(sql.includes('refunded_amount'))return{rowCount:1,rows:[{refunded_amount:'0',refund_count:0}]};
+    if(sql.includes('allocation_count'))return{rowCount:1,rows:[{allocation_count:0}]};
+    if(sql.includes('ORDER BY created_at DESC,id DESC LIMIT 1'))return{rowCount:0,rows:[]};
+    if(sql.includes('FROM service_job_quotes'))return{rowCount:1,rows:[quote]};
+    if(sql.includes('pg_advisory_xact_lock'))return{rowCount:1,rows:[]};
+    if(sql.includes('FROM payment_intents WHERE idempotency_key'))return{rowCount:1,rows:[existing]};
+    throw Error('Unexpected Service Job payment SQL: '+sql);
+  },release(){releases++}};
+  return{pool:{connect:async()=>client},statements,releases:()=>releases};
+}
+test('Service Job same-key replay rejects another payment channel/currency without mutation',async()=>{
+  const original={id:199,source_type:'service_job',source_id:91,payer_account_id:7,
+    logical_method:'online_other',provider_code:'',currency_code:'PHP'};
+  const input={serviceJobId:91,payerAccountId:7,idempotencyKey:'service-job-key-91'};
+  for(const [override,prior] of [
+    [{logicalMethod:'card'},original],
+    [{providerCode:'provider_b'},original],
+    [{}, {...original,currency_code:'USD'}]
+  ]){
+    const f=serviceJobReplayFixture(prior);
+    await assert.rejects(createServiceJobPaymentIntent(f.pool,{...input,...override}),
+      e=>e?.status===409&&e?.code==='PAYMENT_INTENT_DETAILS_CONFLICT');
+    assert.equal(f.statements.filter(x=>x==='COMMIT').length,0);
+    assert.equal(f.statements.filter(x=>x==='ROLLBACK').length,1);
+    assert.equal(f.statements.filter(x=>/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(x)).length,0);
+    assert.equal(f.releases(),1);
+  }
+  const ok=serviceJobReplayFixture(original);
+  assert.equal((await createServiceJobPaymentIntent(ok.pool,input)).id,199);
+  assert.equal(ok.statements.filter(x=>x==='COMMIT').length,1);
 });

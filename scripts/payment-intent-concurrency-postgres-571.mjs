@@ -76,6 +76,21 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       assert.equal(String(replay.id),String(original.id));
       assert.equal(await count('payment_intents'),1);
       assert.equal(await count('payment_allocations'),1);
+      // Same literal key and Order must not switch the provider or method,
+      // nor acknowledge an intent in a changed source currency.
+      for(const changed of [{logicalMethod:'card'},{providerCode:'different-provider'}]){
+        await assert.rejects(createOrderPaymentIntent(pool,{...a,...changed}),
+          e=>e?.status===409&&e?.code==='PAYMENT_INTENT_DETAILS_CONFLICT');
+      }
+      await pool.query("UPDATE orders SET currency_code='USD' WHERE id=31");
+      try{
+        await assert.rejects(createOrderPaymentIntent(pool,a),
+          e=>e?.status===409&&e?.code==='PAYMENT_INTENT_DETAILS_CONFLICT');
+      }finally{
+        await pool.query("UPDATE orders SET currency_code='PHP' WHERE id=31");
+      }
+      assert.equal(await count('payment_intents'),1);
+      assert.equal(await count('payment_allocations'),1);
       await pool.query('UPDATE orders SET outstanding_amount=0 WHERE id=31');
       const settledReplay=await createOrderPaymentIntent(pool,a);
       assert.equal(String(settledReplay.id),String(original.id));
