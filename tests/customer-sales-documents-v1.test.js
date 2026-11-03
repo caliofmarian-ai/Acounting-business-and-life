@@ -141,6 +141,33 @@ test('Immutable order documents reject truncation aliases and malformed currency
     'older missing currency evidence preserves the documented PH fallback');
 });
 
+test('Commercial records reject blank or non-text economic labels without aliasing valid identity',()=>{
+  const original=makeOrder();
+  for(const missing of [undefined,null,'','   ',42,{},false]){
+    assert.throws(()=>commercialOrderDocument({...original,business_name:missing}),
+      /Merchant name evidence is missing/,'Merchant identity: '+String(missing));
+    assert.throws(()=>commercialOrderDocument({...original,
+      items:[{...original.items[0],name_snapshot:missing}]}),
+      /Order line name evidence is missing/,'Product identity: '+String(missing));
+  }
+  for(const empty of ['','   ']){
+    if(empty===''){
+      assert.equal(commercialOrderDocument({...original,order_number:empty}).order_number,
+        String(original.id),'legacy missing order number may use stable numeric order ID');
+    }else{
+      assert.throws(()=>commercialOrderDocument({...original,order_number:empty}),
+        /Order number evidence is missing/);
+    }
+  }
+  const fallback=commercialOrderDocument({...original,order_number:null});
+  assert.equal(fallback.order_number,String(original.id));
+  const literal=commercialOrderDocument({...original,business_name:' '+original.business_name});
+  assert.equal(literal.business_name,' '+original.business_name);
+  assert.notEqual(orderDocumentDigest(literal),
+    orderDocumentDigest(commercialOrderDocument(original)),
+    'valid economic text retains its exact significant source bytes');
+});
+
 test('Malformed economic evidence is rejected before snapshot, email, or print',()=>{
   const invalid=[null,undefined,true,NaN,Infinity,-Infinity,'','unavailable','Infinity','NaN',
     '0x10','1e3','0.001','145.005','-1','10000000000.00','01.00'];
