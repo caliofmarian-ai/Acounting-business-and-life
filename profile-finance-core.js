@@ -1,6 +1,17 @@
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
 
+// Never silently truncate a financial replay key: two different requests
+// sharing their first 220 characters must not alias the same ledger record.
+function normalizeIdempotencyKey(value){
+  // An idempotency key is opaque, not a display string: trimming can alias
+  // two distinct client keys to one already-posted financial instruction.
+  if(typeof value!=='string'||!value.trim()||value.length>220||
+     value!==value.trim()||/[\u0000-\u001f\u007f]/.test(value))
+    fail('Idempotency key must be an unpadded non-empty string of at most 220 characters without control characters');
+  return value;
+}
+
 export const PROFILE_FINANCE_ROLES=Object.freeze(['customer','merchant','supplier','courier','service_provider']);
 export const BUSINESS_FINANCE_ROLES=Object.freeze(['merchant','supplier']);
 export const FINANCIAL_ACCOUNT_KINDS=Object.freeze(['cash','bank','e_wallet','paymongo_wallet','provider_clearing','other']);
@@ -79,9 +90,19 @@ function normalizeBudgetPurpose(value){
   return v;
 }
 function normalizePositiveMoney(value,label='Amount'){
-  const n=Number(value);
-  if(!Number.isFinite(n)||n<=0)fail(label+' must be greater than zero');
-  return Math.round((n+Number.EPSILON)*100)/100;
+  // Every consumer writes NUMERIC(14,2): never coerce hex/exponents/booleans
+  // or round fractional cents into a different ledger, budget or HOLD amount.
+  const raw=typeof value==='number'
+    ?(Number.isFinite(value)?String(value):'')
+    :(typeof value==='string'?value.trim():'');
+  if(raw.length>32||!/^\d{1,12}(?:\.\d{1,2})?$/.test(raw))
+    fail(label+' must be a positive decimal amount with at most two fractional digits');
+  const [units,part='']=raw.split('.');
+  const cents=BigInt(units)*100n+BigInt(part.padEnd(2,'0'));
+  // NUMERIC(14,2) fits at most 12 integer digits and 2 decimal digits.
+  if(cents<=0n||cents>99999999999999n)
+    fail(label+' must be between 0.01 and 999999999999.99');
+  return Number(cents)/100;
 }
 function normalizeBudgetScope(profileRole,businessId){
   const role=normalizeRole(profileRole);
@@ -406,7 +427,10 @@ export async function createProfileFinancialAccount(pool,{
   const last4=normalizeLast4(referenceLast4),currency=normalizeCurrency(currencyCode);
   const providerRef=clean(providerDestinationRef,220);
   const verification=providerRef?'pending':'unverified';
-  const {rows}=await pool.query(`
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const {rows}=await client.query(`
     INSERT INTO profile_financial_accounts(
       public_id,account_id,profile_role,owner_scope,business_id,account_kind,provider_code,provider_destination_ref,
       display_name,institution_name,account_name,reference_last4,currency_code,can_pay,can_receive,can_payout,verification_status
@@ -417,18 +441,25 @@ export async function createProfileFinancialAccount(pool,{
     clean(providerCode,80),providerRef,clean(displayName,120),clean(institutionName,120),clean(accountName,160),
     last4,currency,Boolean(canPay),Boolean(canReceive),Boolean(canPayout),verification
   ]);
-  await pool.query(`
+    await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
     VALUES($1,$2,$3,$4,'financial_account_created',$5::jsonb)
   `,[Number(accountId),role,scope==='business'?Number(businessId):null,rows[0].id,JSON.stringify({kind,provider_code:clean(providerCode,80),can_pay:Boolean(canPay),can_receive:Boolean(canReceive),can_payout:Boolean(canPayout)})]);
-  return publicFinancialAccount(rows[0]);
+    await client.query('COMMIT');
+    return publicFinancialAccount(rows[0]);
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
 }
 
 export async function updateProfileFinancialAccount(pool,{
   accountId,id,displayName,institutionName,accountName,referenceLast4,providerCode,providerDestinationRef,
   canPay,canReceive,canPayout,status
 }){
-  const current=await pool.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2',[Number(id),Number(accountId)]);
+  // Serialize account edits and commit the mandatory audit with metadata.
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const current=await client.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 FOR UPDATE',[Number(id),Number(accountId)]);
   if(!current.rowCount)fail('Financial account not found',404);
   const old=current.rows[0];
   const nextStatus=status===undefined?old.status:clean(status,20);
@@ -437,7 +468,7 @@ export async function updateProfileFinancialAccount(pool,{
   const nextVerification=nextProviderRef===old.provider_destination_ref
     ?old.verification_status
     :(nextProviderRef?'pending':'unverified');
-  const {rows}=await pool.query(`
+  const {rows}=await client.query(`
     UPDATE profile_financial_accounts SET
       display_name=$1,institution_name=$2,account_name=$3,reference_last4=$4,provider_code=$5,provider_destination_ref=$6,
       can_pay=$7,can_receive=$8,can_payout=$9,verification_status=$10,status=$11,updated_at=NOW()
@@ -451,11 +482,14 @@ export async function updateProfileFinancialAccount(pool,{
     canPay===undefined?old.can_pay:Boolean(canPay),canReceive===undefined?old.can_receive:Boolean(canReceive),
     canPayout===undefined?old.can_payout:Boolean(canPayout),nextVerification,nextStatus,Number(id),Number(accountId)
   ]);
-  await pool.query(`
+  await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
     VALUES($1,$2,$3,$4,'financial_account_updated',$5::jsonb)
   `,[Number(accountId),old.profile_role,old.business_id,Number(id),JSON.stringify({status:nextStatus,verification_status:nextVerification})]);
-  return publicFinancialAccount(rows[0]);
+    await client.query('COMMIT');
+    return publicFinancialAccount(rows[0]);
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
 }
 
 export async function upsertMoneyPreference(pool,{
@@ -463,7 +497,11 @@ export async function upsertMoneyPreference(pool,{
   defaultPayoutAccountId=null,acceptedMethods=[],payoutSchedulePreference='provider_default'
 }){
   const role=normalizeRole(profileRole),methods=normalizeMethods(acceptedMethods),schedule=normalizeSchedule(payoutSchedulePreference);
-  const {rows}=await pool.query(`
+  // A preferences upsert must never survive a rejected audit event.
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const {rows}=await client.query(`
     INSERT INTO profile_money_preferences(
       account_id,profile_role,business_id,default_receive_account_id,default_spend_account_id,default_payout_account_id,
       accepted_methods,payout_schedule_preference
@@ -483,11 +521,12 @@ export async function upsertMoneyPreference(pool,{
     defaultPayoutAccountId==null?null:Number(defaultPayoutAccountId),
     JSON.stringify(methods),schedule
   ]);
-  await pool.query(`
+  await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,event_code,detail_json)
     VALUES($1,$2,$3,'money_preferences_updated',$4::jsonb)
   `,[Number(accountId),role,businessId==null?null:Number(businessId),JSON.stringify({accepted_methods:methods,payout_schedule_preference:schedule})]);
-  const r=rows[0];
+    await client.query('COMMIT');
+    const r=rows[0];
   return{
     id:Number(r.id),profile_role:r.profile_role,business_id:r.business_id==null?null:Number(r.business_id),
     default_receive_account_id:r.default_receive_account_id==null?null:Number(r.default_receive_account_id),
@@ -496,6 +535,8 @@ export async function upsertMoneyPreference(pool,{
     accepted_methods:Array.isArray(r.accepted_methods)?r.accepted_methods:methods,
     payout_schedule_preference:r.payout_schedule_preference,updated_at:r.updated_at
   };
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
 }
 
 
@@ -535,26 +576,37 @@ export async function createProfileBudgetEnvelope(pool,{
   const name=clean(label,120);
   if(!name)fail('Budget label is required');
   const p=normalizeBudgetPurpose(purpose);
-  await validateLinkedFinancialAccount(pool,{
-    accountId,profileRole:scope.role,businessId:scope.businessId,
-    financialAccountId:linkedFinancialAccountId,currencyCode:currency
-  });
-  const {rows}=await pool.query(`
+  // An envelope and its mandatory audit event are one financial instruction.
+  // Do not leave a committed, unaudited budget if the audit insert rejects.
+  const client=await pool.connect();
+  let envelopeId=null;
+  try{
+    await client.query('BEGIN');
+    await validateLinkedFinancialAccount(client,{
+      accountId,profileRole:scope.role,businessId:scope.businessId,
+      financialAccountId:linkedFinancialAccountId,currencyCode:currency
+    });
+    const {rows}=await client.query(`
     INSERT INTO profile_budget_envelopes(
       public_id,account_id,profile_role,business_id,linked_financial_account_id,label,purpose,currency_code
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
   `,[
-    clean(publicId,120),Number(accountId),scope.role,scope.businessId,
-    linkedFinancialAccountId==null?null:Number(linkedFinancialAccountId),name,p,currency
-  ]);
-  await pool.query(`
+      clean(publicId,120),Number(accountId),scope.role,scope.businessId,
+      linkedFinancialAccountId==null?null:Number(linkedFinancialAccountId),name,p,currency
+    ]);
+    await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
     VALUES($1,$2,$3,$4,'budget_envelope_created',$5::jsonb)
   `,[
-    Number(accountId),scope.role,scope.businessId,linkedFinancialAccountId==null?null:Number(linkedFinancialAccountId),
-    JSON.stringify({budget_envelope_id:Number(rows[0].id),label:name,purpose:p,currency_code:currency})
-  ]);
-  return (await listProfileBudgetEnvelopes(pool,accountId)).find(x=>x.id===Number(rows[0].id));
+      Number(accountId),scope.role,scope.businessId,
+      linkedFinancialAccountId==null?null:Number(linkedFinancialAccountId),
+      JSON.stringify({budget_envelope_id:Number(rows[0].id),label:name,purpose:p,currency_code:currency})
+    ]);
+    await client.query('COMMIT');
+    envelopeId=Number(rows[0].id);
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
+  return (await listProfileBudgetEnvelopes(pool,accountId)).find(x=>x.id===envelopeId);
 }
 
 export async function postProfileBudgetEntry(pool,{
@@ -563,13 +615,44 @@ export async function postProfileBudgetEntry(pool,{
 }){
   if(!['credit','debit'].includes(direction))fail('Unsupported budget entry direction');
   if(!['allocation','release','adjustment'].includes(entryType))fail('Unsupported manual budget entry type');
-  const value=normalizePositiveMoney(amount,'Budget amount'),key=clean(entryKey,220);
+  const value=normalizePositiveMoney(amount,'Budget amount'),key=normalizeIdempotencyKey(entryKey);
   if(!key)fail('Idempotency key is required');
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
-    const existing=await client.query('SELECT * FROM profile_budget_entries WHERE entry_key=$1',[key]);
-    if(existing.rowCount){await client.query('COMMIT');return existing.rows[0]}
+    // The replay SELECT must run AFTER same-key concurrent writers commit,
+    // including requests arriving through different Node workers or Pools.
+    // A rare hash collision only serializes independent keys; the full key
+    // and its account/instruction are still checked below.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_budget_entries:' || $1::text, 871))",
+      [key]
+    );
+    // A replay is valid only for the same account and the same exact-cent
+    // instruction. A globally unique key must never expose another account's
+    // budget row or falsely acknowledge a different amount/envelope.
+    const existing=await client.query(`
+      SELECT be.*, e.account_id AS replay_account_id
+      FROM profile_budget_entries be
+      JOIN profile_budget_envelopes e ON e.id=be.envelope_id
+      WHERE be.entry_key=$1
+    `,[key]);
+    if(existing.rowCount){
+      const prior=existing.rows[0];
+      if(Number(prior.replay_account_id)!==Number(accountId))
+        fail('Budget entry not found in this account',404);
+      if(Number(prior.envelope_id)!==Number(envelopeId)||
+         prior.direction!==direction||prior.entry_type!==entryType||
+         Number(prior.amount)!==value||
+         String(prior.source_type??'')!==clean(sourceType,80)||
+         String(prior.source_id??'')!==clean(sourceId,160)||
+         String(prior.note??'')!==clean(note,500)||
+         Number(prior.actor_account_id)!==Number(actorAccountId||accountId))
+        fail('Idempotency key already belongs to a different budget instruction',409);
+      await client.query('COMMIT');
+      const {replay_account_id,...entry}=prior;
+      return entry;
+    }
     const env=await client.query('SELECT * FROM profile_budget_envelopes WHERE id=$1 AND account_id=$2 FOR UPDATE',[Number(envelopeId),Number(accountId)]);
     if(!env.rowCount)fail('Budget envelope not found',404);
     if(env.rows[0].status!=='active')fail('Budget envelope is inactive',409);
@@ -601,14 +684,40 @@ export async function postProfileBudgetEntry(pool,{
 export async function transferProfileBudgetAllocation(pool,{
   publicId,transferKey,accountId,sourceEnvelopeId,destinationEnvelopeId,amount,actorAccountId=null,note=''
 }){
-  const value=normalizePositiveMoney(amount,'Transfer amount'),key=clean(transferKey,220);
+  const value=normalizePositiveMoney(amount,'Transfer amount'),key=normalizeIdempotencyKey(transferKey);
   if(!key)fail('Idempotency key is required');
   if(Number(sourceEnvelopeId)===Number(destinationEnvelopeId))fail('Choose two different budget envelopes');
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    // The global transfer key must serialize across workers before any replay
+    // lookup. A hash collision only delays independent full-key lookups.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_budget_transfers:' || $1::text, 871))",
+      [key]
+    );
     const existing=await client.query('SELECT * FROM profile_budget_transfers WHERE transfer_key=$1',[key]);
-    if(existing.rowCount){await client.query('COMMIT');return existing.rows[0]}
+    if(existing.rowCount){
+      const prior=existing.rows[0];
+      // Never acknowledge a transfer from a different account or a different
+      // instruction. The original note/actor are persisted on the debit entry.
+      if(Number(prior.account_id)!==Number(accountId))
+        fail('Budget transfer not found in this account',404);
+      const original=await client.query(
+        'SELECT note,actor_account_id FROM profile_budget_entries WHERE entry_key=$1',
+        [key+':out']
+      );
+      if(Number(prior.source_envelope_id)!==Number(sourceEnvelopeId)||
+         Number(prior.destination_envelope_id)!==Number(destinationEnvelopeId)||
+         Number(prior.amount)!==value||
+         !original.rowCount||
+         String(original.rows[0].note??'')!==clean(note,500)||
+         Number(original.rows[0].actor_account_id)!==Number(actorAccountId||accountId))
+        fail('Idempotency key already belongs to a different budget transfer',409);
+      await client.query('COMMIT');
+      return {...prior,execution_type:'INTERNAL_BUDGET_REALLOCATION',
+        provider_money_moved:false,idempotent:true};
+    }
     const ids=[Number(sourceEnvelopeId),Number(destinationEnvelopeId)].sort((a,b)=>a-b);
     const q=await client.query(`
       SELECT * FROM profile_budget_envelopes
@@ -657,17 +766,9 @@ export async function transferProfileBudgetAllocation(pool,{
   finally{client.release()}
 }
 
-export async function listProfileMoneyMovements(pool,accountId){
-  const {rows}=await pool.query(`
-    SELECT m.*,
-      s.display_name source_account_name,s.reference_last4 source_last4,s.account_kind source_account_kind,
-      d.display_name destination_account_name,d.reference_last4 destination_last4,d.account_kind destination_account_kind
-    FROM profile_money_movements m
-    LEFT JOIN profile_financial_accounts s ON s.id=m.source_financial_account_id
-    LEFT JOIN profile_financial_accounts d ON d.id=m.destination_financial_account_id
-    WHERE m.account_id=$1 ORDER BY m.created_at DESC,m.id DESC LIMIT 200
-  `,[Number(accountId)]);
-  return rows.map(r=>({
+// Keep dashboard history and exact-ID replay on the same response shape.
+function publicProfileMoneyMovement(r){
+  return{
     id:Number(r.id),public_id:r.public_id,movement_type:r.movement_type,
     source_financial_account_id:r.source_financial_account_id==null?null:Number(r.source_financial_account_id),
     destination_financial_account_id:r.destination_financial_account_id==null?null:Number(r.destination_financial_account_id),
@@ -679,7 +780,36 @@ export async function listProfileMoneyMovements(pool,accountId){
     status:r.status,hold_code:r.hold_code||'',provider_reference:r.provider_reference||'',
     evidence_reference:r.evidence_reference||'',failure_code:r.failure_code||'',note:r.note||'',
     execution_ready:r.status!=='pending_provider'&&!r.hold_code,created_at:r.created_at,updated_at:r.updated_at
-  }));
+  };
+}
+
+export async function listProfileMoneyMovements(pool,accountId){
+  const {rows}=await pool.query(`
+    SELECT m.*,
+      s.display_name source_account_name,s.reference_last4 source_last4,s.account_kind source_account_kind,
+      d.display_name destination_account_name,d.reference_last4 destination_last4,d.account_kind destination_account_kind
+    FROM profile_money_movements m
+    LEFT JOIN profile_financial_accounts s ON s.id=m.source_financial_account_id
+    LEFT JOIN profile_financial_accounts d ON d.id=m.destination_financial_account_id
+    WHERE m.account_id=$1 ORDER BY m.created_at DESC,m.id DESC LIMIT 200
+  `,[Number(accountId)]);
+  return rows.map(publicProfileMoneyMovement);
+}
+
+// Read by account + movement ID within the transaction, before COMMIT:
+// neither old replays nor newly written HOLDs depend on a capped history page.
+async function loadProfileMoneyMovement(db,{accountId,id}){
+  const {rows}=await db.query(`
+    SELECT m.*,
+      s.display_name source_account_name,s.reference_last4 source_last4,s.account_kind source_account_kind,
+      d.display_name destination_account_name,d.reference_last4 destination_last4,d.account_kind destination_account_kind
+    FROM profile_money_movements m
+    LEFT JOIN profile_financial_accounts s ON s.id=m.source_financial_account_id
+    LEFT JOIN profile_financial_accounts d ON d.id=m.destination_financial_account_id
+    WHERE m.id=$1 AND m.account_id=$2
+  `,[Number(id),Number(accountId)]);
+  if(rows.length!==1)fail('Money movement could not be loaded in this account',500);
+  return publicProfileMoneyMovement(rows[0]);
 }
 
 export async function createProfileMoneyMovementRequest(pool,{
@@ -688,50 +818,80 @@ export async function createProfileMoneyMovementRequest(pool,{
 }){
   const type=clean(movementType,30);
   if(!MOVEMENT_TYPE_SET.has(type))fail('Unsupported money movement type');
-  const value=normalizePositiveMoney(amount,'Transfer amount'),currency=normalizeCurrency(currencyCode),key=clean(idempotencyKey,220);
+  const value=normalizePositiveMoney(amount,'Transfer amount'),currency=normalizeCurrency(currencyCode),key=normalizeIdempotencyKey(idempotencyKey);
   if(!key)fail('Idempotency key is required');
-  const existing=await pool.query('SELECT * FROM profile_money_movements WHERE idempotency_key=$1',[key]);
-  if(existing.rowCount)return (await listProfileMoneyMovements(pool,accountId)).find(x=>x.id===Number(existing.rows[0].id));
-  if(sourceFinancialAccountId==null||destinationFinancialAccountId==null)fail('Source and destination financial accounts are required');
-  const sourceQ=await pool.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(sourceFinancialAccountId),Number(accountId)]);
-  const destQ=await pool.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(destinationFinancialAccountId),Number(accountId)]);
-  if(!sourceQ.rowCount||!destQ.rowCount)fail('Financial account is outside this account or inactive',403);
-  const source=sourceQ.rows[0],destination=destQ.rows[0];
-  if(Number(source.id)===Number(destination.id))fail('Choose different source and destination accounts');
-  if(source.currency_code!==currency||destination.currency_code!==currency)fail('Movement currency must match both financial accounts',409);
-  if(type==='transfer'){
-    if(!source.can_pay&&!['provider_clearing','paymongo_wallet'].includes(source.account_kind))fail('Source account is not enabled to transfer money',409);
-    if(!destination.can_receive)fail('Destination account is not enabled to receive money',409);
-  }else{
-    if(!source.can_pay&&!['provider_clearing','paymongo_wallet'].includes(source.account_kind))fail('Source account is not enabled for payout/withdrawal',409);
-    if(!destination.can_payout)fail('Destination account is not enabled as a payout/withdrawal destination',409);
-  }
-  const provider=clean(providerCode||source.provider_code||destination.provider_code,80);
-  const {rows}=await pool.query(`
-    INSERT INTO profile_money_movements(
-      public_id,idempotency_key,account_id,movement_type,
-      source_financial_account_id,destination_financial_account_id,
-      source_profile_role,source_business_id,destination_profile_role,destination_business_id,
-      amount,currency_code,provider_code,status,hold_code,note
-    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending_provider','PROVIDER_MONEY_MOVEMENT_ADAPTER_NOT_CONNECTED',$14)
-    RETURNING *
-  `,[
-    clean(publicId,120),key,Number(accountId),type,Number(source.id),Number(destination.id),
-    source.profile_role,source.business_id,destination.profile_role,destination.business_id,
-    value,currency,provider,clean(note,500)
-  ]);
-  await pool.query(`
-    INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
-    VALUES($1,$2,$3,$4,'money_movement_request_created',$5::jsonb)
-  `,[
-    Number(accountId),source.profile_role,source.business_id,Number(source.id),
-    JSON.stringify({
-      movement_id:Number(rows[0].id),movement_type:type,destination_financial_account_id:Number(destination.id),
-      destination_profile_role:destination.profile_role,destination_business_id:destination.business_id==null?null:Number(destination.business_id),
-      amount:value,currency_code:currency,status:'pending_provider',provider_money_moved:false
-    })
-  ]);
-  return (await listProfileMoneyMovements(pool,accountId)).find(x=>x.id===Number(rows[0].id));
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    // Serialize global-key replay before SELECT/INSERT, even across app workers.
+    // Audit and HOLD insert must commit or roll back as one transaction.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_money_movements:' || $1::text, 871))",
+      [key]
+    );
+    const existing=await client.query('SELECT * FROM profile_money_movements WHERE idempotency_key=$1',[key]);
+    if(existing.rowCount){
+      const prior=existing.rows[0];
+      // A duplicate key acknowledges only the original account and instruction.
+      // A different amount/source/destination must not silently replay a HOLD.
+      if(Number(prior.account_id)!==Number(accountId))
+        fail('Money movement not found in this account',404);
+      if(prior.movement_type!==type||
+         Number(prior.source_financial_account_id)!==Number(sourceFinancialAccountId)||
+         Number(prior.destination_financial_account_id)!==Number(destinationFinancialAccountId)||
+         Number(prior.amount)!==value||
+         prior.currency_code!==currency||
+         String(prior.note??'')!==clean(note,500)||
+         (providerCode&&String(prior.provider_code??'')!==clean(providerCode,80)))
+        fail('Idempotency key already belongs to a different money movement',409);
+      const response=await loadProfileMoneyMovement(client,{accountId,id:prior.id});
+      await client.query('COMMIT');
+      return response;
+    }
+    if(sourceFinancialAccountId==null||destinationFinancialAccountId==null)fail('Source and destination financial accounts are required');
+    const sourceQ=await client.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(sourceFinancialAccountId),Number(accountId)]);
+    const destQ=await client.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(destinationFinancialAccountId),Number(accountId)]);
+    if(!sourceQ.rowCount||!destQ.rowCount)fail('Financial account is outside this account or inactive',403);
+    const source=sourceQ.rows[0],destination=destQ.rows[0];
+    if(Number(source.id)===Number(destination.id))fail('Choose different source and destination accounts');
+    if(source.currency_code!==currency||destination.currency_code!==currency)fail('Movement currency must match both financial accounts',409);
+    if(type==='transfer'){
+      if(!source.can_pay&&!['provider_clearing','paymongo_wallet'].includes(source.account_kind))fail('Source account is not enabled to transfer money',409);
+      if(!destination.can_receive)fail('Destination account is not enabled to receive money',409);
+    }else{
+      if(!source.can_pay&&!['provider_clearing','paymongo_wallet'].includes(source.account_kind))fail('Source account is not enabled for payout/withdrawal',409);
+      if(!destination.can_payout)fail('Destination account is not enabled as a payout/withdrawal destination',409);
+    }
+    const provider=clean(providerCode||source.provider_code||destination.provider_code,80);
+    const {rows}=await client.query(`
+      INSERT INTO profile_money_movements(
+        public_id,idempotency_key,account_id,movement_type,
+        source_financial_account_id,destination_financial_account_id,
+        source_profile_role,source_business_id,destination_profile_role,destination_business_id,
+        amount,currency_code,provider_code,status,hold_code,note
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending_provider','PROVIDER_MONEY_MOVEMENT_ADAPTER_NOT_CONNECTED',$14)
+      RETURNING *
+    `,[
+      clean(publicId,120),key,Number(accountId),type,Number(source.id),Number(destination.id),
+      source.profile_role,source.business_id,destination.profile_role,destination.business_id,
+      value,currency,provider,clean(note,500)
+    ]);
+    await client.query(`
+      INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
+      VALUES($1,$2,$3,$4,'money_movement_request_created',$5::jsonb)
+    `,[
+      Number(accountId),source.profile_role,source.business_id,Number(source.id),
+      JSON.stringify({
+        movement_id:Number(rows[0].id),movement_type:type,destination_financial_account_id:Number(destination.id),
+        destination_profile_role:destination.profile_role,destination_business_id:destination.business_id==null?null:Number(destination.business_id),
+        amount:value,currency_code:currency,status:'pending_provider',provider_money_moved:false
+      })
+    ]);
+    const response=await loadProfileMoneyMovement(client,{accountId,id:rows[0].id});
+    await client.query('COMMIT');
+    return response;
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
 }
 
 
@@ -789,27 +949,52 @@ export async function createProfileMoneyEntry(pool,{
 }){
   const role=normalizePersonalMoneyRole(profileRole),entry=normalizeProfileMoneyEntry(role,entryType,direction);
   const cat=normalizeProfileMoneyCategory(role,category),value=normalizePositiveMoney(amount,'Money entry amount');
-  const currency=normalizeCurrency(currencyCode),key=clean(entryKey,220);
+  const currency=normalizeCurrency(currencyCode),key=normalizeIdempotencyKey(entryKey);
   if(!key)fail('Idempotency key is required');
-  const existing=await pool.query('SELECT * FROM profile_money_entries WHERE entry_key=$1',[key]);
+  // Serialize one opaque key across workers. Both the ledger row and its
+  // audit record must commit atomically, including concurrent retries.
+  const client=await pool.connect();
+  let createdId=null;
+  try{
+    await client.query('BEGIN');
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_money_entries:' || $1::text, 871))",
+      [key]
+    );
+    const existing=await client.query('SELECT * FROM profile_money_entries WHERE entry_key=$1',[key]);
   if(existing.rowCount){
     const old=existing.rows[0];
     if(Number(old.account_id)!==Number(accountId)||old.profile_role!==role)fail('Idempotency key belongs to another Money scope',409);
-    const detail=await pool.query(`
+    // A retry with the same key may recover a posted entry, but it must not
+    // acknowledge a different expense/income instruction or financial source.
+    if(old.entry_type!==entry.type||old.direction!==entry.direction||
+       old.category!==cat||Number(old.amount)!==value||
+       old.currency_code!==currency||
+       Number(old.financial_account_id||0)!==Number(financialAccountId||0)||
+       String(old.source_type??'')!==clean(sourceType,80)||
+       Number(old.source_id||0)!==Number(sourceId||0)||
+       String(old.note??'')!==clean(note,700)||
+       String(old.evidence_reference??'')!==clean(evidenceReference,500)||
+       Number(old.actor_account_id||accountId)!==Number(actorAccountId||accountId)||
+       (occurredAt!=null&&occurredAt!==''&&
+         new Date(old.occurred_at).getTime()!==new Date(occurredAt).getTime()))
+      fail('Idempotency key already belongs to a different Money entry',409);
+    const detail=await client.query(`
       SELECT e.*,f.display_name financial_account_name,f.account_kind financial_account_kind,f.reference_last4 financial_account_last4
       FROM profile_money_entries e LEFT JOIN profile_financial_accounts f ON f.id=e.financial_account_id
       WHERE e.id=$1
     `,[old.id]);
     const x=detail.rows[0];
+    await client.query('COMMIT');
     return{id:Number(x.id),public_id:x.public_id,entry_type:x.entry_type,direction:x.direction,category:x.category,amount:Number(x.amount),currency_code:x.currency_code,financial_account_id:x.financial_account_id==null?null:Number(x.financial_account_id),financial_account_name:x.financial_account_name||'',financial_account_kind:x.financial_account_kind||'',financial_account_last4:x.financial_account_last4||'',source_type:x.source_type,source_id:x.source_id==null?null:Number(x.source_id),note:x.note||'',evidence_reference:x.evidence_reference||'',status:x.status,reversal_of_id:x.reversal_of_id==null?null:Number(x.reversal_of_id),occurred_at:x.occurred_at,created_at:x.created_at};
   }
-  await validateLinkedFinancialAccount(pool,{
+  await validateLinkedFinancialAccount(client,{
     accountId:Number(accountId),profileRole:role,businessId:null,financialAccountId,currencyCode:currency
   });
-  const source=await validateProfileMoneySource(pool,{accountId,profileRole:role,sourceType,sourceId});
+  const source=await validateProfileMoneySource(client,{accountId,profileRole:role,sourceType,sourceId});
   const when=occurredAt==null||occurredAt===''?null:new Date(occurredAt);
   if(when&&Number.isNaN(when.getTime()))fail('occurred_at must be a valid date/time');
-  const {rows}=await pool.query(`
+  const {rows}=await client.query(`
     INSERT INTO profile_money_entries(
       public_id,entry_key,account_id,profile_role,financial_account_id,source_type,source_id,
       entry_type,direction,category,amount,currency_code,note,evidence_reference,actor_account_id,occurred_at
@@ -820,24 +1005,56 @@ export async function createProfileMoneyEntry(pool,{
     source.sourceType,source.sourceId,entry.type,entry.direction,cat,value,currency,clean(note,700),
     clean(evidenceReference,500),actorAccountId||Number(accountId),when?when.toISOString():null
   ]);
-  await pool.query(`
+  await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
     VALUES($1,$2,NULL,$3,'profile_money_entry_created',$4::jsonb)
   `,[
     Number(accountId),role,financialAccountId==null?null:Number(financialAccountId),
     JSON.stringify({entry_id:Number(rows[0].id),entry_type:entry.type,direction:entry.direction,category:cat,amount:value,currency_code:currency,source_type:source.sourceType,source_id:source.sourceId,provider_balance_effect:false})
   ]);
-  return (await listProfileMoneyEntries(pool,{accountId,profileRole:role,limit:250})).entries.find(x=>x.id===Number(rows[0].id));
+    await client.query('COMMIT');
+    createdId=Number(rows[0].id);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+  // A legitimate backdated entry can be older than the 250-row history page.
+  // Never return undefined after its ledger + mandatory audit have COMMITTED.
+  const posted=await pool.query(`
+    SELECT e.*,f.display_name financial_account_name,f.account_kind financial_account_kind,
+      f.reference_last4 financial_account_last4
+    FROM profile_money_entries e
+    LEFT JOIN profile_financial_accounts f ON f.id=e.financial_account_id
+    WHERE e.id=$1 AND e.account_id=$2 AND e.profile_role=$3
+  `,[createdId,Number(accountId),role]);
+  if(posted.rowCount!==1)fail('Committed Money entry could not be reloaded',500);
+  const x=posted.rows[0];
+  return{
+    id:Number(x.id),public_id:x.public_id,entry_type:x.entry_type,direction:x.direction,category:x.category,
+    amount:Number(x.amount),currency_code:x.currency_code,
+    financial_account_id:x.financial_account_id==null?null:Number(x.financial_account_id),
+    financial_account_name:x.financial_account_name||'',financial_account_kind:x.financial_account_kind||'',
+    financial_account_last4:x.financial_account_last4||'',source_type:x.source_type,
+    source_id:x.source_id==null?null:Number(x.source_id),note:x.note||'',
+    evidence_reference:x.evidence_reference||'',status:x.status,
+    reversal_of_id:x.reversal_of_id==null?null:Number(x.reversal_of_id),
+    occurred_at:x.occurred_at,created_at:x.created_at
+  };
 }
 
 export async function reverseProfileMoneyEntry(pool,{
   publicId,reversalKey,accountId,profileRole,entryId,note='',actorAccountId=null
 }){
-  const role=normalizePersonalMoneyRole(profileRole),key=clean(reversalKey,220);
+  const role=normalizePersonalMoneyRole(profileRole),key=normalizeIdempotencyKey(reversalKey);
   if(!key)fail('Idempotency key is required');
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    // A simultaneous retry must wait for the first reversal to commit before
+    // looking up the opaque replay key. Reuse the ledger's global key-lock
+    // namespace so a reversal cannot race with an entry using the same key.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_money_entries:' || $1::text, 871))",
+      [key]
+    );
     const existing=await client.query('SELECT id,account_id,profile_role,reversal_of_id FROM profile_money_entries WHERE entry_key=$1',[key]);
     if(existing.rowCount){
       const oldKey=existing.rows[0];
@@ -953,18 +1170,33 @@ export async function listProfileFundScopes(pool,accountId){
   return out;
 }
 
-export async function listProfileFundTransfers(pool,accountId){
-  const {rows}=await pool.query(`
-    SELECT * FROM profile_fund_transfers
-    WHERE account_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100
-  `,[Number(accountId)]);
-  return rows.map(r=>({
+function publicProfileFundTransfer(r){
+  return{
     id:Number(r.id),public_id:r.public_id,
     source_profile_role:r.source_profile_role,source_business_id:r.source_business_id==null?null:Number(r.source_business_id),
     destination_profile_role:r.destination_profile_role,destination_business_id:r.destination_business_id==null?null:Number(r.destination_business_id),
     amount:Number(r.amount),currency_code:r.currency_code,status:r.status,note:r.note||'',created_at:r.created_at,reversed_at:r.reversed_at,
     provider_money_moved:false,transfer_type:'INTERNAL_PROFILE_FUNDS'
-  }));
+  };
+}
+
+export async function listProfileFundTransfers(pool,accountId){
+  const {rows}=await pool.query(`
+    SELECT * FROM profile_fund_transfers
+    WHERE account_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100
+  `,[Number(accountId)]);
+  return rows.map(publicProfileFundTransfer);
+}
+
+// Recovery of an accepted transfer must not depend on its position in the
+// capped history page (100 rows), including concurrent post-commit reads.
+async function loadProfileFundTransfer(pool,{accountId,id}){
+  const {rows}=await pool.query(
+    'SELECT * FROM profile_fund_transfers WHERE id=$1 AND account_id=$2',
+    [Number(id),Number(accountId)]
+  );
+  if(rows.length!==1)fail('Committed profile transfer could not be reloaded',500);
+  return publicProfileFundTransfer(rows[0]);
 }
 
 async function writeProfileFundLedgerEntry(db,{accountId,scope,direction,amount,currencyCode,transferId,transferKey,note}){
@@ -992,20 +1224,36 @@ export async function transferFundsBetweenProfiles(pool,{
   publicId,transferKey,accountId,sourceProfileRole,sourceBusinessId=null,
   destinationProfileRole,destinationBusinessId=null,amount,currencyCode='PHP',note=''
 }){
-  const value=normalizePositiveMoney(amount,'Transfer amount'),key=clean(transferKey,220),currency=normalizeCurrency(currencyCode);
+  const value=normalizePositiveMoney(amount,'Transfer amount'),key=normalizeIdempotencyKey(transferKey),currency=normalizeCurrency(currencyCode);
   if(!key)fail('Idempotency key is required');
   const source=normalizeFundScope(sourceProfileRole,sourceBusinessId),destination=normalizeFundScope(destinationProfileRole,destinationBusinessId);
   if(source.profileRole===destination.profileRole&&Number(source.businessId||0)===Number(destination.businessId||0))fail('Choose two different profiles/workspaces');
   const client=await pool.connect();
+  let committedTransferId=null,sourceBalanceBefore=null;
   try{
     await client.query('BEGIN');
+    // The transfer key is globally unique. Lock it before the account-level
+    // balance lock so different account workers cannot race to raw SQL 23505.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_fund_transfers:' || $1::text, 871))",
+      [key]
+    );
     await client.query('SELECT pg_advisory_xact_lock($1)',[Number(accountId)]);
     const existing=await client.query('SELECT * FROM profile_fund_transfers WHERE transfer_key=$1',[key]);
     if(existing.rowCount){
       const x=existing.rows[0];
       if(Number(x.account_id)!==Number(accountId))fail('Idempotency key belongs to another account',409);
+      if(x.source_profile_role!==source.profileRole||
+         Number(x.source_business_id||0)!==Number(source.businessId||0)||
+         x.destination_profile_role!==destination.profileRole||
+         Number(x.destination_business_id||0)!==Number(destination.businessId||0)||
+         Number(x.amount)!==value||x.currency_code!==currency||
+         String(x.note??'')!==clean(note,700))
+        fail('Idempotency key already belongs to a different profile transfer',409);
+      // Replay uses the already account-verified row. A second Pool checkout
+      // here would hang when all transaction clients are occupied.
       await client.query('COMMIT');
-      return{...(await listProfileFundTransfers(pool,accountId)).find(t=>t.id===Number(x.id)),idempotent:true};
+      return{...publicProfileFundTransfer(x),idempotent:true};
     }
     const ownedSource=await assertOwnedActiveFundScope(client,{accountId,profileRole:source.profileRole,businessId:source.businessId});
     const ownedDestination=await assertOwnedActiveFundScope(client,{accountId,profileRole:destination.profileRole,businessId:destination.businessId});
@@ -1034,8 +1282,15 @@ export async function transferFundsBetweenProfiles(pool,{
       ]);
     }
     await client.query('COMMIT');
-    const [transfers,scopes]=await Promise.all([listProfileFundTransfers(pool,accountId),listProfileFundScopes(pool,accountId)]);
-    return{...transfers.find(t=>t.id===transferId),source_balance_before:available,scopes};
+    committedTransferId=transferId;
+    sourceBalanceBefore=available;
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
   finally{client.release()}
+  // Never request another Pool connection before releasing the transaction
+  // client: a max=1 Pool and parallel retries must not deadlock on checkout.
+  const [transfer,scopes]=await Promise.all([
+    loadProfileFundTransfer(pool,{accountId,id:committedTransferId}),
+    listProfileFundScopes(pool,accountId)
+  ]);
+  return{...transfer,source_balance_before:sourceBalanceBefore,scopes};
 }

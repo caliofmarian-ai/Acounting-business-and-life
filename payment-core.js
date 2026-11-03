@@ -162,7 +162,21 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
     const key=clean(idempotencyKey,220);
     if(!key)throw Object.assign(new Error('Idempotency key is required'),{status:400});
     const existing=await client.query("SELECT * FROM payment_intents WHERE idempotency_key=$1",[key]);
-    if(existing.rowCount){await client.query('COMMIT');return existing.rows[0]}
+    if(existing.rowCount){
+      // An idempotency key is globally unique, but a replay may only read
+      // the original Order, payer and business payment intent.
+      const old=existing.rows[0];
+      if(old.source_type!=='order'||
+        Number(old.source_id)!==Number(o.id)||
+        Number(old.payer_account_id)!==Number(payerAccountId)||
+        Number(old.business_id)!==Number(o.business_id)){
+        throw Object.assign(new Error('Idempotency key belongs to another payment scope'),{
+          status:409,code:'PAYMENT_INTENT_SCOPE_CONFLICT'
+        });
+      }
+      await client.query('COMMIT');
+      return old;
+    }
     const provider=clean(providerCode,80);
     const configured=provider?await client.query("SELECT 1 FROM payment_provider_configs WHERE provider_code=$1 AND status IN ('sandbox','active')",[provider]):{rowCount:0};
     const ins=await client.query("INSERT INTO payment_intents(public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,provider_code,logical_method,currency_code,amount,status,client_reference,expires_at) VALUES($1,$2,'order',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW()+INTERVAL '30 minutes') RETURNING *",[
