@@ -42,7 +42,13 @@ function readOrders(mode,showLoading,force,load){
   if(!force&&ordersRequest&&orderReadCurrent(ordersRequest))return ordersRequest.promise;
   const request={owner,mode,viewEpoch:ordersViewEpoch,businessId:mode==='merchant'?(selectedMerchantBusiness()??merchantBusinessId):null};
   ordersRequest=request;
-  if(showLoading){ordersRenderEpoch++;orderWorkspace.innerHTML=header(mode==='merchant'?'Orders':'My Orders',mode==='merchant'?'Customer orders for the selected business':'Preparation, payment and pickup status in one place')+'<div class="ordersEmpty" role="status">Loading orders…</div>'}
+  if(showLoading){
+    ordersRenderEpoch++;
+    orderWorkspace.innerHTML=header(mode==='merchant'?'Orders':'My Orders',mode==='merchant'?'Customer orders for the selected business':'Preparation, payment and pickup status in one place')+'<div class="ordersEmpty" role="status">Loading orders…</div>';
+    // Loading replaces the header too: keep Back usable and let repeated
+    // Refresh clicks reuse this in-flight read rather than launch another.
+    bindHeader(()=>mode==='merchant'?renderMerchantOrders(true):renderCustomerOrders(true));
+  }
   request.promise=(async()=>{
     try{await load(request)}catch(error){if(orderReadCurrent(request))ordersLoadError(error,mode)}
     finally{if(ordersRequest===request)ordersRequest=null}

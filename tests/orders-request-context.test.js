@@ -68,6 +68,30 @@ function browser({business=1,account=6,role='merchant',known=true}={}){
   return {context,state,window,document,board,backdrop,modal,toast,calls,pending,profile,emit,respond,boardResponse,globals,open,switchBusiness,boot:()=>context.boot()};
 }
 
+for(const mode of ['merchant','customer']){
+  test(`${mode} loading Back closes Orders and ignores the pending response`,async()=>{
+    const b=browser({role:mode});await b.boot();
+    const task=mode==='merchant'?b.context.openMerchantOrders():b.context.openCustomerOrders();await flush();
+    const batch=b.pending(),back=b.board.querySelector('[data-orders-back]');
+    assert.match(b.board.innerHTML,/Loading orders/);
+    assert.equal(typeof back.onclick,'function','Loading header Back must be usable before reads finish');
+    back.onclick();
+    assert.equal(b.board.classList.contains('hidden'),true);
+    await b.boardResponse(batch,'LATE AFTER BACK');await task;
+    assert.equal(b.board.innerHTML,'');assert.equal(b.globals().ordersMode,null);
+    assert.equal(b.globals().productsCache.length,0);assert.equal(b.globals().directSaleInventory.length,0);
+  });
+  test(`${mode} loading Refresh reuses the pending read instead of adding requests`,async()=>{
+    const b=browser({role:mode});await b.boot();
+    const task=mode==='merchant'?b.context.openMerchantOrders():b.context.openCustomerOrders();await flush();
+    const batch=b.pending(),count=b.calls.length,refresh=b.board.querySelector('[data-orders-refresh]');
+    assert.equal(typeof refresh.onclick,'function','Loading header Refresh must have a handler');
+    refresh.onclick();refresh.onclick();await flush();assert.equal(b.calls.length,count);
+    await b.boardResponse(batch,'SINGLE READ');await task;
+    assert.match(b.board.innerHTML,/SINGLE READ/);assert.equal(b.globals().pending,false);
+  });
+}
+
 for(const staleError of [false,true])test(`late business A ${staleError?'error':'success'} cannot overwrite business B board or either picker`,async()=>{
   const b=browser();await b.boot();const old=await b.open();await b.switchBusiness(2);const current=b.pending().filter(c=>!old.batch.includes(c));
   await b.boardResponse(current,'BUSINESS-B');await b.boardResponse(old.batch,'BUSINESS-A',{status:staleError?403:200,productsStatus:403,inventoryStatus:403});await old.task;
