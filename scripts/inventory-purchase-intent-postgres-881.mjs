@@ -335,6 +335,53 @@ try{
     eq(String(correctedReplay.response.purchase.id),String(corrected.response.purchase.id),
       'replay purchase ID matches the recorded purchase');
 
+
+    // Check the actual serialized response, not only its in-memory ID.
+    // A callback can return a response whose nested toJSON changes purchase
+    // identity after preliminary validation. This must roll back all effects.
+    const serializedKey='51234567-0000-4000-9000-123456789012';
+    const serializedBody={...payload,item:'Synthetic serialized identity 881'};
+    const beforeSerialized=await Promise.all([
+      pool.query('SELECT count(*)::int AS n FROM inventory_purchases'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_lots'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_expenses')
+    ]);
+    let serializedError=null;
+    try{
+      await executeInventoryPurchaseIntent(a,params(101,serializedKey,serializedBody),async tx=>{
+        const item=(await tx.query(
+          'INSERT INTO inventory(business_id,item,quantity) VALUES($1,$2,$3) RETURNING id',
+          [101,serializedBody.item,serializedBody.quantity])).rows[0];
+        const purchase=(await tx.query(
+          'INSERT INTO inventory_purchases(business_id,inventory_id) VALUES($1,$2) RETURNING id',
+          [101,item.id])).rows[0];
+        await tx.query('INSERT INTO synthetic_lots(purchase_id) VALUES($1)',[purchase.id]);
+        await tx.query('INSERT INTO synthetic_expenses(purchase_id) VALUES($1)',[purchase.id]);
+        return{purchaseId:purchase.id,response:{purchase:{
+          id:purchase.id,toJSON(){return{id:'999999999'}}
+        }}};
+      });
+    }catch(error){serializedError=error}
+    eq(serializedError?.code,'INVENTORY_PURCHASE_INTENT_CONFLICT',
+      'serialized purchase ID mismatch is rejected inside the DB transaction');
+    eq((await pool.query('SELECT count(*)::int AS n FROM inventory WHERE business_id=$1 AND item=$2',
+      [101,serializedBody.item])).rows[0].n,0,'serialized mismatch rolls back Inventory item');
+    eq((await pool.query('SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+      [serializedKey])).rows[0].n,0,'serialized mismatch rolls back intent');
+    const afterSerialized=await Promise.all([
+      pool.query('SELECT count(*)::int AS n FROM inventory_purchases'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_lots'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_expenses')
+    ]);
+    for(let i=0;i<3;i++)eq(afterSerialized[i].rows[0].n,beforeSerialized[i].rows[0].n,
+      'serialized mismatch rolls back purchase, lot and expense '+i);
+    const serialRetry=await post(a,101,serializedKey,serializedBody);
+    eq(serialRetry.kind,'new','same literal key safely retries after serialization rollback');
+    const serialReplay=await post(a,101,serializedKey,serializedBody);
+    eq(serialReplay.kind,'replay','safe retry commits one replayable snapshot');
+    eq(String(serialReplay.response.purchase.id),String(serialRetry.response.purchase.id),
+      'serialized response retry and replay share the same purchase identity');
+
     console.log(JSON.stringify({ok:true,realPostgresAssertions:checks,
       isolatedDb:'abl_purchase_intent_ci',liveRouteIntegrated:false}));
   }finally{a.release();b.release()}

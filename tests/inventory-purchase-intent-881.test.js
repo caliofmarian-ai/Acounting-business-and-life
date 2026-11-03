@@ -108,6 +108,36 @@ test('a mismatched purchase response cannot be persisted or replayed',async()=>{
   }),error=>error.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&error.status===409);
 });
 
+
+test('serialized purchase identity is validated before SQL and first response matches saved JSON',async()=>{
+  const context={businessId:1,accountId:2,intentKey:key,purchaseId:44};
+  let calls=0;
+  const rejectSql={async query(){calls++;throw Error('No SQL for mismatched serialized identity')}};
+  const inconsistent={purchase:{id:44,toJSON(){return{id:45}}}};
+  await assert.rejects(
+    finishInventoryPurchaseIntent(rejectSql,{...context,response:inconsistent}),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&e.status===409
+  );
+  const omitted={purchase:{id:44,toJSON(){return{reference:'hidden'}}}};
+  await assert.rejects(
+    finishInventoryPurchaseIntent(rejectSql,{...context,response:omitted}),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&e.status===409
+  );
+  assert.equal(calls,0,'invalid serialized representations cannot reach the database');
+
+  let persisted;
+  const accepted={async query(sql,args){
+    assert.match(sql,/UPDATE inventory_purchase_intents/);
+    persisted=JSON.parse(args[4]);
+    return{rowCount:1,rows:[{purchase_id:44}]};
+  }};
+  const original={purchase:{id:44},created_at:new Date('2026-11-03T00:00:00.000Z')};
+  const result=await finishInventoryPurchaseIntent(accepted,{...context,response:original});
+  assert.deepEqual(result,persisted,'new response equals replay JSON snapshot');
+  assert.equal(result.created_at,'2026-11-03T00:00:00.000Z');
+  assert.notEqual(result,original);
+});
+
 test('transaction executor commits one purchase, then replays without touching inventory',async()=>{
   const events=[];let committed=null;let draft=null;
   const client={async query(sql,args){

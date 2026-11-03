@@ -159,8 +159,16 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
   const args=[dbId(businessId,'Business'),dbId(accountId,'Account'),literalKey(intentKey),dbId(purchaseId,'Purchase')];
   if(!response||typeof response!=='object'||Array.isArray(response))throw bad('A committed purchase response object is required');
   verifiedPurchaseResponse(response,args[3]);
-  const json=JSON.stringify(response);
+  // The original response object is NOT necessarily the JSON response that
+  // PostgreSQL will persist (e.g. a nested toJSON method or Date). Validate
+  // the actual bytes before committing so neither first response nor replay
+  // can claim a different purchase ID from the durable purchase_id.
+  let json;
+  try{json=JSON.stringify(response)}
+  catch{throw bad('Purchase response must be JSON serializable','INVENTORY_PURCHASE_INTENT_CONFLICT',409)}
   if(!json||Buffer.byteLength(json,'utf8')>65536)throw bad('Purchase response snapshot exceeds intent limit');
+  const snapshot=JSON.parse(json);
+  verifiedPurchaseResponse(snapshot,args[3]);
   // Do not associate a scoped Merchant intent with another business's purchase.
   // The database relationship is checked inside this SAME open transaction.
   const saved=await client.query(`
@@ -173,7 +181,9 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
      RETURNING intent.purchase_id
   `,[...args,json]);
   if(saved.rowCount!==1)throw bad('Purchase intent was already committed or missing','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
-  return response;
+  // Return the exact JSON-safe snapshot persisted for future replay, rather
+  // than an in-memory representation that could serialize differently.
+  return snapshot;
 }
 
 // Integration-safe transaction coordinator for the existing authenticated HTTP
