@@ -291,6 +291,50 @@ try{
       'SELECT count(*)::int AS n FROM synthetic_expenses')).rows[0].n,
       priorPurchases+1,'replay did not insert another linked business expense');
 
+    // A callback may create all underlying rows but accidentally return the
+    // ID of another purchase. Never COMMIT this inconsistent replay snapshot:
+    // roll back the fresh item, purchase, lot, expense and intent together.
+    const mismatchKey='41234567-0000-4000-9000-123456789012';
+    const mismatchBody={...payload,item:'Synthetic mismatched response 881'};
+    const beforeMismatch=await Promise.all([
+      pool.query('SELECT count(*)::int AS n FROM inventory_purchases'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_lots'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_expenses')
+    ]);
+    let mismatchError=null;
+    try{
+      await executeInventoryPurchaseIntent(a,params(101,mismatchKey,mismatchBody),async tx=>{
+        const item=(await tx.query(
+          'INSERT INTO inventory(business_id,item,quantity) VALUES($1,$2,$3) RETURNING id',
+          [101,mismatchBody.item,mismatchBody.quantity])).rows[0];
+        const purchase=(await tx.query(
+          'INSERT INTO inventory_purchases(business_id,inventory_id) VALUES($1,$2) RETURNING id',
+          [101,item.id])).rows[0];
+        await tx.query('INSERT INTO synthetic_lots(purchase_id) VALUES($1)',[purchase.id]);
+        await tx.query('INSERT INTO synthetic_expenses(purchase_id) VALUES($1)',[purchase.id]);
+        return{purchaseId:purchase.id,response:{purchase:{id:(BigInt(purchase.id)+1n).toString()}}};
+      });
+    }catch(error){mismatchError=error}
+    eq(mismatchError?.code,'INVENTORY_PURCHASE_INTENT_CONFLICT',
+      'mismatched response ID fails before transaction COMMIT');
+    eq((await pool.query('SELECT count(*)::int AS n FROM inventory WHERE business_id=$1 AND item=$2',
+      [101,mismatchBody.item])).rows[0].n,0,'inconsistent response rolls back stock');
+    eq((await pool.query('SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+      [mismatchKey])).rows[0].n,0,'inconsistent response rolls back intent');
+    const afterMismatch=await Promise.all([
+      pool.query('SELECT count(*)::int AS n FROM inventory_purchases'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_lots'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_expenses')
+    ]);
+    for(let i=0;i<3;i++)eq(afterMismatch[i].rows[0].n,beforeMismatch[i].rows[0].n,
+      'inconsistent response does not commit purchase/lot/expense '+i);
+    const corrected=await post(a,101,mismatchKey,mismatchBody);
+    eq(corrected.kind,'new','same key can complete a valid purchase after full rollback');
+    const correctedReplay=await post(a,101,mismatchKey,mismatchBody);
+    eq(correctedReplay.kind,'replay','successful corrected purchase replays without a second write');
+    eq(String(correctedReplay.response.purchase.id),String(corrected.response.purchase.id),
+      'replay purchase ID matches the recorded purchase');
+
     console.log(JSON.stringify({ok:true,realPostgresAssertions:checks,
       isolatedDb:'abl_purchase_intent_ci',liveRouteIntegrated:false}));
   }finally{a.release();b.release()}

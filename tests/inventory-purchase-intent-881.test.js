@@ -86,6 +86,28 @@ test('finish binds the purchase row to the same authorized business',async()=>{
   assert.match(statement,/purchase.id=\$4 AND purchase.business_id=intent.business_id/);
 });
 
+test('a mismatched purchase response cannot be persisted or replayed',async()=>{
+  const blockSql={query(){throw new Error('Unexpected SQL: invalid response must fail first')}};
+  const ctx={businessId:1,accountId:2,intentKey:key,purchaseId:44};
+  for(const response of [{},{purchase:{}},{purchase:{id:45}},{purchase:{id:0}},{purchase:{id:44.5}},{purchase:[]}]){
+    await assert.rejects(finishInventoryPurchaseIntent(blockSql,{...ctx,response}),
+      error=>error.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&error.status===409);
+  }
+  const replayClient={async query(sql){
+    if(sql.includes('INSERT INTO inventory_purchase_intents'))return{rowCount:0,rows:[]};
+    if(sql.includes('SELECT payload_sha256,purchase_id,response_json')){
+      return{rowCount:1,rows:[{
+        payload_sha256:inventoryPurchaseFingerprint(payload),
+        purchase_id:'44',response_json:{purchase:{id:'45'}}
+      }]};
+    }
+    throw new Error('Unexpected SQL');
+  }};
+  await assert.rejects(claimInventoryPurchaseIntent(replayClient,{
+    businessId:1,accountId:2,intentKey:key,payload
+  }),error=>error.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&error.status===409);
+});
+
 test('transaction executor commits one purchase, then replays without touching inventory',async()=>{
   const events=[];let committed=null;let draft=null;
   const client={async query(sql,args){

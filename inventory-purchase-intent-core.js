@@ -76,6 +76,23 @@ function literalKey(value){
   }
   return value; // never trim/case-fold: two distinct intent keys must not collide
 }
+// A replay must never return a different purchase than the row committed
+// under this intent. Keep both persistence and replay fail-closed if a caller
+// supplies a mismatched snapshot (or a stored row is later corrupted).
+function verifiedPurchaseResponse(response,purchaseId){
+  if(!response||typeof response!=='object'||Array.isArray(response)||
+     !response.purchase||typeof response.purchase!=='object'||Array.isArray(response.purchase)){
+    throw bad('Purchase response must contain its linked purchase','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+  }
+  let claimedId;
+  try{claimedId=dbId(response.purchase.id,'Response purchase')}
+  catch{throw bad('Purchase response contains an invalid purchase ID','INVENTORY_PURCHASE_INTENT_CONFLICT',409)}
+  if(claimedId!==dbId(purchaseId,'Purchase')){
+    throw bad('Purchase response does not match the committed purchase ID','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+  }
+  return response;
+}
+
 function stable(value,depth=0){
   if(depth>16)throw bad('Purchase payload is nested too deeply');
   if(value===null)return 'null';
@@ -122,7 +139,7 @@ export async function claimInventoryPurchaseIntent(client,{businessId,accountId,
   const row=prior.rows[0];
   if(row.payload_sha256!==fingerprint)throw bad('Purchase intent key was reused with different details','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
   if(row.purchase_id==null||row.response_json==null)throw bad('Purchase intent has no committed result','INVENTORY_PURCHASE_INTENT_INCOMPLETE',409);
-  return{kind:'replay',purchaseId:row.purchase_id,response:row.response_json};
+  return{kind:'replay',purchaseId:row.purchase_id,response:verifiedPurchaseResponse(row.response_json,row.purchase_id)};
 }
 
 // Serialize EVERY new Inventory purchase for a business before the existing-item
@@ -141,6 +158,7 @@ export async function lockInventoryPurchaseBusiness(client,businessId){
 export async function finishInventoryPurchaseIntent(client,{businessId,accountId,intentKey,purchaseId,response}){
   const args=[dbId(businessId,'Business'),dbId(accountId,'Account'),literalKey(intentKey),dbId(purchaseId,'Purchase')];
   if(!response||typeof response!=='object'||Array.isArray(response))throw bad('A committed purchase response object is required');
+  verifiedPurchaseResponse(response,args[3]);
   const json=JSON.stringify(response);
   if(!json||Buffer.byteLength(json,'utf8')>65536)throw bad('Purchase response snapshot exceeds intent limit');
   // Do not associate a scoped Merchant intent with another business's purchase.
