@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,createServiceJobPaymentIntent,
+  ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,createServiceJobPaymentIntent,paymentRequestIdempotencyKey,
   serviceJobPaymentSummary,paymentIntentDetail,
   createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,createReconciliationRun,
   paymentFinanceOverview,mirrorConfirmedOrderPayment
@@ -601,7 +601,7 @@ app.get('/api/payments/open-orders',async(req,res,next)=>{try{
 
 app.post('/api/payments/intents/order/:id',body,async(req,res,next)=>{try{
   const me=await identity(req);
-  const idempotency=req.headers['idempotency-key']||req.body?.idempotency_key;
+  const idempotency=paymentRequestIdempotencyKey(req.headers,req.body);
   const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
   const intent=await createOrderPaymentIntent(pool,{orderId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,clientReference:req.body?.client_reference||''});
   res.status(201).json({...intent,provider_ready:intent.status!=='requires_provider',next_action:intent.status==='requires_provider'?'CONNECT_REAL_PAYMENT_PROVIDER':'PROVIDER_ADAPTER_REQUIRED'});
@@ -609,7 +609,7 @@ app.post('/api/payments/intents/order/:id',body,async(req,res,next)=>{try{
 
 app.post('/api/payments/intents/service-job/:id',body,async(req,res,next)=>{try{
   const me=await identity(req);
-  const idempotency=req.headers['idempotency-key']||req.body?.idempotency_key;
+  const idempotency=paymentRequestIdempotencyKey(req.headers,req.body);
   const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
   const intent=await createServiceJobPaymentIntent(pool,{
     serviceJobId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createOrderPaymentIntent} from '../payment-core.js';
+import {createOrderPaymentIntent,paymentRequestIdempotencyKey} from '../payment-core.js';
 
 // Source-executing synthetic SQL controls. No real account, database or provider.
 function paymentReplayFixture(existing,outstanding='200.00'){
@@ -88,6 +88,28 @@ test('An oversized payment key is rejected without truncation or lookup',async()
   assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,1);
 });
 
+test('HTTP payment requests reject conflicting header/body idempotency identities without normalization',()=>{
+  const key='literal-scope-key-31';
+  assert.equal(paymentRequestIdempotencyKey({'idempotency-key':key},{}),key);
+  assert.equal(paymentRequestIdempotencyKey({}, {idempotency_key:key}),key);
+  assert.equal(paymentRequestIdempotencyKey({'idempotency-key':key},{idempotency_key:key}),key);
+  for(const [header,payload] of [
+    [key,'different-scope-key-31'],[key,key+'-other'],
+    [key,key+' '],[' '+key,key],[key,123]
+  ]){
+    assert.throws(()=>paymentRequestIdempotencyKey(
+      {'idempotency-key':header},{idempotency_key:payload}
+    ),e=>e?.status===400&&e?.code==='PAYMENT_IDEMPOTENCY_KEY_CONFLICT');
+  }
+  for(const [headers,body] of [
+    [{'idempotency-key':key+' '},{}],[{},{idempotency_key:' '+key}],
+    [{'idempotency-key':[key]},{}],[{},{idempotency_key:123}],[{},{}]
+  ]){
+    assert.throws(()=>paymentRequestIdempotencyKey(headers,body),
+      e=>e?.status===400&&e?.code==='PAYMENT_IDEMPOTENCY_KEY_INVALID');
+  }
+});
+
 test('Both HTTP entry points preserve the original caller key for Payment Core validation',async()=>{
   const {readFileSync}=await import('node:fs');
   const routeSource=readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');
@@ -95,7 +117,7 @@ test('Both HTTP entry points preserve the original caller key for Payment Core v
     const start=routeSource.indexOf("app.post('"+route+"'");
     assert.ok(start>=0,'missing payment route '+route);
     const snippet=routeSource.slice(start,start+650);
-    assert.match(snippet,/const idempotency=req\.headers\['idempotency-key'\]\|\|req\.body\?\.idempotency_key;/);
+    assert.match(snippet,/const idempotency=paymentRequestIdempotencyKey\(req\.headers,req\.body\);/);
     assert.doesNotMatch(snippet,/idempotency=clean\(/);
   }
 });

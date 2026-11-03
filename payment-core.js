@@ -15,6 +15,20 @@ const paymentIntentIdempotencyKey=raw=>{
   }
   return raw;
 };
+// HTTP callers may supply this identity in either header or JSON body.
+// Contradictory values cannot be silently resolved in favor of one channel:
+// that could acknowledge a different committed same-scope payment.
+export function paymentRequestIdempotencyKey(headers={},body={}){
+  const header=headers?.['idempotency-key'];
+  const payload=body?.idempotency_key;
+  if(header!==undefined&&payload!==undefined&&header!==payload){
+    throw Object.assign(new Error('Payment idempotency header and body conflict'),{
+      status:400,code:'PAYMENT_IDEMPOTENCY_KEY_CONFLICT'
+    });
+  }
+  return paymentIntentIdempotencyKey(header!==undefined?header:payload);
+}
+
 // Serializes the global key across both Order and Service Job transactions.
 // A SELECT of an absent row cannot lock another concurrent insert.
 const lockPaymentIntentIdempotencyKey=(client,key)=>
