@@ -4,6 +4,21 @@ import {resolveAcceptedServiceJobPayable} from './local-services-pricing-core.js
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
 const hash=v=>crypto.createHash('sha256').update(String(v??''),'utf8').digest('hex');
+const paymentIntentIdempotencyKey=raw=>{
+  const key=String(raw??'').trim();
+  // Reject overlength identity; truncation conflates distinct caller intents.
+  if(!key||key.length>220){
+    throw Object.assign(new Error('Payment idempotency key must contain 1-220 characters'),{
+      status:400,code:'PAYMENT_IDEMPOTENCY_KEY_INVALID'
+    });
+  }
+  return key;
+};
+// Serializes the global key across both Order and Service Job transactions.
+// A SELECT of an absent row cannot lock another concurrent insert.
+const lockPaymentIntentIdempotencyKey=(client,key)=>
+  client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))',[key]);
+
 
 export const PAYMENT_COMPONENTS=Object.freeze([
   'merchandise','delivery','platform_fee','country_operator_fee','territory_operator_fee',
@@ -159,8 +174,8 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
     if(o.payment_method!=='online')throw Object.assign(new Error('This order is not configured for online payment'),{status:409});
     const outstanding=money(o.outstanding_amount);
     if(outstanding<=0)throw Object.assign(new Error('Order is already paid'),{status:409});
-    const key=clean(idempotencyKey,220);
-    if(!key)throw Object.assign(new Error('Idempotency key is required'),{status:400});
+    const key=paymentIntentIdempotencyKey(idempotencyKey);
+    await lockPaymentIntentIdempotencyKey(client,key);
     const existing=await client.query("SELECT * FROM payment_intents WHERE idempotency_key=$1",[key]);
     if(existing.rowCount){
       // An idempotency key is globally unique, but a replay may only read
@@ -334,8 +349,8 @@ export async function createServiceJobPaymentIntent(pool,{
     const payable=summary.commercial.payable_value;
     if(payable<=0)throw Object.assign(new Error('Service Job has no payable amount'),{status:409});
 
-    const key=clean(idempotencyKey,220);
-    if(!key)throw Object.assign(new Error('Idempotency key is required'),{status:400});
+    const key=paymentIntentIdempotencyKey(idempotencyKey);
+    await lockPaymentIntentIdempotencyKey(client,key);
     const existing=await client.query("SELECT * FROM payment_intents WHERE idempotency_key=$1",[key]);
     if(existing.rowCount){
       const old=existing.rows[0];

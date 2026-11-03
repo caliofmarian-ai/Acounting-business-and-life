@@ -10,6 +10,10 @@ function paymentReplayFixture(existing){
     async query(sql,params=[]){
       statements.push({sql,params});
       if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql.includes('pg_advisory_xact_lock')){
+        assert.deepEqual(params,['scope-key-31']);
+        return{rowCount:1,rows:[{}]};
+      }
       if(sql.includes('FROM orders o JOIN businesses b')){
         assert.deepEqual(params,[31]);
         return{rowCount:1,rows:[{
@@ -60,3 +64,12 @@ for(const [scenario,changedFields] of [
     assert.equal(f.releases(),1);
   });
 }
+
+test('An oversized payment key is rejected without truncation or lookup',async()=>{
+  const f=paymentReplayFixture({...authorizedIntent});
+  await assert.rejects(createOrderPaymentIntent(f.pool,{...args,idempotencyKey:'x'.repeat(221)}),
+    e=>e?.status===400&&e?.code==='PAYMENT_IDEMPOTENCY_KEY_INVALID');
+  assert.equal(f.statements.filter(x=>x.sql.includes('FROM payment_intents')).length,0);
+  assert.equal(f.statements.filter(x=>x.sql.includes('pg_advisory_xact_lock')).length,0);
+  assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,1);
+});
