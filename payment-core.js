@@ -15,6 +15,19 @@ const paymentIntentIdempotencyKey=raw=>{
   }
   return raw;
 };
+
+const paymentProviderCode=raw=>{
+  // Provider identity is part of the original payment instruction. Trimming,
+  // coercion or truncation could replay another provider's committed intent.
+  if(raw==null||raw==='')return '';
+  if(typeof raw!=='string'||raw.length>80||raw!==raw.trim()||
+     /[\u0000-\u001F\u007F]/.test(raw)){
+    throw Object.assign(new Error('Payment provider code must be a literal, unpadded string of 0-80 characters'),{
+      status:400,code:'PAYMENT_PROVIDER_CODE_INVALID'
+    });
+  }
+  return raw;
+};
 // HTTP callers may supply this identity in either header or JSON body.
 // Contradictory values cannot be silently resolved in favor of one channel:
 // that could acknowledge a different committed same-scope payment.
@@ -35,7 +48,7 @@ export function paymentRequestIdempotencyKey(headers={},body={}){
 // Amount is intentionally NOT compared: a legitimate settled retry may see a
 // smaller (or zero) outstanding balance than its original committed intent.
 function assertPaymentIntentReplayDetails(existing,{logicalMethod,providerCode,currencyCode}){
-  const method=normalizeMethod(logicalMethod),provider=clean(providerCode,80);
+  const method=normalizeMethod(logicalMethod),provider=paymentProviderCode(providerCode);
   const currency=String(currencyCode||'PHP').toUpperCase();
   if(existing.logical_method!==method||String(existing.provider_code??'')!==provider||
      String(existing.currency_code??'').toUpperCase()!==currency){
@@ -198,6 +211,7 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    const provider=paymentProviderCode(providerCode);
     const q=await client.query("SELECT o.*,b.territory_id FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1 FOR UPDATE OF o",[Number(orderId)]);
     if(!q.rowCount)throw Object.assign(new Error('Order not found'),{status:404});
     const o=q.rows[0];
@@ -226,7 +240,6 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
     // A retry of the original key must remain recoverable after settlement
     // reduced outstanding to zero; only a NEW key is rejected as already paid.
     if(outstanding<=0)throw Object.assign(new Error('Order is already paid'),{status:409});
-    const provider=clean(providerCode,80);
     const configured=provider?await client.query("SELECT 1 FROM payment_provider_configs WHERE provider_code=$1 AND status IN ('sandbox','active')",[provider]):{rowCount:0};
     const ins=await client.query("INSERT INTO payment_intents(public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,provider_code,logical_method,currency_code,amount,status,client_reference,expires_at) VALUES($1,$2,'order',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW()+INTERVAL '30 minutes') RETURNING *",[
       'pi_'+crypto.randomBytes(16).toString('hex'),key,o.id,payerAccountId,o.business_id,o.territory_id,provider,normalizeMethod(logicalMethod),o.currency_code||'PHP',outstanding,configured.rowCount?'requires_action':'requires_provider',clean(clientReference,200)
@@ -372,6 +385,7 @@ export async function createServiceJobPaymentIntent(pool,{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    const provider=paymentProviderCode(providerCode);
     const id=Number(serviceJobId);
     const q=await client.query("SELECT * FROM service_jobs WHERE id=$1 FOR UPDATE",[id]);
     if(!q.rowCount)throw Object.assign(new Error('Service Job not found'),{status:404});
@@ -406,7 +420,6 @@ export async function createServiceJobPaymentIntent(pool,{
     if(summary.payment.outstanding<=0)throw Object.assign(new Error('Service Job is already paid'),{status:409});
     if(summary.payment.pending_amount>0)throw Object.assign(new Error('A Service Job payment is already pending'),{status:409});
 
-    const provider=clean(providerCode,80);
     const ins=await client.query(`
       INSERT INTO payment_intents(
         public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,

@@ -121,6 +121,22 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       assert.equal(await count('payment_allocations'),before,
         'rejected aliases cannot create allocations');
     });
+
+    await t.test('invalid provider identities cannot create payment intents or allocations',async()=>{
+      const beforeIntents=await count('payment_intents');
+      const beforeAllocations=await count('payment_allocations');
+      for(const [i,invalid] of [
+        ' provider_x','provider_x ','provider_x\\n','x'.repeat(81),
+        42,false,[],{provider:'provider_x'}
+      ].entries()){
+        await assert.rejects(
+          createOrderPaymentIntent(pool,{...b,idempotencyKey:'bad-provider-'+i,providerCode:invalid}),
+          e=>e?.status===400&&e?.code==='PAYMENT_PROVIDER_CODE_INVALID'
+        );
+      }
+      assert.equal(await count('payment_intents'),beforeIntents);
+      assert.equal(await count('payment_allocations'),beforeAllocations);
+    });
     await t.test('allocation error rolls back key; original attempt may be safely retried',async()=>{
       const key='rollback-only-key';
       const injected={connect:async()=>{

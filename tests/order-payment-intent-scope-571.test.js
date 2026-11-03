@@ -110,6 +110,48 @@ test('HTTP payment requests reject conflicting header/body idempotency identitie
   }
 });
 
+
+test('Both payment HTTP routes pass raw provider instructions for validated replay',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const source=readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');
+  for(const route of ['/api/payments/intents/order/:id','/api/payments/intents/service-job/:id']){
+    const at=source.indexOf("app.post('"+route+"'");
+    assert.ok(at>=0);
+    const snippet=source.slice(at,at+700);
+    assert.match(snippet,/const provider=\(req\.body\?\.provider_code==null/);
+    assert.doesNotMatch(snippet,/provider=clean\(/);
+  }
+});
+
+test('Provider identity rejects silent padding, truncation or nonstring alias before Order lookup',async()=>{
+  for(const invalid of [
+    ' provider_a','provider_a ','provider_a\\n','\\tprovider_a',
+    'x'.repeat(81),17,false,[],{provider:'provider_a'}
+  ]){
+    const f=paymentReplayFixture({...authorizedIntent});
+    await assert.rejects(createOrderPaymentIntent(f.pool,{...args,providerCode:invalid}),
+      e=>e?.status===400&&e?.code==='PAYMENT_PROVIDER_CODE_INVALID');
+    assert.equal(f.statements.some(x=>x.sql.includes('FROM payment_intents')),false);
+    assert.equal(f.statements.some(x=>x.sql.includes('pg_advisory_xact_lock')),false);
+    assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,1);
+    assert.equal(f.releases(),1);
+  }
+  const samePrefix=paymentReplayFixture({...authorizedIntent,provider_code:'p'.repeat(79)+'a'});
+  await assert.rejects(createOrderPaymentIntent(samePrefix.pool,{...args,providerCode:'p'.repeat(79)+'b'}),
+    e=>e?.status===409&&e?.code==='PAYMENT_INTENT_DETAILS_CONFLICT');
+});
+
+test('Service Job rejects malformed provider identity before payment intent query',async()=>{
+  const prior={id:199,source_type:'service_job',source_id:91,payer_account_id:7,
+    logical_method:'online_other',provider_code:'',currency_code:'PHP'};
+  const f=serviceJobReplayFixture(prior);
+  await assert.rejects(createServiceJobPaymentIntent(f.pool,{
+    serviceJobId:91,payerAccountId:7,idempotencyKey:'service-job-key-91',providerCode:'p'.repeat(81)
+  }),e=>e?.status===400&&e?.code==='PAYMENT_PROVIDER_CODE_INVALID');
+  assert.equal(f.statements.some(x=>x.includes('FROM payment_intents')),false);
+  assert.equal(f.statements.filter(x=>x==='ROLLBACK').length,1);
+});
+
 test('Both HTTP entry points preserve the original caller key for Payment Core validation',async()=>{
   const {readFileSync}=await import('node:fs');
   const routeSource=readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');

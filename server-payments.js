@@ -602,7 +602,8 @@ app.get('/api/payments/open-orders',async(req,res,next)=>{try{
 app.post('/api/payments/intents/order/:id',body,async(req,res,next)=>{try{
   const me=await identity(req);
   const idempotency=paymentRequestIdempotencyKey(req.headers,req.body);
-  const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
+  const provider=(req.body?.provider_code==null||req.body.provider_code==='')
+    ?(process.env.PAYMENT_PROVIDER_DEFAULT??''):req.body.provider_code;
   const intent=await createOrderPaymentIntent(pool,{orderId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,clientReference:req.body?.client_reference||''});
   res.status(201).json({...intent,provider_ready:intent.status!=='requires_provider',next_action:intent.status==='requires_provider'?'CONNECT_REAL_PAYMENT_PROVIDER':'PROVIDER_ADAPTER_REQUIRED'});
 }catch(e){next(e)}});
@@ -610,7 +611,8 @@ app.post('/api/payments/intents/order/:id',body,async(req,res,next)=>{try{
 app.post('/api/payments/intents/service-job/:id',body,async(req,res,next)=>{try{
   const me=await identity(req);
   const idempotency=paymentRequestIdempotencyKey(req.headers,req.body);
-  const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
+  const provider=(req.body?.provider_code==null||req.body.provider_code==='')
+    ?(process.env.PAYMENT_PROVIDER_DEFAULT??''):req.body.provider_code;
   const intent=await createServiceJobPaymentIntent(pool,{
     serviceJobId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,
     logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,
