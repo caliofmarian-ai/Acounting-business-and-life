@@ -172,9 +172,9 @@ export function createInventoryLocationUi({
   }
 
   async function createLocation(event){
+    event.preventDefault();
     const write=beginWrite(byId('inventoryLocationsCard'));if(!write)return;
     try{
-    event.preventDefault();
     setText('inventoryLocationMessage','Saving location…');
     try{
       await api('/api/inventory/locations',{
@@ -199,9 +199,9 @@ export function createInventoryLocationUi({
   }
 
   async function transfer(event){
+    event.preventDefault();
     const write=beginWrite(byId('inventoryLocationsCard'));if(!write)return;
     try{
-    event.preventDefault();
     const inventoryId=Number(byId('inventoryTransferItem')?.value);
     const sourceId=Number(byId('inventoryTransferSource')?.value);
     const destinationId=Number(byId('inventoryTransferDestination')?.value);

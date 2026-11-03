@@ -7,12 +7,16 @@ import {join} from 'node:path';
 
 const read=p=>readFileSync(p,'utf8'),source=read('public/v03.js');
 const block=(a,b)=>{const start=source.indexOf(a),end=source.indexOf(b,start);assert.ok(start>=0&&end>start);return source.slice(start,end)};
-const forms=['stockForm','stockAdjustmentForm','consumableRuleForm','storageForm','restockSettingsForm','ingredientAllergenForm'];
-const callbacks=forms.map(form=>{
+const forms=['stockForm','stockAdjustmentForm','consumableRuleForm','storageForm','restockSettingsForm','ingredientAllergenForm','inventoryUnavailableForm'];
+const callbacks=forms.filter(form=>form!=='inventoryUnavailableForm').map(form=>{
   const start=source.indexOf(`$('${form}')${form==='stockForm'?'.':'?.'}addEventListener('submit',async`);
   const end=source.indexOf('\n});',start)+4;assert.ok(start>=0&&end>start);
   return source.slice(start,end);
 }).join('\n');
+function functionSource(name){
+  const match=new RegExp('^(?:async )?function '+name+'\\(','m').exec(source);assert.ok(match);
+  const tail=source.slice(match.index),end=tail.slice(1).search(/\n(?:async )?function /);return end<0?tail:tail.slice(0,end+1);
+}
 const setup=`
 import {createInventoryWriteController} from '/inventory-write-context.js';
 import {createInventoryCountUi} from '/inventory-count-ui.js';
@@ -27,7 +31,12 @@ const beginInventoryWrite=root=>inventoryWrites.begin(root);
 let inventoryConfirmedContext=merchantReadContext();
 window.__calls=[];window.__refreshes=0;window.__logouts=0;
 function setOnline(){}function logout(){window.__logouts++}
-const num=String,money=String;function invalidateMerchantToday(){}
+const num=String,money=String,esc=String;function invalidateMerchantToday(){}
+const inventoryReadGuard=()=>{const c=merchantReadContext();return()=>merchantReadIsCurrent(c)};
+const selectedPositiveInventoryId=select=>Number(select.value)||null;
+function updateInventoryUnavailablePreview(){}function fillInventoryUnavailableEditor(){}
+const consumableRuleLabel=()=> 'Synthetic consumable';
+const emptyRow=text=>{const n=document.createElement('div');n.textContent=text;return n};
 async function loadStock(){window.__refreshes++}async function loadProducts(){window.__refreshes++}
 async function loadStockAdjustmentLots(){window.__refreshes++}
 function updateStockAdjustmentPreview(){}const checkedAllergens=()=>[];
@@ -37,17 +46,26 @@ window.fetch=(path,options={})=>{
   window.__calls.push({path,method:options.method||'GET',headers:options.headers});
   return new Promise(resolve=>{window.__resolve=(status,data)=>resolve(new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}}))});
 };
-`+block('async function api(', '\nasync function cachedJson(')+'\n'+callbacks+`
+`+block('async function api(', '\nasync function cachedJson(')+'\n'+callbacks+'\n'+functionSource('loadInventoryUnavailableAllocations')+'\n'+functionSource('loadConsumableRules')+'\n'+block('function wireInventoryUnavailableUi(){','\nlet inventoryLoadGeneration=')+`
 const options={api,getReadGuard:()=>{const c=merchantReadContext();return()=>merchantReadIsCurrent(c)},beginWrite:beginInventoryWrite,
  getInventory:()=>[{id:10,item:'Synthetic flour',unit:'g'}],getLocations:()=>[],
  refreshInventory:loadStock,escapeHtml:String,formatNumber:String};
 const count=createInventoryCountUi(options),locations=createInventoryLocationUi(options),scan=createInventoryScanUi(options);
-count.wire();locations.wire();scan.wire();
-window.__fixture={forms,prepare(){
+count.wire();locations.wire();scan.wire();wireInventoryUnavailableUi();
+window.__fixture={forms,prepareCount(action){
+ count.render({id:8,business_id:11,status:['countSessionPostBtn','countSessionResumeBtn'].includes(action)?'review':'in_progress',
+ items:[{inventory_id:10,item:'Synthetic flour',unit:'g',inventory_type:'ingredient',counted_quantity:1,expected_quantity:1,variance_quantity:0}],
+ progress:{total:1,counted:1,remaining:0}});
+},seedAction(action){
+ return action==='restore'?loadInventoryUnavailableAllocations():action==='remove'?loadConsumableRules():locations.load();
+},prepare(){
+ count.reset();locations.reset();
  inventoryWrites.invalidate();window.__context={accountId:1,businessId:11,session:'synthetic-a',profileEpoch:1};
  inventoryConfirmedContext=merchantReadContext();window.__calls=[];window.__refreshes=0;
- for(const id of ['stockAdjustmentInventory','storageInventoryId','restockSettingsInventory','ingredientAllergenInventory','inventoryIdentifierItem']){if($(id).tagName==='SELECT'&&![...$(id).options].some(o=>o.value==='10'))$(id).add(new Option('Synthetic flour','10'));$(id).value='10';}
- $('stockAdjustmentQty').value='1';
+ for(const id of ['stockAdjustmentInventory','storageInventoryId','restockSettingsInventory','ingredientAllergenInventory','inventoryIdentifierItem','inventoryUnavailableItem','inventoryTransferItem','inventoryTransferSource','inventoryTransferDestination']){if($(id).tagName==='SELECT'&&![...$(id).options].some(o=>o.value==='10'))$(id).add(new Option('Synthetic flour','10'));$(id).value='10';}
+ $('stockAdjustmentQty').value='1';$('inventoryUnavailableQuantity').value='1';
+ for(const [id,value] of [['inventoryTransferSource','21'],['inventoryTransferDestination','22']]){$(id).add(new Option(value,value));$(id).value=value}
+ $('inventoryTransferQuantity').value='1';
 },switch(){window.__context={...window.__context,businessId:22};inventoryWrites.invalidate()},submit(form){$(form).dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))}};
 window.__ready=true;
 `;
@@ -84,19 +102,49 @@ try{
         assert.equal(await page.locator('#stockItem').inputValue(),'B flour draft',form+' must not erase B draft');
         assert.equal(await page.evaluate(()=>window.__refreshes),0,form+' must not refresh B');
         assert.equal(await page.evaluate(()=>window.__logouts),0,form+' old 401 cannot log out B');
-        const msg={stockForm:'stockMessage',stockAdjustmentForm:'stockAdjustmentMessage',consumableRuleForm:'consumableRuleMessage',storageForm:'storageMessage',restockSettingsForm:'restockSettingsMessage',ingredientAllergenForm:'ingredientAllergenMessage'}[form];
+        const msg={stockForm:'stockMessage',stockAdjustmentForm:'stockAdjustmentMessage',consumableRuleForm:'consumableRuleMessage',storageForm:'storageMessage',restockSettingsForm:'restockSettingsMessage',ingredientAllergenForm:'ingredientAllergenMessage',inventoryUnavailableForm:'inventoryUnavailableMessage'}[form];
         assert.equal(await page.locator('#'+msg).textContent(),'B draft');
         checks.push(width+' '+form+' stale '+status);
       }
     }
-    for(const [action,message] of [['countSessionStart','countSessionMessage'],['inventoryIdentifierSave','inventoryIdentifierMessage']]){
-      await page.evaluate(action=>{window.__fixture.prepare();document.getElementById(action).click()},action);
-      assert.equal(await page.evaluate(()=>window.__calls.length),1,action+' dispatch');
-      await page.evaluate(message=>{window.__fixture.switch();document.getElementById(message).textContent='B draft';window.__resolve(200,{id:8,items:[]})},message);
-      await page.waitForTimeout(15);
-      assert.equal(await page.locator('#'+message).textContent(),'B draft');
-      assert.equal(await page.evaluate(()=>window.__refreshes),0);
-      checks.push(width+' '+action+' stale');
+    for(const [action,message] of [
+      ['countSessionStart','countSessionMessage'],['countSessionSaveItem','countSessionMessage'],
+      ['countSessionReviewBtn','countSessionMessage'],['countSessionResumeBtn','countSessionMessage'],
+      ['countSessionPostBtn','countSessionMessage'],['inventoryIdentifierSave','inventoryIdentifierMessage'],
+      ['inventoryLocationForm','inventoryLocationMessage'],['inventoryTransferForm','inventoryTransferMessage']
+    ]){
+      for(const status of [200,500]){
+        await page.evaluate(action=>{
+          window.__fixture.prepare();if(action.startsWith('countSession')&&action!=='countSessionStart')window.__fixture.prepareCount(action);
+          const n=document.getElementById(action);if(n.tagName==='FORM'){window.__prevented=[n.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})),n.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))]}else n.click();
+        },action);
+        assert.equal(await page.evaluate(()=>window.__calls.length),1,action+' dispatch');
+        if(action.endsWith('Form'))assert.deepEqual(await page.evaluate(()=>window.__prevented),[false,false],action+' duplicate native submit must prevent navigation');
+        await page.evaluate(({message,status})=>{window.__fixture.switch();document.getElementById(message).textContent='B draft';window.__resolve(status,{error:'A failure',id:8,items:[]})},{message,status});
+        await page.waitForTimeout(15);
+        assert.equal(await page.locator('#'+message).textContent(),'B draft');
+        assert.equal(await page.evaluate(()=>window.__refreshes),0);
+        checks.push(width+' '+action+' stale '+status);
+      }
+    }
+    for(const [action,selector,rows,message] of [
+      ['restore','#inventoryUnavailableList button',[{id:1,state:'active',reason:'other',quantity:1,unit:'g'}],'inventoryUnavailableMessage'],
+      ['remove','#consumableRuleList button',[{id:1,item:'Synthetic cup',stock_quantity:5,unit:'unit'}],'consumableRuleMessage'],
+      ['reverse','#inventoryTransferList button',{locations:[],balances:[],transfers:[{id:9,item:'Synthetic flour',quantity:1,unit:'g',source_location:'A',destination_location:'B'}]},'inventoryTransferMessage']
+    ]){
+      for(const status of [200,500]){
+        await page.evaluate(({action,rows})=>{window.__fixture.prepare();window.__loaded=window.__fixture.seedAction(action);window.__resolve(200,rows)},{action,rows});
+        await page.evaluate(()=>window.__loaded);
+        assert.equal(await page.locator(selector).count(),1,action+' actual action button');
+        await page.evaluate(selector=>{window.__calls=[];document.querySelector(selector).click()},selector);
+        assert.equal(await page.evaluate(()=>window.__calls.length),1,action+' dispatch');
+        await page.evaluate(({message,status})=>{window.__fixture.switch();document.getElementById(message).textContent='B draft';window.__resolve(status,{error:'A failure'})},{message,status});
+        await page.waitForTimeout(15);
+        assert.equal(await page.locator('#'+message).textContent(),'B draft');
+        assert.equal(await page.evaluate(()=>window.__refreshes),0);
+        assert.equal(await page.evaluate(()=>window.__calls.length),1,'stale action starts no new reads');
+        checks.push(width+' '+action+' stale '+status);
+      }
     }
     await page.evaluate(()=>{window.__fixture.prepare();window.__fixture.submit('storageForm');window.__resolve(200,{item:'Current flour'})});
     await page.waitForFunction(()=>document.getElementById('storageMessage').textContent==='Storage saved for Current flour.');
