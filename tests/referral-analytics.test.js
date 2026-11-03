@@ -100,7 +100,7 @@ test('PostHog delivery uses correlation id, disables person profiles and forward
 test('referral UI is wired to the same-origin analytics gateway, never directly to PostHog', () => {
   const helper = readFileSync(new URL('../public/referral/referral-analytics.js', import.meta.url), 'utf8');
   const landing = readFileSync(new URL('../public/referral/referral.js', import.meta.url), 'utf8');
-  const promotion = readFileSync(new URL('../public/referral/promotion-center.html', import.meta.url), 'utf8');
+  const promotion = readFileSync(new URL('../public/referral/promotion-page.js', import.meta.url), 'utf8');
   const authUi = readFileSync(new URL('../public/auth-ui.js', import.meta.url), 'utf8');
   const server = readFileSync(new URL('../server-auth.js', import.meta.url), 'utf8');
   const adapter = readFileSync(new URL('../growth/referral-analytics.js', import.meta.url), 'utf8');

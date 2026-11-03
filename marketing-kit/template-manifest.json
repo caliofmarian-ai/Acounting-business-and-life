@@ -1,5 +1,5 @@
 {
-  "version": "1.3.1",
+  "version": "1.4.0",
   "source": {
     "figmaFileName": "Business & Life — Growth & Referral System",
     "figmaFileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
@@ -208,6 +208,19 @@
       "figmaStatus": "design_master_ready",
       "canvaStatus": "editable_master_ready",
       "canvaTitle": "Business & Life — QR Phone Card V1"
+    },
+    {
+      "id": "BRANDED_INVITATION_V1",
+      "purpose": "Complete approved Business & Life artwork above a separate personal QR and invitation footer",
+      "width": 1536,
+      "height": 1536,
+      "runtimeSource": "public/referral/marketing-kit-runtime.js",
+      "runtimeStatus": "runtime_only",
+      "figmaNodeId": null,
+      "figmaStatus": "not_created",
+      "canvaStatus": "not_created",
+      "channels": ["facebook_post", "digital_card", "in_person", "qr"],
+      "requiredFields": ["REFERRER_NAME", "REFERRAL_CODE", "REFERRAL_URL", "QR_ASSET"]
     }
   ],
   "qrRules": {

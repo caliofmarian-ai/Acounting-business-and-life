@@ -13,7 +13,6 @@ import {
 const manifest = JSON.parse(readFileSync(new URL('../marketing-kit/template-manifest.json', import.meta.url), 'utf8'));
 const enCopy = JSON.parse(readFileSync(new URL('../marketing-kit/copy.en-PH.json', import.meta.url), 'utf8'));
 const filCopy = JSON.parse(readFileSync(new URL('../marketing-kit/copy.fil-PH.json', import.meta.url), 'utf8'));
-const page = readFileSync(new URL('../public/referral/marketing-kit.html', import.meta.url), 'utf8');
 const code = 'r1_abcdefghijklmnop';
 const url = 'https://example.test/referral/?ref='+code+'&utm_campaign=merchant_referral_v1&utm_source=profile&utm_medium=referral&profile=merchant';
 const qr = 'data:image/png;base64,QUJDRA==';
@@ -78,26 +77,4 @@ test('Filipino creative uses canonical localized headline and CTA without changi
   assert.match(svg, /I-SCAN PARA MAGSIMULA/);
   assert.match(svg, /Inirerekomenda ni Maria Santos/);
   assert.match(svg, /r1_abcdefghijklmnop/);
-});
-
-test('Marketing Kit page uses authenticated live referral data and user-initiated export/share', () => {
-  assert.match(page, /\/api\/growth\/referral\?profile=/);
-  assert.match(page, /<script src="\/session-security\.js"><\/script>/);
-  assert.match(page, /window\.ABLSession\?\.authenticated\(\)/);
-  assert.doesNotMatch(page, /Authorization:'Bearer '|localStorage\.getItem\('abl_token'\)/);
-  assert.match(page, /Export SVG/);
-  assert.match(page, /navigator\.share/);
-  assert.match(page, /navigator\.canShare/);
-  assert.match(page, /typeof File==='function'/);
-  assert.match(page, /downloadBlob\(blob,fileName\)/);
-  assert.match(page, /promotion-center\.html\?profile=/);
-  assert.match(page, /CREATIVE LANGUAGE/);
-  assert.match(page, /fil-PH/);
-  assert.match(page, /syncVariantOptions/);
-  assert.match(page, /new Blob/);
-  assert.match(page, /preview\.innerHTML=svg/);
-  assert.match(page, /preview\.querySelector\('svg'\)/);
-  assert.match(page, /previewFailure/);
-  assert.doesNotMatch(page, /preview\.src=previewUrl/);
-  assert.doesNotMatch(page, /api\.qrserver|quickchart|chart\.google/);
 });

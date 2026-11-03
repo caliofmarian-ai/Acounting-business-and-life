@@ -11,11 +11,13 @@ export function createInventoryScanUi({
   escapeHtml,
   formatNumber,
   onReceiveItem,
-  onCountItem
+  onCountItem,
+  getReadGuard=()=>()=>true
 }){
   const esc=escapeHtml;
   const num=formatNumber;
   let wired=false;
+  let lookupGeneration=0;
   let stream=null;
   let detector=null;
   let scanning=false;
@@ -136,6 +138,8 @@ export function createInventoryScanUi({
   }
 
   async function lookup({query='',barcode=''}={}){
+    const generation=++lookupGeneration,isCurrent=getReadGuard();
+    const current=()=>generation===lookupGeneration&&isCurrent();
     const cleanQuery=String(query||'').trim();
     const cleanBarcode=String(barcode||'').trim();
     if(!cleanQuery&&!cleanBarcode){
@@ -148,9 +152,11 @@ export function createInventoryScanUi({
         ?'/api/inventory/lookup?barcode='+encodeURIComponent(cleanBarcode)
         :'/api/inventory/lookup?q='+encodeURIComponent(cleanQuery);
       const rows=await api(path);
+      if(!current())return[];
       renderResults(rows,{source:cleanBarcode?'scan':'search'});
       return rows;
     }catch(error){
+      if(!current())return[];
       renderResults([],{source:cleanBarcode?'scan':'search'});
       setMessage(error.message||'Inventory lookup failed.','negative');
       return[];
@@ -299,6 +305,7 @@ export function createInventoryScanUi({
     syncInventory,
     lookup,
     stopCamera,
+    reset(){lookupGeneration+=1;stopCamera();byId('inventoryLookupResults')?.replaceChildren();},
     selectIdentifierItem(id){
       byId('inventoryIdentifiersEditor')?.setAttribute('open','');
       fillIdentifierItems(id);

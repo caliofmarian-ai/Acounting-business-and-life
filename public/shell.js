@@ -1,4 +1,5 @@
 import {phGeographyCascadeMarkup,bindPhGeographyCascade} from './ph-geography-cascade.js';
+import {createAppBackController} from './app-back-navigation.js';
 const ROLE_META = {
   merchant: { label: 'Merchant', icon: '🏪', desc: 'Accounting, products and business', manageDesc: 'Sell products or food, manage orders, stock, pricing and business finances.', hero: 'Run your business with every peso visible.' },
   customer: { label: 'Customer', icon: '🛍️', desc: 'Discover, order and track', manageDesc: 'Shop from local businesses, place orders, choose delivery and track purchases.', hero: 'Discover local. Order with confidence.' },
@@ -55,6 +56,93 @@ if(PERF_TRACE_ENABLED){
 
 const token = () => Boolean(window.ABLSession?.authenticated());
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+
+const appBackController=createAppBackController({
+  history:window.history,
+  subscribePop:listener=>window.addEventListener('popstate',listener),
+  getContext:()=>({authenticated:token(),accountId:snapshot?.account?.id||null,activeRole:snapshot?.account?.active_role||null}),
+  restore:restoreAppBackRoute,
+  onChange:state=>{
+    const button=document.getElementById('appNavigationBack');
+    if(button)button.hidden=!state.canGoBack;
+    if(!state.exitPending)document.getElementById('appExitPrompt')?.remove();
+  },
+  onExit:openAppExitPrompt
+});
+function restoreAppBackRoute(route){
+  if(!token()||!snapshot?.account)return false;
+  if(route.kind==='account-home'){openAccountHome();return true}
+  if(route.kind==='account-settings')return openAccountSettings(route.view||'home').then(()=>true);
+  if(route.role!==snapshot.account.active_role)return false;
+  if(route.kind==='profile-home'){showActiveWorkspace();return true}
+  if(route.kind==='merchant-view'&&route.role==='merchant'){
+    const button=document.querySelector('.bottomNav [data-view="'+route.view+'"]');
+    if(!button||!['Dashboard','Stock','Money','Sell','Menu','History','Add'].includes(route.view))return false;
+    showActiveWorkspace();
+    button.click();
+    return true;
+  }
+  if(route.kind==='feature-workspace'){
+    showActiveWorkspace();
+    return openFeatureWorkspace(route.workspaceId);
+  }
+  return false;
+}
+function ensureAppBackChrome(){
+  const actions=document.querySelector('.topActions');
+  if(!actions)return;
+  if(!document.getElementById('appNavigationBack')){
+    const button=document.createElement('button');
+    button.id='appNavigationBack';button.className='appNavigationBack';
+    button.type='button';button.textContent='← Back';button.setAttribute('aria-label','Go back to previous screen');
+    button.hidden=true;button.onclick=()=>appBackController.back();
+    actions.prepend(button);
+  }
+}
+function bindMerchantBackNavigation(){
+  // Explicit known Merchant view controls; no global click interception or synthetic router.
+  const allowed=new Set(['Dashboard','Stock','Money','Sell','Menu','History','Add']);
+  const recordView=name=>{
+    if(!allowed.has(name)||activeSurface!=='profile'||activeRole!=='merchant')return;
+    const view=document.getElementById('view'+name);
+    if(!view||view.classList.contains('hidden'))return;
+    const route=appBackController.getState().activeRoute;
+    // Merchant Today is already represented by the profile-home entry on initial entry.
+    if(name==='Dashboard'&&route?.kind==='profile-home'&&route?.role==='merchant')return;
+    appBackController.record({kind:'merchant-view',role:'merchant',view:name});
+  };
+  const attach=(selector,resolve)=>{
+    document.querySelectorAll(selector).forEach(button=>{
+      if(button.dataset.appBackWired==='1')return;
+      button.dataset.appBackWired='1';
+      button.addEventListener('click',()=>queueMicrotask(()=>recordView(resolve(button))));
+    });
+  };
+  attach('.bottomNav [data-view]',button=>button.dataset.view);
+  attach('[data-view-link]',button=>button.dataset.viewLink);
+  const actions={inventory:'Stock',money:'Money','quick-sale':'Sell',recipes:'Menu'};
+  attach('[data-today-action]',button=>actions[button.dataset.todayAction]||'');
+}
+function openAppExitPrompt({stay,leave}){
+  let overlay=document.getElementById('appExitPrompt');
+  if(!overlay){
+    overlay=document.createElement('div');overlay.id='appExitPrompt';overlay.className='appExitPrompt';
+    overlay.innerHTML='<section role="alertdialog" aria-modal="true" aria-labelledby="appExitTitle" aria-describedby="appExitDescription"><h2 id="appExitTitle">Leave Business & Life?</h2><p id="appExitDescription">You are on the first screen. Do you want to leave the app?</p><div><button type="button" data-app-exit="stay">Stay here</button><button type="button" data-app-exit="leave">Leave app</button></div></section>';
+    document.body.appendChild(overlay);
+  }
+  const filipino=String(document.documentElement.lang||'').toLowerCase().startsWith('fil');
+  overlay.querySelector('#appExitTitle').textContent=filipino?'Umalis sa Business & Life?':'Leave Business & Life?';
+  overlay.querySelector('#appExitDescription').textContent=filipino?'Nasa unang screen ka na. Gusto mo bang lumabas?':'You are on the first screen. Do you want to leave the app?';
+  const stayButton=overlay.querySelector('[data-app-exit="stay"]');
+  const leaveButton=overlay.querySelector('[data-app-exit="leave"]');
+  stayButton.textContent=filipino?'Manatili':'Stay here';
+  leaveButton.textContent=filipino?'Lumabas':'Leave app';
+  stayButton.onclick=()=>{overlay.remove();stay()};
+  leaveButton.onclick=()=>{overlay.remove();leave()};
+  overlay.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();stayButton.click()}};
+  stayButton.focus();
+}
+
 
 async function profileApi(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
@@ -240,8 +328,27 @@ function openAccountMoneySettings(){
   showToast('Money & Banking is still loading. Try again in a moment.');
   return false;
 }
+function openMerchantLocalDestination(name){
+  if(activeSurface!=='profile'||activeRole!=='merchant')return showToast('Open the Merchant profile first.');
+  if(name==='Menu'&&document.getElementById('merchantRecipesNav')?.classList.contains('roleFinanceHidden'))
+    return showToast('Products & recipes is unavailable for this business.');
+  closeDrawer();
+  hideFeatureWorkspaces();
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
+  document.getElementById('roleHub')?.classList.add('hidden');
+  const legacyNav=document.querySelector('.bottomNav');
+  legacyNav?.classList.remove('hidden'); // Keep its existing canonical click handlers, not its appearance.
+  const destination=legacyNav?.querySelector('[data-view="'+name+'"]');
+  if(!destination)return showToast('This Merchant destination is unavailable.');
+  destination.click();
+  window.scrollTo({top:0,behavior:'auto'});
+  return true;
+}
 function openMerchantDestination(destination){
   if(destination==='merchantHome')return showActiveWorkspace();
+  if(destination==='stockQuickButton')return openMerchantLocalDestination('Stock');
+  if(destination==='moneyQuickButton')return openMerchantLocalDestination('Money');
+  if(destination==='recipesQuickButton')return openMerchantLocalDestination('Menu');
   if(destination==='profileSettings')return openProfileSettingsForRole('merchant');
   const action=destination==='ordersQuickButton'?window.BusinessLifeOrders?.openMerchantOrders
     :destination==='catalogQuickButton'?window.BusinessLifeMarketplace?.openMerchantCatalog
@@ -281,12 +388,15 @@ function ensureShellChrome() {
     nav.id='merchantWorkspaceNav';
     nav.className='merchantWorkspaceNav hidden';
     nav.setAttribute('aria-label','Merchant workspace navigation');
-    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton" type="button" data-merchant-nav="home">Today</button><button id="ordersQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="orders">Orders</button><button id="catalogQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="catalog">Catalog</button><button id="marketQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="storefront">Storefront</button><button id="supQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="suppliers">Suppliers</button><button id="deliveryQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="delivery">Delivery</button><button id="profileSettingsQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="settings">Settings</button></div>';
+    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton active" type="button" data-merchant-nav="home" aria-current="page">Today</button><button id="ordersQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="orders">Orders</button><button id="catalogQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="catalog">Catalog</button><button id="merchantRecipesTopButton" class="merchantWorkspaceButton roleFinanceHidden" type="button" data-merchant-nav="recipes">Products &amp; recipes</button><button id="merchantStockTopButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="stock">Stock</button><button id="merchantMoneyTopButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="money">Money</button><details id="merchantBusinessTools" class="merchantBusinessTools"><summary class="merchantWorkspaceButton">Business tools</summary><div class="merchantBusinessToolsMenu"><button id="marketQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="storefront">Storefront</button><button id="supQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="suppliers">Suppliers</button><button id="deliveryQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="delivery">Delivery</button><button id="profileSettingsQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="settings">Settings</button></div></details></div><span class="merchantWorkspaceLoading" role="status">Preparing Merchant menu…</span>';
     shell.querySelector('.topbar')?.insertAdjacentElement('afterend',nav);
     const merchantDesktopRoutes={
       merchantHomeButton:'merchantHome',
       ordersQuickButton:'ordersQuickButton',
       catalogQuickButton:'catalogQuickButton',
+      merchantRecipesTopButton:'recipesQuickButton',
+      merchantStockTopButton:'stockQuickButton',
+      merchantMoneyTopButton:'moneyQuickButton',
       marketQuickButton:'marketQuickButton',
       supQuickButton:'supQuickButton',
       deliveryQuickButton:'deliveryQuickButton',
@@ -296,7 +406,10 @@ function ensureShellChrome() {
       const button=nav.querySelector('#'+buttonId);
       if(button&&!button.dataset.shellMerchantWired){
         button.dataset.shellMerchantWired='true';
-        button.addEventListener('click',()=>openMerchantDestination(destination));
+        button.addEventListener('click',()=>{
+          button.closest?.('#merchantBusinessTools')?.removeAttribute('open');
+          openMerchantDestination(destination);
+        });
       }
     }
   }
@@ -346,6 +459,7 @@ function ensureShellChrome() {
 
 function syncMerchantWorkspaceNavVisibility(){
   const visible=activeSurface==='profile'&&activeRole==='merchant';
+  document.body.dataset.merchantNav=visible?'unified':'';
   document.getElementById('merchantWorkspaceNav')?.classList.toggle('hidden',!visible);
   document.getElementById('merchantMobileTools')?.classList.toggle('hidden',!visible);
 }
@@ -549,6 +663,7 @@ function renderAccountSettings(view=accountSettingsView){
   const account=snapshot.account,test=isCompanyTestAccount(account),workspace=document.getElementById('accountSettingsWorkspace');if(!workspace)return;
   workspace.classList.remove('hidden');
   accountSettingsView=view;
+  appBackController.record({kind:'account-settings',view});
   if(view==='home'){
     workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+accountAdultEligibilityBanner(test)+accountGeographyBanner(test)+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
       <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and official home area'}</small><b>›</b></button>
@@ -932,7 +1047,8 @@ function syncFeatureLauncherState(activeWorkspaceId=null){
   if(catalog){catalog.classList.remove('active');catalog.removeAttribute('aria-current')}
   const home=document.getElementById('merchantHomeButton');
   if(home){
-    const active=!activeWorkspaceId;
+    const localView=document.querySelector('#shell > .view:not(.hidden)');
+    const active=!activeWorkspaceId&&(!localView||localView.id==='viewDashboard');
     home.classList.toggle('active',active);
     if(active)home.setAttribute('aria-current','page');else home.removeAttribute('aria-current');
   }
@@ -965,6 +1081,18 @@ function syncMerchantMarketplaceSurface(surface='storefront'){
   });
 }
 document.addEventListener('abl:marketplace-merchant-surface',event=>syncMerchantMarketplaceSurface(event.detail?.surface||'storefront'));
+document.addEventListener('abl:merchant-local-view',event=>{
+  if(activeSurface!=='profile'||activeRole!=='merchant')return;
+  const localName=event.detail?.name;
+  const navTarget={Dashboard:'home',Stock:'stock',Money:'money',Menu:'recipes'}[localName]||'';
+  for(const button of document.querySelectorAll('#merchantWorkspaceNav [data-merchant-nav],#merchantMobileTools [data-merchant-mobile-action]')){
+    const active=button.dataset.merchantNav===navTarget
+      ||(navTarget==='home'&&button.dataset.merchantMobileAction==='merchantHome');
+    button.classList.toggle('active',active);
+    if(active)button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  }
+});
 
 function hideFeatureWorkspaces(keepWorkspaceId=null) {
   for (const id of FEATURE_WORKSPACE_IDS) {
@@ -989,6 +1117,7 @@ function openFeatureWorkspace(workspaceId){
   hideFeatureWorkspaces(workspaceId);
   workspace.classList.remove('hidden');
   document.dispatchEvent(new CustomEvent('abl:feature-workspace',{detail:{workspaceId,activeRole}}));
+  appBackController.record({kind:'feature-workspace',workspaceId,role:activeRole});
   window.scrollTo({top:0,behavior:'auto'});
   return true;
 }
@@ -999,6 +1128,7 @@ function showActiveWorkspace() {
   activeSurface = 'profile';
   applyActiveRole();
   publishProfileState();
+  appBackController.record({kind:'profile-home',role:activeRole});
   window.scrollTo({top:0,behavior:'auto'});
 }
 window.BusinessLifeShell=Object.freeze({
@@ -1823,6 +1953,7 @@ function renderAccountHome(){
   hideFeatureWorkspaces();
   closeDrawer();
   hideMerchantWorkspace();
+  appBackController.record({kind:'account-home'});
   const account=snapshot.account,hub=document.getElementById('roleHub');
   if(!hub)return;
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
@@ -1872,6 +2003,10 @@ function publishProfileState(){
   const detail={surface:activeSurface,activeRole:activeSurface==='profile'?activeRole:null,transitionTargetRole:activeSurface==='transition'?profileTransitionTarget:null,navigationEpoch,accountId:Number(snapshot?.account?.id)||null,snapshot};
   window.BusinessLifeProfileState=Object.freeze(detail);
   document.dispatchEvent(new CustomEvent('abl:profile-state',{detail}));
+  // Profile activation may come from an async role-switch path, not showActiveWorkspace().
+  if(activeSurface==='profile'&&activeRole&&FEATURE_WORKSPACE_IDS.every(id=>document.getElementById(id)?.classList.contains('hidden')!==false)){
+    appBackController.record({kind:'profile-home',role:activeRole});
+  }
 }
 async function refreshProfile(force=false) {
   if (!token()) return null;
@@ -1919,6 +2054,11 @@ async function boot() {
   await (window.ABLSession?.ready||Promise.resolve());
   perfMark('shell_boot_start');
   if (!ensureShellChrome()) return setTimeout(boot, 80);
+  ensureAppBackChrome();
+  bindMerchantBackNavigation();
+  document.addEventListener('abl:profile-state',()=>appBackController.syncContext());
+  document.addEventListener('abl:auth-expired',()=>appBackController.syncContext());
+  document.addEventListener('abl:business-workspace-changed',()=>appBackController.invalidate());
   perfMark('shell_chrome_ready');
   hideMerchantWorkspace();
   const shell = document.getElementById('shell');

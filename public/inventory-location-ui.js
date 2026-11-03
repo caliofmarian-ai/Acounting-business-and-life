@@ -6,7 +6,8 @@ export function createInventoryLocationUi({
   refreshInventory,
   escapeHtml,
   formatNumber,
-  onLocationsChanged
+  onLocationsChanged,
+  getReadGuard=()=>()=>true
 }){
   const esc=escapeHtml;
   const num=formatNumber;
@@ -14,6 +15,7 @@ export function createInventoryLocationUi({
   let balances=[];
   let transfers=[];
   let wired=false;
+  let readGeneration=0;
 
   function setText(id,text,tone=''){
     const node=byId(id);
@@ -129,25 +131,42 @@ export function createInventoryLocationUi({
     return node;
   }
 
-  async function load(){
+  // The Stock page can begin this read while its independent Inventory item GET is in flight.
+  // Prefetch never renders: the normal load() guard still owns all DOM and state updates.
+  // Consume failures here to avoid an unhandled rejection if Inventory is unavailable.
+  function prefetch(){
+    if(!byId('inventoryLocationsCard'))return null;
+    return Promise.resolve().then(()=>api('/api/inventory/location-summary'))
+      .then(storage=>({ok:true,storage}),error=>({ok:false,error}));
+  }
+
+  async function load({isCurrent=getReadGuard(),prefetched=null}={}){
+    const generation=++readGeneration,current=()=>generation===readGeneration&&isCurrent();
     if(!byId('inventoryLocationsCard'))return{locations:[],balances:[],transfers:[]};
     try{
-      const result=await Promise.all([
-        api('/api/inventory/locations'),
-        api('/api/inventory/location-balances'),
-        api('/api/inventory/transfers')
-      ]);
-      locations=Array.isArray(result[0])?result[0]:[];
-      balances=Array.isArray(result[1])?result[1]:[];
-      transfers=Array.isArray(result[2])?result[2]:[];
+      const prepared=prefetched?await prefetched:null;
+      if(prepared&&!prepared.ok)throw prepared.error;
+      const storage=prepared?prepared.storage:await api('/api/inventory/location-summary');
+      if(!current())return null;
+      if(!storage||!Array.isArray(storage.locations)||
+         !Array.isArray(storage.balances)||!Array.isArray(storage.transfers)){
+        throw new Error('Storage summary could not be loaded. Retry to refresh.');
+      }
+      locations=storage.locations;
+      balances=storage.balances;
+      transfers=storage.transfers;
       renderBalances();
       fillTransferItems();
       renderTransfers();
       onLocationsChanged?.(locations);
       return{locations,balances,transfers};
     }catch(error){
+      if(!current())return null;
+      locations=[];balances=[];transfers=[];
+      for(const id of ['inventoryLocationBalanceList','inventoryTransferList'])byId(id)?.replaceChildren();
+      for(const id of ['inventoryTransferItem','inventoryTransferSource','inventoryTransferDestination'])byId(id)?.replaceChildren(new Option('Reload locations first',''));
       setText('inventoryTransferMessage',error.message||'Storage locations could not be loaded.','negative');
-      return{locations,balances,transfers};
+      return{readError:true};
     }
   }
 
@@ -234,7 +253,9 @@ export function createInventoryLocationUi({
 
   return{
     wire,
+    prefetch,
     load,
+    reset(){readGeneration+=1;locations=[];balances=[];transfers=[];},
     getLocations:()=>locations.slice(),
     getBalances:()=>balances.slice()
   };
