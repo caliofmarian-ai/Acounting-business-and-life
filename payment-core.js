@@ -173,7 +173,6 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
     if(Number(o.customer_account_id)!==Number(payerAccountId))throw Object.assign(new Error('This order belongs to another Customer'),{status:403});
     if(o.payment_method!=='online')throw Object.assign(new Error('This order is not configured for online payment'),{status:409});
     const outstanding=money(o.outstanding_amount);
-    if(outstanding<=0)throw Object.assign(new Error('Order is already paid'),{status:409});
     const key=paymentIntentIdempotencyKey(idempotencyKey);
     await lockPaymentIntentIdempotencyKey(client,key);
     const existing=await client.query("SELECT * FROM payment_intents WHERE idempotency_key=$1",[key]);
@@ -192,6 +191,9 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
       await client.query('COMMIT');
       return old;
     }
+    // A retry of the original key must remain recoverable after settlement
+    // reduced outstanding to zero; only a NEW key is rejected as already paid.
+    if(outstanding<=0)throw Object.assign(new Error('Order is already paid'),{status:409});
     const provider=clean(providerCode,80);
     const configured=provider?await client.query("SELECT 1 FROM payment_provider_configs WHERE provider_code=$1 AND status IN ('sandbox','active')",[provider]):{rowCount:0};
     const ins=await client.query("INSERT INTO payment_intents(public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,provider_code,logical_method,currency_code,amount,status,client_reference,expires_at) VALUES($1,$2,'order',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW()+INTERVAL '30 minutes') RETURNING *",[

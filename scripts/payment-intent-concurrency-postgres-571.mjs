@@ -76,6 +76,12 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       assert.equal(String(replay.id),String(original.id));
       assert.equal(await count('payment_intents'),1);
       assert.equal(await count('payment_allocations'),1);
+      await pool.query('UPDATE orders SET outstanding_amount=0 WHERE id=31');
+      const settledReplay=await createOrderPaymentIntent(pool,a);
+      assert.equal(String(settledReplay.id),String(original.id));
+      await assert.rejects(createOrderPaymentIntent(pool,{...a,idempotencyKey:'new-key-after-paid'}),
+        e=>e?.status===409&&/already paid/.test(e.message));
+      assert.equal(await count('payment_intents'),1);
     });
     await t.test('overlength keys reject distinct suffixes rather than collide',async()=>{
       for(const suffix of ['alpha','bravo']){

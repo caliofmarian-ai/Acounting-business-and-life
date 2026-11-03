@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createOrderPaymentIntent} from '../payment-core.js';
 
 // Source-executing synthetic SQL controls. No real account, database or provider.
-function paymentReplayFixture(existing){
+function paymentReplayFixture(existing,outstanding='200.00'){
   const statements=[];
   let releases=0;
   const client={
@@ -18,12 +18,12 @@ function paymentReplayFixture(existing){
         assert.deepEqual(params,[31]);
         return{rowCount:1,rows:[{
           id:31,customer_account_id:7,business_id:6,territory_id:2,
-          payment_method:'online',outstanding_amount:'200.00',currency_code:'PHP'
+          payment_method:'online',outstanding_amount:outstanding,currency_code:'PHP'
         }]};
       }
       if(sql.includes('FROM payment_intents WHERE idempotency_key')){
         assert.deepEqual(params,['scope-key-31']);
-        return{rowCount:1,rows:[existing]};
+        return existing?{rowCount:1,rows:[existing]}:{rowCount:0,rows:[]};
       }
       throw new Error('Unexpected payment-side SQL: '+sql);
     },
@@ -84,4 +84,16 @@ test('Both HTTP entry points preserve the original caller key for Payment Core v
     assert.match(snippet,/const idempotency=req\.headers\['idempotency-key'\]\|\|req\.body\?\.idempotency_key;/);
     assert.doesNotMatch(snippet,/idempotency=clean\(/);
   }
+});
+
+test('Committed Order payment key still replays after outstanding balance reaches zero',async()=>{
+  const same=paymentReplayFixture({...authorizedIntent},'0.00');
+  const original=await createOrderPaymentIntent(same.pool,args);
+  assert.equal(original.id,authorizedIntent.id);
+  assert.equal(same.statements.filter(x=>x.sql==='COMMIT').length,1);
+  assert.equal(same.statements.filter(x=>/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(x.sql)).length,0);
+  const fresh=paymentReplayFixture(null,'0.00');
+  await assert.rejects(createOrderPaymentIntent(fresh.pool,args),
+    e=>e?.status===409&&/already paid/.test(e.message));
+  assert.equal(fresh.statements.filter(x=>x.sql==='ROLLBACK').length,1);
 });
