@@ -3,6 +3,8 @@
 // It does NOT imply authenticated UI, payment-provider, Preview or Production acceptance.
 import assert from 'node:assert/strict';
 import pg from 'pg';
+import express from 'express';
+import {readFileSync} from 'node:fs';
 import {
   postProfileBudgetEntry,
   transferProfileBudgetAllocation,
@@ -807,6 +809,116 @@ try{
   assertions++;
   eq(await rowCount('profile_fund_transfers'),102,
     'replaying historical transfer does not insert any new transfer');
+
+
+  // Exercise the literal shipped HTTP route, not a rewritten POST handler.
+  // Only the test identity boundary is synthetic: there is no Production
+  // account, session, payment adapter, Preview or external network request.
+  // Every SQL assertion below uses the same disposable PostgreSQL 16 pool.
+  {
+    const source=readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');
+    const start=source.indexOf("app.post('/api/settings/budgets/:id/entries'");
+    const end=source.indexOf("\n\napp.post('/api/settings/budget-transfers'",start);
+    assert.ok(start>=0&&end>start,'actual budget HTTP route must be extractable');
+    const route=source.slice(start,end);
+    assert.match(route,/await postProfileBudgetEntry\(pool,/);
+    const app=express();
+    const identity=async req=>{
+      const authorization=req.headers.authorization;
+      if(authorization==='Bearer synthetic-account-11')return{account:{id:11}};
+      if(authorization==='Bearer synthetic-account-12')return{account:{id:12}};
+      throw Object.assign(new Error('Synthetic CI authorization required'),{status:401});
+    };
+    // This is a local synthetic authorization gate, NOT the deployed auth
+    // implementation. The route's input/HTTP/SQL behavior is unmodified.
+    const clean=(value,max=1000)=>String(value??'').trim().slice(0,max);
+    new Function('app','body','identity','pool','postProfileBudgetEntry','clean',route)(
+      app,express.json(),identity,pool,postProfileBudgetEntry,clean
+    );
+    app.use((error,req,res,next)=>res.status(error.status||500).json({
+      error:error.status?error.message:'Synthetic audit gate rejected database write'
+    }));
+    const server=await new Promise((resolve,reject)=>{
+      const instance=app.listen(0,'127.0.0.1',()=>resolve(instance));
+      instance.once('error',reject);
+    });
+    try{
+      const base='http://127.0.0.1:'+server.address().port;
+      const submit=async({key,amount='12.34',accountId=11,note='CI HTTP route',sourceId='synthetic-ci'}={})=>{
+        const headers={'content-type':'application/json'};
+        if(key!==undefined)headers['idempotency-key']=key;
+        if(accountId!==null)headers.authorization='Bearer synthetic-account-'+accountId;
+        const response=await fetch(base+'/api/settings/budgets/'+createdEnvelope.id+'/entries',{
+          method:'POST',headers,body:JSON.stringify({
+            direction:'credit',entry_type:'allocation',amount,note,source_id:sourceId
+          })
+        });
+        return{status:response.status,json:await response.json()};
+      };
+      const key='http-budget-replay-871';
+      const before=await rowCount('profile_budget_entries');
+      const beforeAudit=await rowCount('profile_finance_audit_events');
+      const unauthorized=await submit({key,accountId:null});
+      eq(unauthorized.status,401,'HTTP rejects missing synthetic authorization');
+      const invalid=await submit({key:'http-budget-invalid',amount:'1.001'});
+      eq(invalid.status,400,'HTTP rejects fractional cents before SQL mutation');
+      const oversized=await submit({key:'X'.repeat(221)});
+      eq(oversized.status,400,'HTTP rejects overlong replay keys without truncation');
+      eq(await rowCount('profile_budget_entries'),before,'rejected HTTP requests create no budget entry');
+      const first=await submit({key});
+      eq(first.status,201,'actual HTTP route posts an exact-cent allocation');
+      eq(Number(first.json.amount),12.34,'actual HTTP response preserves the submitted PHP amount');
+      eq(first.json.provider_money_moved,false,'budget planning is not a real payment');
+      eq(first.json.balance_type,'planned_allocation','HTTP route labels planning evidence');
+      const replay=await submit({key});
+      eq(replay.status,201,'same HTTP replay succeeds');
+      eq(Number(replay.json.id),Number(first.json.id),'replayed HTTP request returns original row');
+      const changed=await submit({key,amount:'12.35'});
+      eq(changed.status,409,'same replay key cannot acknowledge different money');
+      const changedNote=await submit({key,note:'different financial intent'});
+      eq(changedNote.status,409,'same replay key cannot acknowledge a different audit note');
+      const foreign=await submit({key,accountId:12});
+      eq(foreign.status,404,'synthetic foreign account cannot read original budget');
+      const recorded=await pool.query('SELECT COUNT(*)::int n FROM profile_budget_entries WHERE entry_key=$1',[key]);
+      eq(Number(recorded.rows[0].n),1,'HTTP retries cause one committed budget entry');
+      eq(await rowCount('profile_budget_entries'),before+1,'HTTP accepted only one unique initial entry');
+      eq(await rowCount('profile_finance_audit_events'),beforeAudit+1,'HTTP replay never duplicates audit');
+
+      const parallelKey='http-budget-parallel-871';
+      const concurrent=await Promise.all([
+        submit({key:parallelKey,amount:'4.21'}),
+        submit({key:parallelKey,amount:'4.21'})
+      ]);
+      eq(concurrent[0].status,201,'first concurrent HTTP request succeeds');
+      eq(concurrent[1].status,201,'second concurrent HTTP replay succeeds');
+      eq(Number(concurrent[0].json.id),Number(concurrent[1].json.id),
+        'concurrent HTTP requests serialize onto the same budget row');
+      const counted=await pool.query('SELECT COUNT(*)::int n FROM profile_budget_entries WHERE entry_key=$1',[parallelKey]);
+      eq(Number(counted.rows[0].n),1,'parallel HTTP submissions do not double-post planned money');
+
+      const failKey='http-budget-audit-failure-871';
+      const countBeforeFail=await rowCount('profile_budget_entries');
+      const auditBeforeFail=await rowCount('profile_finance_audit_events');
+      await pool.query("ALTER TABLE profile_finance_audit_events ADD CONSTRAINT synthetic_http_budget_audit_failure CHECK(event_code <> 'budget_allocation_changed') NOT VALID");
+      try{
+        const failed=await submit({key:failKey,amount:'2.03'});
+        eq(failed.status,500,'real PostgreSQL audit rejection reaches HTTP failure');
+        eq(await rowCount('profile_budget_entries'),countBeforeFail,
+          'failed HTTP audit rolls back the entire ledger entry');
+        eq(await rowCount('profile_finance_audit_events'),auditBeforeFail,
+          'failed HTTP audit leaves no partial audit event');
+      }finally{
+        await pool.query('ALTER TABLE profile_finance_audit_events DROP CONSTRAINT synthetic_http_budget_audit_failure');
+      }
+      const recovered=await submit({key:failKey,amount:'2.03'});
+      eq(recovered.status,201,'identical HTTP instruction can retry after full SQL rollback');
+      eq(await rowCount('profile_budget_entries'),countBeforeFail+1,
+        'only successful post-audit HTTP instruction commits');
+      console.log('PROFILE_FINANCE_HTTP_ROUTE_POSTGRES_871_PASS synthetic_identity=true local_http=true');
+    }finally{
+      await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));
+    }
+  }
 
   console.log('PROFILE_FINANCE_REAL_POSTGRES_871_PASS assertions='+assertions+
     ' database=abl_finance_precision_ci no external payments');
