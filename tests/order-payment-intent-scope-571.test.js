@@ -73,3 +73,15 @@ test('An oversized payment key is rejected without truncation or lookup',async()
   assert.equal(f.statements.filter(x=>x.sql.includes('pg_advisory_xact_lock')).length,0);
   assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,1);
 });
+
+test('Both HTTP entry points preserve the original caller key for Payment Core validation',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const routeSource=readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');
+  for(const route of ['/api/payments/intents/order/:id','/api/payments/intents/service-job/:id']){
+    const start=routeSource.indexOf("app.post('"+route+"'");
+    assert.ok(start>=0,'missing payment route '+route);
+    const snippet=routeSource.slice(start,start+650);
+    assert.match(snippet,/const idempotency=req\.headers\['idempotency-key'\]\|\|req\.body\?\.idempotency_key;/);
+    assert.doesNotMatch(snippet,/idempotency=clean\(/);
+  }
+});

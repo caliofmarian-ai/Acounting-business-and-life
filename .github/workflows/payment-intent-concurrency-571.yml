@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'payment-core.js'
+      - 'server-payments.js'
       - 'tests/order-payment-intent-scope-571.test.js'
       - 'scripts/payment-intent-concurrency-postgres-571.mjs'
       - '.github/workflows/payment-intent-concurrency-571.yml'
