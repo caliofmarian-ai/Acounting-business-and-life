@@ -368,6 +368,8 @@ const inventoryWrites=createInventoryWriteController({
   captureContext:merchantReadContext,isContextCurrent:merchantReadIsCurrent,byId:$
 });
 const beginInventoryWrite=root=>inventoryWrites.begin(root);
+document.addEventListener('abl:feature-workspace',()=>inventoryWrites.invalidate());
+document.addEventListener('abl:merchant-local-view',()=>inventoryWrites.invalidate());
 // Invalidate at the START of a selector transition, before its PATCH can settle.
 document.addEventListener('change',event=>{
   if(event.target?.id==='businessWorkspaceSelect')invalidateMerchantReads();
@@ -1174,6 +1176,7 @@ function initStockTools(){
     detail.querySelector('summary')?.addEventListener('click',event=>{
       event.preventDefault(); // native keyboard activation also dispatches click
       if(detail.open){
+        inventoryWrites.invalidate();
         detail.open=false;detail.dataset.stockLoading='false';detail.dataset.stockLoaded='false';
         detail.dataset.stockError='false';stockToolActive=null;stockToolTask=null;
         inventoryLoadGeneration++;inventoryConfirmedContext=null;

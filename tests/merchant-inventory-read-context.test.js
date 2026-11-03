@@ -25,7 +25,7 @@ function functionSource(name){
 }
 
 function dom(){
-  const nodes=new Map();
+  const nodes=new Map(),events=new Map();
   class Element{
     constructor(tag='div',id=''){this.tagName=tag.toUpperCase();this._id='';this.id=id;this.children=[];this.parentElement=null;this.className='';this.textContent='';this.innerHTML='';this.value='';this.disabled=false;this.hidden=false;this.dataset={};this.attributes={};this.listeners=new Map();this.style={};}
     set id(value){this._id=value;if(value)nodes.set(value,this)}get id(){return this._id}
@@ -50,7 +50,7 @@ function dom(){
   const advanced=new Element();advanced.className='card';view.appendChild(advanced);
   const editable=new Element('input','purchaseInput'),submit=new Element('button','purchaseSubmit'),intentionalDisabled=new Element('button','intentionalDisabled');intentionalDisabled.disabled=true;
   advanced.appendChild(editable);advanced.appendChild(submit);advanced.appendChild(intentionalDisabled);
-  return{node,view,stock,advanced,editable,submit,intentionalDisabled,document:{cookie:'__Host-abl_csrf=dummy-session-a',getElementById:node,createElement:tag=>new Element(tag),addEventListener(){},querySelectorAll(){return[]}},Element};
+  return{node,view,stock,advanced,editable,submit,intentionalDisabled,document:{cookie:'__Host-abl_csrf=dummy-session-a',getElementById:node,createElement:tag=>new Element(tag),addEventListener(type,fn){if(!events.has(type))events.set(type,[]);events.get(type).push(fn)},dispatchEvent(event){for(const fn of events.get(event.type)||[])fn(event)},querySelectorAll(){return[]}},Element};
 }
 
 function harness({businessId=1,legacy={}}={}){
@@ -572,3 +572,14 @@ test('queued Storage prefetch cannot dispatch against B after its A context chan
   const result=await prefetched;
   assert.equal(result.ok,false);assert.equal(h.requests.length,0);
 });
+
+for(const type of ['abl:feature-workspace','abl:merchant-local-view']){
+  test(`storage completion cannot revive after ${type} leave and return`,async()=>{
+    const h=harness();h.api.confirm();h.node('storageInventoryId').value='10';
+    const submit=h.installMutation('storageForm'),pending=submit();
+    h.context.document.dispatchEvent({type});h.context.document.dispatchEvent({type});
+    h.node('storageMessage').textContent='Returned draft';
+    await h.respond(0,{item:'Old hidden save'});await pending;
+    assert.equal(h.node('storageMessage').textContent,'Returned draft');assert.equal(h.requests.length,1);
+  });
+}
