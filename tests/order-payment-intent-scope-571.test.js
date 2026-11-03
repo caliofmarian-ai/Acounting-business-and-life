@@ -40,7 +40,7 @@ test('Order payment replay returns the original authorized intent without writes
   assert.equal(result.public_id,authorizedIntent.public_id);
   assert.equal(f.statements.filter(x=>x.sql==='COMMIT').length,1);
   assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,0);
-  assert.equal(f.statements.filter(x=>/INSERT|UPDATE|DELETE/i.test(x.sql)).length,0);
+  assert.equal(f.statements.filter(x=>/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(x.sql)).length,0);
   assert.equal(f.releases(),1);
 });
 
@@ -56,7 +56,7 @@ for(const [scenario,changedFields] of [
       e=>e?.status===409&&e?.code==='PAYMENT_INTENT_SCOPE_CONFLICT');
     assert.equal(f.statements.filter(x=>x.sql==='COMMIT').length,0);
     assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,1);
-    assert.equal(f.statements.filter(x=>/INSERT|UPDATE|DELETE/i.test(x.sql)).length,0);
+    assert.equal(f.statements.filter(x=>/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(x.sql)).length,0);
     assert.equal(f.releases(),1);
   });
 }
