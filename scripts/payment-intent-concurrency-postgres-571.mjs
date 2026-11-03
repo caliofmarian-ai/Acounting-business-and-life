@@ -126,7 +126,7 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       const beforeIntents=await count('payment_intents');
       const beforeAllocations=await count('payment_allocations');
       for(const [i,invalid] of [
-        ' provider_x','provider_x ','provider_x\\n','x'.repeat(81),
+        ' provider_x','provider_x ','provider_x\n','x'.repeat(81),
         42,false,[],{provider:'provider_x'}
       ].entries()){
         await assert.rejects(

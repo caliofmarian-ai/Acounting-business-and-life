@@ -125,7 +125,7 @@ test('Both payment HTTP routes pass raw provider instructions for validated repl
 
 test('Provider identity rejects silent padding, truncation or nonstring alias before Order lookup',async()=>{
   for(const invalid of [
-    ' provider_a','provider_a ','provider_a\\n','\\tprovider_a',
+    ' provider_a','provider_a ','provider_a\n','\tprovider_a',
     'x'.repeat(81),17,false,[],{provider:'provider_a'}
   ]){
     const f=paymentReplayFixture({...authorizedIntent});
