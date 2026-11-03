@@ -47,7 +47,7 @@ test('Inventory mutations require business origin; read-only GET routes stay com
   assert.equal(inventoryMutationOrigin(request('POST','/api/product-sales',NO_ORIGIN)),null);
 });
 test('reconciling GET locations and location-balances require verified origin, not a mutable preference',async()=>{
-  for(const path of ['/api/inventory/locations','/api/inventory/location-balances']){
+  for(const path of ['/api/inventory/locations','/api/inventory/location-balances','/api/inventory/location-summary']){
     assert.equal(inventoryMutationOrigin(request('GET',path,'11')),11);
     assert.equal(inventoryMutationOrigin(request('GET',path+'/', '11')),11);
     for(const bad of [NO_ORIGIN,'',null,'0','abc','22,11']){
@@ -67,9 +67,9 @@ test('reconciling GET locations and location-balances require verified origin, n
 
 test('route guard covers both reconciliation-writing GET handlers without trusting arbitrary business IDs',async()=>{
   const routes=readFileSync(new URL('../inventory-locations.js',import.meta.url),'utf8');
-  assert.match(routes,/app\.get\('\/api\/inventory\/locations',[\s\S]*?await reconcileBusinessInventoryLocations/);
-  assert.match(routes,/app\.get\('\/api\/inventory\/location-balances',[\s\S]*?inventoryLocationBalanceRows\(pool/);
-  assert.match(routes,/export async function inventoryLocationBalanceRows[\s\S]*?await reconcileBusinessInventoryLocations/);
+  assert.match(routes,/app\.get\('\/api\/inventory\/locations',[\s\S]*?await inventoryLocationReadSnapshot/);
+  assert.match(routes,/app\.get\('\/api\/inventory\/location-balances',[\s\S]*?await inventoryLocationReadSnapshot/);
+  assert.match(routes,/export async function inventoryLocationReadSnapshot[\s\S]*?if\(snapshot.needsRepair\)[\s\S]*?await reconcileBusinessInventoryLocations/);
   const h=harness();
   await assert.rejects(h.accountingContext(request('GET','/api/inventory/locations','33')),e=>e.status===403&&e.code==='INVENTORY_ORIGIN_FORBIDDEN');
   assert.deepEqual(h.state(),{preference:11,updates:0,provisions:0,budgets:[]});

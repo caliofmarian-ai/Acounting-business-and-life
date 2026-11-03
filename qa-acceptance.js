@@ -1,3 +1,4 @@
+import {INVENTORY_ORIGIN_841_WAVE,runInventoryOrigin841Acceptance} from './qa-inventory-origin-841.js';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
@@ -14,6 +15,9 @@ import {legacyPrivateEvidenceCounts,migratePrivateEvidenceV1} from './private-ev
 import {runMerchantGovernanceV1Acceptance} from './qa-merchant-governance-v1.js';
 import {runMerchantCounterOrdersV1Acceptance} from './qa-merchant-counter-orders-v1.js';
 import {KNOWLEDGE_CENTER_WAVE,runKnowledgeCenterAcceptance} from './qa-knowledge-acceptance.js';
+import {INVENTORY_LOCATION_READ_862_WAVE,runInventoryLocationRead862Acceptance} from './qa-inventory-location-read-862.js';
+import {assertOwnerDecisionEvidenceForQa} from './qa-owner-decision-evidence.js';
+import {PROFILE_FINANCE_MONEY_871_WAVE,runProfileFinanceMoney871Acceptance} from './qa-profile-finance-871.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
@@ -76,6 +80,9 @@ const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXP
 ACCEPTANCE_WAVES.add(MERCHANT_GOVERNANCE_V1_WAVE);
 ACCEPTANCE_WAVES.add(MERCHANT_COUNTER_ORDERS_V1_WAVE);
 ACCEPTANCE_WAVES.add(KNOWLEDGE_CENTER_WAVE);
+ACCEPTANCE_WAVES.add(INVENTORY_LOCATION_READ_862_WAVE);
+ACCEPTANCE_WAVES.add(PROFILE_FINANCE_MONEY_871_WAVE);
+ACCEPTANCE_WAVES.add(INVENTORY_ORIGIN_841_WAVE);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -437,8 +444,8 @@ async function ensureMerchantApproved({pool,base,merchant,adminToken,territoryId
   };
 }
 
-async function ensureInventoryItem({base,token,name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit}){
-  const inventory=await requestJson(base,'/api/inventory',{token});
+async function ensureInventoryItem({base,token,businessId,name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit}){
+  const inventory=await requestJson(base,'/api/inventory',{token,headers:{'x-abl-inventory-origin-business':String(businessId)}});
   expectStatus(inventory,200,'Merchant inventory read');
   const existing=(Array.isArray(inventory.json)?inventory.json:[]).find(
     item=>String(item.item||'').trim().toLowerCase()===String(name).toLowerCase()
@@ -450,7 +457,7 @@ async function ensureInventoryItem({base,token,name,purchaseQuantity,purchaseUni
 
   const created=await requestJson(base,'/api/inventory/purchase',{
     method:'POST',
-    token,
+    token,headers:{'x-abl-inventory-origin-business':String(businessId)},
     body:{
       item:name,
       purchase_quantity:purchaseQuantity,
@@ -632,7 +639,7 @@ async function runMerchantCatalogSeed({pool,base,secret}){
   ]){
     const [name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit]=spec;
     inventoryByName[name]=await ensureInventoryItem({
-      base,token:merchant.token,name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit
+      base,token:merchant.token,businessId:workspace.businessId,name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit
     });
   }
 
@@ -6334,10 +6341,7 @@ async function runOwnerControlTowerV1Acceptance({pool,base,secret}){
     }
     if(!String(item.source||'').trim())throw new Error('Owner Control Tower health domain lacks evidence source: '+domain);
   }
-  if(model.decision_status?.state!=='unknown'||model.decision_status?.open_count!==null){
-    throw new Error('Owner Control Tower invented an Owner decision state without a canonical queue.');
-  }
-  if(evidence.owner_decisions!=='unavailable')throw new Error('Owner decision evidence must remain explicitly unavailable in V1B.');
+  assertOwnerDecisionEvidenceForQa(model,evidence);
   if(!String(headline.title||'').trim())throw new Error('Owner Control Tower headline is missing.');
 
   const serialized=JSON.stringify(owner.json);
@@ -6392,7 +6396,22 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===KNOWLEDGE_CENTER_WAVE
+    const result=config.wave===INVENTORY_ORIGIN_841_WAVE
+       ?await runInventoryOrigin841Acceptance({pool,base,secret:config.secret,
+         aliases:{merchant:MERCHANT_ALIAS},helpers:{requestJson,expectStatus,qaAccountSession,ensureActiveRole}})
+       :config.wave===PROFILE_FINANCE_MONEY_871_WAVE
+       ?await runProfileFinanceMoney871Acceptance({
+         pool,base,secret:config.secret,
+         aliases:{customer:CUSTOMER_ALIAS,other:MERCHANT_ALIAS},
+         helpers:{requestJson,expectStatus,qaAccountSession,ensureActiveRole}
+       })
+       :config.wave===INVENTORY_LOCATION_READ_862_WAVE
+      ?await runInventoryLocationRead862Acceptance({
+        pool,base,secret:config.secret,env,
+        aliases:{merchant:MERCHANT_ALIAS,customer:CUSTOMER_ALIAS},
+        helpers:{requestJson,expectStatus,qaAccountSession}
+      })
+      :config.wave===KNOWLEDGE_CENTER_WAVE
       ?await runKnowledgeCenterAcceptance({
         pool,base,secret:config.secret,env,
         aliases:{customer:CUSTOMER_ALIAS,merchant:MERCHANT_ALIAS,supplier:SUPPLIER_ALIAS,

@@ -53,14 +53,25 @@ function shell(){
   const visible=modules.filter(m=>hasAny(m.any));
   if(!visible.some(x=>x.id===state.active))state.active=visible[0]?.id||'overview';
   root.className='workspace';
-  root.innerHTML='<nav class="adminNav">'+visible.map(m=>{const pending=m.id==='members'?Number(state.overview?.summary?.pending_applications||0):0;const label=pending?m.label+' · '+pending+' approval'+(pending===1?'':'s'):m.label;return '<button type="button" data-module="'+m.id+'" class="'+(m.id===state.active?'active':'')+'">'+esc(label)+'</button>'}).join('')+'</nav><section class="adminMain"><div id="adminPanel"></div></section>';
+  const options=visible.map(m=>'<option value="'+m.id+'"'+(m.id===state.active?' selected':'')+'>'+esc(m.label)+'</option>').join('');
+  root.innerHTML='<nav class="adminNav" aria-label="Admin sections">'
+    +'<div class="adminNavChooser"><label for="adminModuleSelect">All sections ('+visible.length+')</label><select id="adminModuleSelect" aria-label="Go to Admin section">'+options+'</select></div>'
+    +visible.map(m=>{const pending=m.id==='members'?Number(state.overview?.summary?.pending_applications||0):0;const label=pending?m.label+' · '+pending+' approval'+(pending===1?'':'s'):m.label;return '<button type="button" data-module="'+m.id+'" aria-current="'+(m.id===state.active?'page':'false')+'" class="'+(m.id===state.active?'active':'')+'">'+esc(label)+'</button>'}).join('')
+    +'</nav><section class="adminMain"><div id="adminPanel"></div></section>';
+  root.querySelector('#adminModuleSelect')?.addEventListener('change',event=>activateModule(event.currentTarget.value));
   root.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>activateModule(b.dataset.module));
 }
 function activateModule(id){
   const module=modules.find(m=>m.id===id&&hasAny(m.any));if(!module)return;
   setAdminApplicationRoute(null);
   state.active=id;
-  root.querySelectorAll('[data-module]').forEach(button=>button.classList.toggle('active',button.dataset.module===id));
+  const picker=root.querySelector('#adminModuleSelect');
+  if(picker)picker.value=id;
+  root.querySelectorAll('[data-module]').forEach(button=>{
+    const selected=button.dataset.module===id;
+    button.classList.toggle('active',selected);
+    button.setAttribute('aria-current',selected?'page':'false');
+  });
   renderActive().catch(showError);
 }
 function showError(e){const p=document.getElementById('adminPanel')||root;p.innerHTML='<div class="error">'+esc(e.message||e)+'</div>'}

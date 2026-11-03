@@ -12,6 +12,7 @@ export function createInventoryScanUi({
   formatNumber,
   onReceiveItem,
   onCountItem,
+  beginWrite=()=>({isCurrent:()=>true,accept:()=>true,finish(){}}),
   getReadGuard=()=>()=>true
 }){
   const esc=escapeHtml;
@@ -249,6 +250,8 @@ export function createInventoryScanUi({
   }
 
   async function saveIdentifiers(){
+    const write=beginWrite(byId('inventoryIdentifiersEditor'));if(!write)return;
+    try{
     const inventoryId=Number(byId('inventoryIdentifierItem')?.value);
     if(!Number.isInteger(inventoryId)){
       setIdentifierMessage('Choose an Inventory item first.','negative');
@@ -263,13 +266,16 @@ export function createInventoryScanUi({
           barcode:byId('inventoryBarcode')?.value||''
         })
       });
+      if(!write.accept())return;
       if(typeof refreshInventory==='function')await refreshInventory();
+      if(!write.isCurrent())return;
       fillIdentifierItems(saved.id);
       setIdentifierMessage('Identifiers saved. Manual search and camera lookup now use these values.','positive');
-    }catch(error){
+    }catch(error){if(!write.isCurrent())return;
       const detail=error?.data?.conflicting_item?' Conflicts with '+error.data.conflicting_item+'.':'';
       setIdentifierMessage((error.message||'Identifiers could not be saved.')+detail,'negative');
     }
+    }finally{write.finish()}
   }
 
   function syncInventory(){
