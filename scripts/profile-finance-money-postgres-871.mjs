@@ -10,7 +10,8 @@ import {
   createProfileMoneyEntry,
   listProfileMoneyEntries,
   createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
-  transferFundsBetweenProfiles
+  transferFundsBetweenProfiles,
+  reverseProfileMoneyEntry
 } from '../profile-finance-core.js';
 
 if(process.env.NODE_ENV!=='test'||
@@ -457,6 +458,108 @@ try{
   eq(await personalAudits(),historicalAuditBefore+1,
     'backdated post and replay append exactly one audit event');
 
+
+
+  // Concurrent reversals of the same Money entry/key must not race the
+  // replay SELECT and return 409 after a successful first correction.
+  // Hold a REAL third PostgreSQL session's advisory lock while TWO pool
+  // sessions attempt the same reversal, and observe both waits in
+  // pg_stat_activity before allowing either to finish.
+  const reversible=await expense('concurrent-reversal-source','4.56');
+  const reverseKey='concurrent-reversal-key-871';
+  const reverse=()=>reverseProfileMoneyEntry(pool,{
+    publicId:'ci-reversal-parallel-871',reversalKey:reverseKey,
+    accountId:11,profileRole:'customer',entryId:reversible.id,
+    note:'concurrent correction'
+  });
+  const reversedAuditCount=async()=>Number((await pool.query(
+    "SELECT COUNT(*)::int AS count FROM profile_finance_audit_events WHERE event_code='profile_money_entry_reversed'"
+  )).rows[0].count);
+  const correctionsBefore=await reversedAuditCount();
+  const holder=new pg.Client({connectionTimeoutMillis:5000});
+  await holder.connect();
+  let reverseCalls=[],observedTwoAdvisoryWaiters=false;
+  try{
+    await holder.query(
+      "SELECT pg_advisory_lock(hashtextextended('profile_money_entries:' || $1::text, 871))",
+      [reverseKey]
+    );
+    reverseCalls=[reverse(),reverse()];
+    for(let attempt=0;attempt<80;attempt++){
+      const waiting=await holder.query(`
+        SELECT COUNT(*)::int AS count FROM pg_stat_activity
+        WHERE datname=current_database()
+          AND pid<>pg_backend_pid()
+          AND wait_event_type='Lock' AND wait_event='advisory'
+          AND query LIKE '%pg_advisory_xact_lock%'
+      `);
+      if(Number(waiting.rows[0].count)>=2){
+        observedTwoAdvisoryWaiters=true;break;
+      }
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+  }finally{
+    await holder.query(
+      "SELECT pg_advisory_unlock(hashtextextended('profile_money_entries:' || $1::text, 871))",
+      [reverseKey]
+    ).catch(()=>{});
+    await holder.end();
+  }
+  const simultaneousReversals=await Promise.allSettled(reverseCalls);
+  eq(observedTwoAdvisoryWaiters,true,'two real PostgreSQL connections waited on same reversal advisory lock');
+  eq(simultaneousReversals.every(item=>item.status==='fulfilled'),true,
+    'parallel identical reversal retries both succeed after serialization');
+  if(simultaneousReversals.every(item=>item.status==='fulfilled')){
+    const [r1,r2]=simultaneousReversals.map(item=>item.value);
+    eq(r1.reversal_id,r2.reversal_id,'parallel reversal replay returns identical correction ID');
+    eq([r1.idempotent===true,r2.idempotent===true].filter(Boolean).length,1,
+      'one correction is new and the other is a real replay');
+  }
+  const reversedRows=await pool.query(
+    'SELECT COUNT(*)::int AS count FROM profile_money_entries WHERE reversal_of_id=$1',
+    [reversible.id]
+  );
+  eq(Number(reversedRows.rows[0].count),1,'only one reversal ledger row exists');
+  eq(await reversedAuditCount(),correctionsBefore+1,'only one reversal audit exists');
+  const originalAfter=await pool.query('SELECT status FROM profile_money_entries WHERE id=$1',[reversible.id]);
+  eq(originalAfter.rows[0].status,'reversed','original Money entry marked reversed once');
+
+  await assert.rejects(reverseProfileMoneyEntry(pool,{
+    publicId:'ci-invalid-replay',reversalKey:reverseKey,accountId:12,
+    profileRole:'customer',entryId:reversible.id
+  }),err=>err.status===409,'another account cannot replay the same correction key');
+  assertions++;
+
+  // A genuine audit failure must roll back both the reversal row and
+  // original-row status, so the exact same key remains retryable.
+  const rollbackSource=await expense('reversal-rollback-source','2.34');
+  const rollbackKey='reversal-rollback-key-871';
+  const rollbackArgs={
+    publicId:'ci-rollback-reversal',reversalKey:rollbackKey,
+    accountId:11,profileRole:'customer',entryId:rollbackSource.id
+  };
+  const beforeRollbackRows=await rowCount('profile_money_entries');
+  const beforeRollbackAudits=await reversedAuditCount();
+  await pool.query(`
+    ALTER TABLE profile_finance_audit_events
+    ADD CONSTRAINT synthetic_reversal_audit_rejection
+    CHECK (event_code <> 'profile_money_entry_reversed') NOT VALID
+  `);
+  await assert.rejects(reverseProfileMoneyEntry(pool,rollbackArgs),
+    err=>err.code==='23514','actual PostgreSQL rejected mandatory reversal audit');
+  assertions++;
+  eq(await rowCount('profile_money_entries'),beforeRollbackRows,
+    'failed reversal audit rolls back extra ledger row');
+  const originalRollback=await pool.query('SELECT status FROM profile_money_entries WHERE id=$1',
+    [rollbackSource.id]);
+  eq(originalRollback.rows[0].status,'active','audit failure rolls back original status change');
+  eq(await reversedAuditCount(),beforeRollbackAudits,
+    'audit failure leaves no partial reversal audit');
+  await pool.query('ALTER TABLE profile_finance_audit_events DROP CONSTRAINT synthetic_reversal_audit_rejection');
+  const recoveredReverse=await reverseProfileMoneyEntry(pool,rollbackArgs);
+  eq(recoveredReverse.entry_id,rollbackSource.id,'retry after rollback corrects original entry');
+  eq(await reversedAuditCount(),beforeRollbackAudits+1,
+    'recovered reversal appends exactly one audit event');
 
   // Real PostgreSQL constraint rejection must roll back creation of a
   // financial account (including prospective payout destination metadata).

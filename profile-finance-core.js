@@ -1014,6 +1014,13 @@ export async function reverseProfileMoneyEntry(pool,{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    // A simultaneous retry must wait for the first reversal to commit before
+    // looking up the opaque replay key. Reuse the ledger's global key-lock
+    // namespace so a reversal cannot race with an entry using the same key.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_money_entries:' || $1::text, 871))",
+      [key]
+    );
     const existing=await client.query('SELECT id,account_id,profile_role,reversal_of_id FROM profile_money_entries WHERE entry_key=$1',[key]);
     if(existing.rowCount){
       const oldKey=existing.rows[0];

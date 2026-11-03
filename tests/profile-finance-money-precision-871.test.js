@@ -440,3 +440,32 @@ test('backdated Money entry returns the committed scoped row, not a capped recen
   assert.equal(reads,1);
   assert.equal(released,true);
 });
+
+
+test('Money reversal serializes its key BEFORE replay lookup, and returns the original reversal',async()=>{
+  const events=[];let released=false;
+  const prior={id:9002,account_id:11,profile_role:'customer',reversal_of_id:9001};
+  const client={release(){released=true},async query(sql,args=[]){
+    if(sql==='BEGIN'||sql==='COMMIT'){events.push(sql);return{rowCount:0,rows:[]}}
+    if(sql.includes('pg_advisory_xact_lock')){
+      assert.match(sql,/profile_money_entries:/);
+      assert.deepEqual(args,['ci-same-reversal-key']);
+      events.push('LOCK');return{rowCount:1,rows:[]};
+    }
+    if(sql.includes('SELECT id,account_id,profile_role,reversal_of_id FROM profile_money_entries')){
+      assert.deepEqual(args,['ci-same-reversal-key']);
+      events.push('REPLAY');return{rowCount:1,rows:[prior]};
+    }
+    throw Error('Unexpected reversal SQL: '+sql);
+  }};
+  const pool={async connect(){return client},async query(){throw Error('Unscoped query forbidden')}};
+  const result=await reverseProfileMoneyEntry(pool,{
+    publicId:'ci-reversal-9002',reversalKey:'ci-same-reversal-key',
+    accountId:11,profileRole:'customer',entryId:9001
+  });
+  assert.deepEqual(events,['BEGIN','LOCK','REPLAY','COMMIT']);
+  assert.equal(result.reversal_id,9002);
+  assert.equal(result.idempotent,true);
+  assert.equal(result.status,'reversed');
+  assert.equal(released,true);
+});
