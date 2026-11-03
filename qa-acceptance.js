@@ -15,6 +15,7 @@ import {runMerchantGovernanceV1Acceptance} from './qa-merchant-governance-v1.js'
 import {runMerchantCounterOrdersV1Acceptance} from './qa-merchant-counter-orders-v1.js';
 import {KNOWLEDGE_CENTER_WAVE,runKnowledgeCenterAcceptance} from './qa-knowledge-acceptance.js';
 import {INVENTORY_LOCATION_READ_862_WAVE,runInventoryLocationRead862Acceptance} from './qa-inventory-location-read-862.js';
+import {assertOwnerDecisionEvidenceForQa} from './qa-owner-decision-evidence.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
@@ -6336,10 +6337,7 @@ async function runOwnerControlTowerV1Acceptance({pool,base,secret}){
     }
     if(!String(item.source||'').trim())throw new Error('Owner Control Tower health domain lacks evidence source: '+domain);
   }
-  if(model.decision_status?.state!=='unknown'||model.decision_status?.open_count!==null){
-    throw new Error('Owner Control Tower invented an Owner decision state without a canonical queue.');
-  }
-  if(evidence.owner_decisions!=='unavailable')throw new Error('Owner decision evidence must remain explicitly unavailable in V1B.');
+  assertOwnerDecisionEvidenceForQa(model,evidence);
   if(!String(headline.title||'').trim())throw new Error('Owner Control Tower headline is missing.');
 
   const serialized=JSON.stringify(owner.json);
