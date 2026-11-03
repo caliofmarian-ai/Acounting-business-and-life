@@ -1195,6 +1195,7 @@ export async function transferFundsBetweenProfiles(pool,{
   const source=normalizeFundScope(sourceProfileRole,sourceBusinessId),destination=normalizeFundScope(destinationProfileRole,destinationBusinessId);
   if(source.profileRole===destination.profileRole&&Number(source.businessId||0)===Number(destination.businessId||0))fail('Choose two different profiles/workspaces');
   const client=await pool.connect();
+  let committedTransferId=null,sourceBalanceBefore=null;
   try{
     await client.query('BEGIN');
     // The transfer key is globally unique. Lock it before the account-level
@@ -1215,8 +1216,10 @@ export async function transferFundsBetweenProfiles(pool,{
          Number(x.amount)!==value||x.currency_code!==currency||
          String(x.note??'')!==clean(note,700))
         fail('Idempotency key already belongs to a different profile transfer',409);
+      // Replay uses the already account-verified row. A second Pool checkout
+      // here would hang when all transaction clients are occupied.
       await client.query('COMMIT');
-      return{...(await loadProfileFundTransfer(pool,{accountId,id:Number(x.id)})),idempotent:true};
+      return{...publicProfileFundTransfer(x),idempotent:true};
     }
     const ownedSource=await assertOwnedActiveFundScope(client,{accountId,profileRole:source.profileRole,businessId:source.businessId});
     const ownedDestination=await assertOwnedActiveFundScope(client,{accountId,profileRole:destination.profileRole,businessId:destination.businessId});
@@ -1245,11 +1248,15 @@ export async function transferFundsBetweenProfiles(pool,{
       ]);
     }
     await client.query('COMMIT');
-    const [transfer,scopes]=await Promise.all([
-      loadProfileFundTransfer(pool,{accountId,id:transferId}),
-      listProfileFundScopes(pool,accountId)
-    ]);
-    return{...transfer,source_balance_before:available,scopes};
+    committedTransferId=transferId;
+    sourceBalanceBefore=available;
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
   finally{client.release()}
+  // Never request another Pool connection before releasing the transaction
+  // client: a max=1 Pool and parallel retries must not deadlock on checkout.
+  const [transfer,scopes]=await Promise.all([
+    loadProfileFundTransfer(pool,{accountId,id:committedTransferId}),
+    listProfileFundScopes(pool,accountId)
+  ]);
+  return{...transfer,source_balance_before:sourceBalanceBefore,scopes};
 }

@@ -247,13 +247,9 @@ test('internal profile transfer replay rejects changed money instruction',async(
   }};
   const pool={
     async connect(){return client},
-    async query(sql,args=[]){
+    async query(sql){
       calls.push(sql);
-      if(sql.includes('FROM profile_fund_transfers')&&sql.includes('WHERE id=$1 AND account_id=$2')){
-        assert.deepEqual(args,[73,11],'replay fetch is scoped by exact ID/account');
-        return{rowCount:1,rows:[prior]};
-      }
-      throw Error('Unexpected direct transfer lookup SQL: '+sql);
+      throw Error('Replay must use the already scoped transaction row, not check out a second Pool client: '+sql);
     }
   };
   const input={
@@ -276,6 +272,8 @@ test('internal profile transfer replay rejects changed money instruction',async(
     'original per-account balance lock remains in place');
   assert.equal(calls.filter(x=>x.includes('LIMIT 100')).length,0,
     'replay must never depend on a capped 100-transfer history list');
+  assert.equal(calls.some(x=>x.includes('WHERE id=$1 AND account_id=$2')),false,
+    'replay returns the already fetched account-scoped transaction row');
   assert.equal(calls.filter(x=>x==='ROLLBACK').length,6);
   assert.equal(calls.filter(x=>x==='COMMIT').length,1);
 });
