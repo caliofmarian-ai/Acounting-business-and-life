@@ -7,7 +7,7 @@ export function createInventoryLocationUi({
   escapeHtml,
   formatNumber,
   onLocationsChanged,
-  beginWrite=()=>({isCurrent:()=>true,accept:()=>true,finish(){}}),
+  beginWrite=()=>null,
   getReadGuard=()=>()=>true
 }){
   const esc=escapeHtml;

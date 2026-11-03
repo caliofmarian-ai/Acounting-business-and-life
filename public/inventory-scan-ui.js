@@ -12,7 +12,7 @@ export function createInventoryScanUi({
   formatNumber,
   onReceiveItem,
   onCountItem,
-  beginWrite=()=>({isCurrent:()=>true,accept:()=>true,finish(){}}),
+  beginWrite=()=>null,
   getReadGuard=()=>()=>true
 }){
   const esc=escapeHtml;

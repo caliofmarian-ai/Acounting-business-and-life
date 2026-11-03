@@ -13,7 +13,7 @@ export function createInventoryCountUi({
   api,
   getInventory,
   getLocations,
-  beginWrite=()=>({isCurrent:()=>true,accept:()=>true,finish(){}}),
+  beginWrite=()=>null,
   getReadGuard=()=>()=>true,
   refreshInventory,
   escapeHtml,

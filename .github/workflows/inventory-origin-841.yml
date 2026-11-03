@@ -88,3 +88,30 @@ jobs:
           if [ -f /tmp/abl-inventory-origin-841.pid ]; then
             kill "$(cat /tmp/abl-inventory-origin-841.pid)" 2>/dev/null || true
           fi
+
+  native-write-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install isolated native Chrome driver
+        run: npm install --prefix "$RUNNER_TEMP/inventory-write-841" --no-package-lock --ignore-scripts playwright@1.58.2
+      - name: Actual callbacks in native Chrome (synthetic identities)
+        env:
+          INVENTORY_BROWSER_MODULE: ${{ runner.temp }}/inventory-write-841/node_modules/playwright/index.mjs
+          INVENTORY_BROWSER_CHANNEL: chrome
+          INVENTORY_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/inventory-write-evidence-841
+        run: node scripts/inventory-write-browser-841.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: inventory-write-841
+          path: ${{ runner.temp }}/inventory-write-evidence-841
+          if-no-files-found: ignore
+          retention-days: 7

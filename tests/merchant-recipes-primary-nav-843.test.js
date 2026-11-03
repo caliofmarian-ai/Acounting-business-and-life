@@ -35,11 +35,11 @@ for(const [label,overview] of [
  const h=presentation();h.apply({role:'merchant',presentation:{merchant_domain:'food',legacy_recipe_ui_allowed:true}});h.apply(overview);assert.equal(h.recipe.classList.contains('roleFinanceHidden'),true);assert.equal(h.views.viewMenu.classList.contains('roleFinanceHidden'),true);
 });
 test('the existing setView opens the canonical editor and selects only its nav button',()=>{
- const views={viewMenu:node(['hidden']),viewStock:node(),viewDashboard:node(['hidden'])},buttons=['Dashboard','Menu','Stock','Money'].map(name=>({...node(name==='Stock'?['active']:[]),dataset:{view:name}}));const loads=[];
- const context=vm.createContext({$:id=>views[id],document:{querySelectorAll:s=>s==='.view'?Object.values(views):buttons},window:{scrollTo(){}},loadMerchantView:async name=>loads.push(name),resetStockTools(){},updateSellPreview(){},console});
+ const views={viewMenu:node(['hidden']),viewStock:node(),viewDashboard:node(['hidden'])},buttons=['Dashboard','Menu','Stock','Money'].map(name=>({...node(name==='Stock'?['active']:[]),dataset:{view:name}}));const loads=[];let writeInvalidations=0;
+ const context=vm.createContext({inventoryWrites:{invalidate(){writeInvalidations++}},$:id=>views[id],document:{querySelectorAll:s=>s==='.view'?Object.values(views):buttons},window:{scrollTo(){}},loadMerchantView:async name=>loads.push(name),resetStockTools(){},updateSellPreview(){},console});
  vm.runInContext(block(ui,'function setView(name){','\nasync function openInventoryNotificationContext'),context);
  context.setView('Menu');assert.equal(views.viewMenu.classList.contains('hidden'),false);assert.equal(views.viewStock.classList.contains('hidden'),true);assert.deepEqual(buttons.filter(b=>b.classList.contains('active')).map(b=>b.dataset.view),['Menu']);assert.deepEqual(loads,['Menu']);
- context.setView('Stock');context.setView('Menu');assert.deepEqual(loads,['Menu','Stock','Menu']);
+ context.setView('Stock');context.setView('Menu');assert.deepEqual(loads,['Menu','Stock','Menu']);assert.equal(writeInvalidations,3);
  assert.match(ui,/querySelectorAll\('\.bottomNav \[data-view\]'\)\.forEach\(b=>b\.onclick=\(\)=>setView\(b\.dataset\.view\)\)/);
 });
 function lifecycle(){
