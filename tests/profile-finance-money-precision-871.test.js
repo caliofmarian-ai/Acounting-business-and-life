@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {
   postProfileBudgetEntry,transferProfileBudgetAllocation,
   createProfileMoneyMovementRequest,createProfileMoneyEntry,createProfileFinancialAccount,
+  createProfileBudgetEnvelope,
   updateProfileFinancialAccount,upsertMoneyPreference,
   transferFundsBetweenProfiles,reverseProfileMoneyEntry
 } from '../profile-finance-core.js';
@@ -283,6 +284,54 @@ test('internal profile transfer replay rejects changed money instruction',async(
 // #871 financial-account metadata must never outlive its mandatory audit
 // when the database rejects the audit insert. This exercises the exported
 // primitive with a deterministic SQL boundary, not a real financial account.
+
+test('budget envelope and mandatory audit commit or roll back together',async()=>{
+  const input={publicId:'ci-budget-envelope-871',accountId:11,profileRole:'customer',
+    label:'Test emergency',purpose:'emergency',currencyCode:'PHP'};
+  const row={id:71,public_id:input.publicId,profile_role:'customer',
+    business_id:null,linked_financial_account_id:null,label:input.label,
+    purpose:input.purpose,currency_code:'PHP',status:'active',allocated_budget:'0'};
+  for(const rejectAudit of [true,false]){
+    const events=[];let released=false;
+    const client={
+      release(){released=true;},
+      async query(sql){
+        events.push(sql);
+        if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0,rows:[]};
+        if(sql.includes('INSERT INTO profile_budget_envelopes('))
+          return{rowCount:1,rows:[row]};
+        if(sql.includes('INSERT INTO profile_finance_audit_events(')){
+          if(rejectAudit)throw Object.assign(new Error('audit rejected'),{code:'23514'});
+          return{rowCount:1,rows:[]};
+        }
+        throw Error('Unexpected SQL on transaction client: '+sql);
+      }
+    };
+    const db={
+      async connect(){return client;},
+      async query(sql){
+        assert.ok(events.includes('COMMIT'),'envelope history read must follow commit');
+        assert.match(sql,/FROM profile_budget_envelopes e/);
+        return{rows:[row]};
+      }
+    };
+    if(rejectAudit){
+      await assert.rejects(createProfileBudgetEnvelope(db,input),e=>e.code==='23514');
+      assert.equal(events.includes('COMMIT'),false,'an audit failure cannot commit envelope');
+      assert.equal(events.at(-1),'ROLLBACK','envelope INSERT must roll back');
+    }else{
+      const saved=await createProfileBudgetEnvelope(db,input);
+      assert.equal(saved.id,71,'successful envelope reloaded from same account');
+      assert.equal(events.at(-1),'COMMIT','audit succeeds before commit');
+    }
+    assert.equal(events[0],'BEGIN');
+    const ins=events.findIndex(x=>x.includes('INSERT INTO profile_budget_envelopes('));
+    const audit=events.findIndex(x=>x.includes('INSERT INTO profile_finance_audit_events('));
+    assert.ok(ins>0&&audit>ins,'both writes use one checked-out PostgreSQL client');
+    assert.equal(released,true,'transaction client always released');
+  }
+});
+
 test('financial account creation commits account metadata and audit atomically',async()=>{
   const input={publicId:'synthetic-account-871',accountId:11,profileRole:'customer',
     ownerScope:'account',accountKind:'cash',displayName:'Test cash'};

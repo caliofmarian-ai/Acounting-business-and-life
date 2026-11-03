@@ -576,26 +576,37 @@ export async function createProfileBudgetEnvelope(pool,{
   const name=clean(label,120);
   if(!name)fail('Budget label is required');
   const p=normalizeBudgetPurpose(purpose);
-  await validateLinkedFinancialAccount(pool,{
-    accountId,profileRole:scope.role,businessId:scope.businessId,
-    financialAccountId:linkedFinancialAccountId,currencyCode:currency
-  });
-  const {rows}=await pool.query(`
+  // An envelope and its mandatory audit event are one financial instruction.
+  // Do not leave a committed, unaudited budget if the audit insert rejects.
+  const client=await pool.connect();
+  let envelopeId=null;
+  try{
+    await client.query('BEGIN');
+    await validateLinkedFinancialAccount(client,{
+      accountId,profileRole:scope.role,businessId:scope.businessId,
+      financialAccountId:linkedFinancialAccountId,currencyCode:currency
+    });
+    const {rows}=await client.query(`
     INSERT INTO profile_budget_envelopes(
       public_id,account_id,profile_role,business_id,linked_financial_account_id,label,purpose,currency_code
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
   `,[
-    clean(publicId,120),Number(accountId),scope.role,scope.businessId,
-    linkedFinancialAccountId==null?null:Number(linkedFinancialAccountId),name,p,currency
-  ]);
-  await pool.query(`
+      clean(publicId,120),Number(accountId),scope.role,scope.businessId,
+      linkedFinancialAccountId==null?null:Number(linkedFinancialAccountId),name,p,currency
+    ]);
+    await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
     VALUES($1,$2,$3,$4,'budget_envelope_created',$5::jsonb)
   `,[
-    Number(accountId),scope.role,scope.businessId,linkedFinancialAccountId==null?null:Number(linkedFinancialAccountId),
-    JSON.stringify({budget_envelope_id:Number(rows[0].id),label:name,purpose:p,currency_code:currency})
-  ]);
-  return (await listProfileBudgetEnvelopes(pool,accountId)).find(x=>x.id===Number(rows[0].id));
+      Number(accountId),scope.role,scope.businessId,
+      linkedFinancialAccountId==null?null:Number(linkedFinancialAccountId),
+      JSON.stringify({budget_envelope_id:Number(rows[0].id),label:name,purpose:p,currency_code:currency})
+    ]);
+    await client.query('COMMIT');
+    envelopeId=Number(rows[0].id);
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
+  return (await listProfileBudgetEnvelopes(pool,accountId)).find(x=>x.id===envelopeId);
 }
 
 export async function postProfileBudgetEntry(pool,{
