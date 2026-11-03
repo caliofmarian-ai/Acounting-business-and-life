@@ -115,6 +115,32 @@ test('Email is a notification event, not new sale/paid money',()=>{
   assert.match(notifications,/\['order.billing_document','fil-PH'/);
 });
 
+test('Immutable order documents reject truncation aliases and malformed currency evidence',()=>{
+  const base=makeOrder();
+  const valid=commercialOrderDocument(base);
+  const cases=[
+    {order_number:'O'.repeat(100)+'A'},
+    {business_name:'M'.repeat(200)+'A'},
+    {items:[{...base.items[0],name_snapshot:'P'.repeat(200)+'A'}]}
+  ];
+  for(const change of cases){
+    assert.throws(()=>commercialOrderDocument({...base,...change}),
+      /evidence exceeds supported length/,
+      'distinct literal source must never collapse into the same immutable snapshot');
+  }
+  const literal=commercialOrderDocument({...base,business_name:' '+base.business_name});
+  assert.notEqual(orderDocumentDigest(valid),orderDocumentDigest(literal),
+    'a changed Merchant name must not be trimmed into a prior document identity');
+  assert.equal(literal.business_name,' '+base.business_name);
+  for(const currency of ['PHPP',' PHP','PHP ','PH\\n',0,false,{},'']){
+    assert.throws(()=>commercialOrderDocument({...base,currency_code:currency}),
+      /Order currency evidence is invalid/,'invalid currency: '+String(currency));
+  }
+  assert.equal(commercialOrderDocument({...base,currency_code:'php'}).currency_code,'PHP');
+  assert.equal(commercialOrderDocument({...base,currency_code:null}).currency_code,'PHP',
+    'older missing currency evidence preserves the documented PH fallback');
+});
+
 test('Malformed economic evidence is rejected before snapshot, email, or print',()=>{
   const invalid=[null,undefined,true,NaN,Infinity,-Infinity,'','unavailable','Infinity','NaN',
     '0x10','1e3','0.001','145.005','-1','10000000000.00','01.00'];
