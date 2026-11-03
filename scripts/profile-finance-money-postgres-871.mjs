@@ -357,6 +357,42 @@ try{
     'retry after rollback writes exactly one audit');
 
 
+  // Exact-ID HOLD recovery is required when >200 later history rows hide
+  // an old replay (or a new item behind synthetic future timestamps).
+  const savedHoldId=Number(holdA.id);
+  const priorHoldCount=await rowCount('profile_money_movements');
+  const auditBeforeHistory=Number((await holdAudits()).rows[0].count);
+  await pool.query(`
+    INSERT INTO profile_money_movements(
+      public_id,idempotency_key,account_id,movement_type,
+      source_financial_account_id,destination_financial_account_id,
+      source_profile_role,destination_profile_role,amount,currency_code,
+      provider_code,status,hold_code,note,created_at
+    )
+    SELECT 'ci-history-hold-'||n,'ci-history-key-'||n,11,'transfer',
+           101,102,'customer','customer',1.23,'PHP','',
+           'pending_provider','PROVIDER_MONEY_MOVEMENT_ADAPTER_NOT_CONNECTED',
+           'synthetic history',NOW() + n * INTERVAL '1 second'
+    FROM generate_series(1,202) AS n
+  `);
+  eq(await rowCount('profile_money_movements'),priorHoldCount+202,
+    '202 newer synthetic HOLDs push original outside capped history');
+  const newest=await pool.query(
+    'SELECT id FROM profile_money_movements WHERE account_id=$1 ORDER BY created_at DESC,id DESC LIMIT 200',[11]
+  );
+  eq(newest.rows.some(x=>Number(x.id)===savedHoldId),false,
+    'old HOLD is intentionally not visible in the 200-row history');
+  const replayHistory=await hold('parallel-same-hold');
+  eq(replayHistory.id,savedHoldId,'old HOLD replay returns the exact committed ID');
+  eq(replayHistory.status,'pending_provider','old replay remains a provider HOLD');
+  const freshBehindFuture=await hold('fresh-hold-behind-future-history');
+  eq(freshBehindFuture.status,'pending_provider',
+    'new HOLD is returned even when future timestamp fixtures crowd out history');
+  eq(freshBehindFuture.id>savedHoldId,true,
+    'new HOLD response holds its exact committed ID');
+  eq(Number((await holdAudits()).rows[0].count),auditBeforeHistory+1,
+    'old replay adds no audit, new HOLD adds one audit');
+
   // New personal Money regression: real PostgreSQL lock, concurrent idempotent
   // replay and full entry+audit rollback, never real account/provider data.
   await pool.query(`

@@ -755,17 +755,9 @@ export async function transferProfileBudgetAllocation(pool,{
   finally{client.release()}
 }
 
-export async function listProfileMoneyMovements(pool,accountId){
-  const {rows}=await pool.query(`
-    SELECT m.*,
-      s.display_name source_account_name,s.reference_last4 source_last4,s.account_kind source_account_kind,
-      d.display_name destination_account_name,d.reference_last4 destination_last4,d.account_kind destination_account_kind
-    FROM profile_money_movements m
-    LEFT JOIN profile_financial_accounts s ON s.id=m.source_financial_account_id
-    LEFT JOIN profile_financial_accounts d ON d.id=m.destination_financial_account_id
-    WHERE m.account_id=$1 ORDER BY m.created_at DESC,m.id DESC LIMIT 200
-  `,[Number(accountId)]);
-  return rows.map(r=>({
+// Keep dashboard history and exact-ID replay on the same response shape.
+function publicProfileMoneyMovement(r){
+  return{
     id:Number(r.id),public_id:r.public_id,movement_type:r.movement_type,
     source_financial_account_id:r.source_financial_account_id==null?null:Number(r.source_financial_account_id),
     destination_financial_account_id:r.destination_financial_account_id==null?null:Number(r.destination_financial_account_id),
@@ -777,7 +769,36 @@ export async function listProfileMoneyMovements(pool,accountId){
     status:r.status,hold_code:r.hold_code||'',provider_reference:r.provider_reference||'',
     evidence_reference:r.evidence_reference||'',failure_code:r.failure_code||'',note:r.note||'',
     execution_ready:r.status!=='pending_provider'&&!r.hold_code,created_at:r.created_at,updated_at:r.updated_at
-  }));
+  };
+}
+
+export async function listProfileMoneyMovements(pool,accountId){
+  const {rows}=await pool.query(`
+    SELECT m.*,
+      s.display_name source_account_name,s.reference_last4 source_last4,s.account_kind source_account_kind,
+      d.display_name destination_account_name,d.reference_last4 destination_last4,d.account_kind destination_account_kind
+    FROM profile_money_movements m
+    LEFT JOIN profile_financial_accounts s ON s.id=m.source_financial_account_id
+    LEFT JOIN profile_financial_accounts d ON d.id=m.destination_financial_account_id
+    WHERE m.account_id=$1 ORDER BY m.created_at DESC,m.id DESC LIMIT 200
+  `,[Number(accountId)]);
+  return rows.map(publicProfileMoneyMovement);
+}
+
+// Read by account + movement ID within the transaction, before COMMIT:
+// neither old replays nor newly written HOLDs depend on a capped history page.
+async function loadProfileMoneyMovement(db,{accountId,id}){
+  const {rows}=await db.query(`
+    SELECT m.*,
+      s.display_name source_account_name,s.reference_last4 source_last4,s.account_kind source_account_kind,
+      d.display_name destination_account_name,d.reference_last4 destination_last4,d.account_kind destination_account_kind
+    FROM profile_money_movements m
+    LEFT JOIN profile_financial_accounts s ON s.id=m.source_financial_account_id
+    LEFT JOIN profile_financial_accounts d ON d.id=m.destination_financial_account_id
+    WHERE m.id=$1 AND m.account_id=$2
+  `,[Number(id),Number(accountId)]);
+  if(rows.length!==1)fail('Money movement could not be loaded in this account',500);
+  return publicProfileMoneyMovement(rows[0]);
 }
 
 export async function createProfileMoneyMovementRequest(pool,{
@@ -812,8 +833,9 @@ export async function createProfileMoneyMovementRequest(pool,{
          String(prior.note??'')!==clean(note,500)||
          (providerCode&&String(prior.provider_code??'')!==clean(providerCode,80)))
         fail('Idempotency key already belongs to a different money movement',409);
+      const response=await loadProfileMoneyMovement(client,{accountId,id:prior.id});
       await client.query('COMMIT');
-      return (await listProfileMoneyMovements(client,accountId)).find(x=>x.id===Number(prior.id));
+      return response;
     }
     if(sourceFinancialAccountId==null||destinationFinancialAccountId==null)fail('Source and destination financial accounts are required');
     const sourceQ=await client.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(sourceFinancialAccountId),Number(accountId)]);
@@ -854,8 +876,9 @@ export async function createProfileMoneyMovementRequest(pool,{
         amount:value,currency_code:currency,status:'pending_provider',provider_money_moved:false
       })
     ]);
+    const response=await loadProfileMoneyMovement(client,{accountId,id:rows[0].id});
     await client.query('COMMIT');
-    return (await listProfileMoneyMovements(client,accountId)).find(x=>x.id===Number(rows[0].id));
+    return response;
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
   finally{client.release()}
 }

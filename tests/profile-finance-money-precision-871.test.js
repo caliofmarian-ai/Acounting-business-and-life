@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {
   postProfileBudgetEntry,transferProfileBudgetAllocation,
   createProfileMoneyMovementRequest,createProfileMoneyEntry,createProfileFinancialAccount,
@@ -475,4 +476,28 @@ test('Money reversal serializes its key BEFORE replay lookup, and returns the or
   assert.equal(result.idempotent,true);
   assert.equal(result.status,'reversed');
   assert.equal(released,true);
+});
+
+
+test('six HTTP finance endpoints forward literal replay keys (never truncate first)',()=>{
+  const source=readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');
+  const routes=[
+    '/api/profile-money/:role/entries',
+    '/api/profile-money/:role/entries/:id/reverse',
+    '/api/settings/budgets/:id/entries',
+    '/api/settings/budget-transfers',
+    '/api/settings/money-movements',
+    '/api/settings/profile-fund-transfers'
+  ];
+  for(const route of routes){
+    const start=source.indexOf("app.post('"+route+"'");
+    assert.notEqual(start,-1,'missing route '+route);
+    const end=source.indexOf("}catch(e){next(e)}});",start);
+    assert.notEqual(end,-1,'missing route end '+route);
+    const section=source.slice(start,end);
+    assert.match(section,/key=req\.headers\['idempotency-key'\]\?\?req\.body\?\.idempotency_key/,
+      route+' must forward the opaque key to core strict validation');
+    assert.doesNotMatch(section,/key=clean\(req\.headers\['idempotency-key'\]/,
+      route+' must not alias two different >220-character keys');
+  }
 });
