@@ -51,6 +51,27 @@ test('fail closed for invalid business IDs, evidence amount, dates, links and re
   assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),links:[{kind:'purchase_order',id:8},{kind:'purchase_order',id:8}]}),/Duplicate linked purchase record/);
 });
 
+test('purchase receipt identity, intent key and currency reject coercion or truncation',()=>{
+  const good=normalizeMerchantPurchaseDocument(base());
+  assert.equal(good.businessId,14);
+  assert.equal(good.currency,'PHP');
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),business_id:'14'}).businessId,14);
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),links:[{kind:'inventory_purchase',id:'101'}]}).links[0].id,101);
+  for(const business_id of [true,[14],{valueOf:()=>14},'1e2','14.0',' 14 ','+14']){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),business_id}),/positive integer/);
+  }
+  for(const id of [true,[101],{valueOf:()=>101},'1e2','101.0',' 101 ','+101']){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),links:[{kind:'inventory_purchase',id}]}),/positive integer/);
+  }
+  for(const client_request_key of ['x'.repeat(101),' '+base().client_request_key,base().client_request_key+' ',123456789012]){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),client_request_key}),/stable client_request_key/);
+  }
+  for(const currency_code of ['PHPX','PHP-fake','PHPjunk',123,[],{}]){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),currency_code}),/Invalid currency/);
+  }
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),currency_code:'php'}).currency,'PHP');
+});
+
 test('purchase evidence rejects date truncation and NUMERIC(14,2) rounding/overflow',()=>{
   for(const issue_date of ['2026-10-30XXXXX','2026-10-30T00:00:00Z',' 2026-10-30','2026-10-30 ',
     '2026-02-29','0000-01-01',7,true]) {

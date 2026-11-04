@@ -9,6 +9,11 @@ const {exactProfileBusiness}=supplierDomainV2Internals;
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const error=(status,message)=>Object.assign(new Error(message),{status});
 const positiveId=(value,label='Identifier')=>{
+  // Record/business identity is never Number()-coerced from booleans, arrays or exponent strings.
+  if((typeof value!=='number'&&typeof value!=='string')||
+     (typeof value==='string'&&!/^\d+$/.test(value))){
+    throw error(400,label+' must be a positive integer');
+  }
   const id=Number(value);
   if(!Number.isSafeInteger(id)||id<1)throw error(400,label+' must be a positive integer');
   return id;
@@ -34,14 +39,19 @@ export function philippinesPurchaseDocumentDate(instant=new Date()){
 
 export function normalizeMerchantPurchaseDocument(input={}){
   const businessId=positiveId(input.business_id,'business_id');
-  const key=clean(input.client_request_key,100);
-  if(!/^[a-zA-Z0-9_-]{12,100}$/.test(key))throw error(400,'A stable client_request_key is required');
+  // Never truncate an intent identifier: distinct overlong keys must not alias.
+  const key=input.client_request_key;
+  if(typeof key!=='string'||!/^[a-zA-Z0-9_-]{12,100}$/.test(key)){
+    throw error(400,'A stable client_request_key is required');
+  }
   const kind=clean(input.document_kind||'purchase_receipt',40).toLowerCase();
   if(!allowedKinds.has(kind))throw error(400,'Invalid purchase document kind');
   // Validate the *entire* submitted date: never turn a malformed date into a valid one by truncation.
   const issueDate=input.issue_date==null||input.issue_date===''?philippinesPurchaseDocumentDate():input.issue_date;
   if(typeof issueDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)||issueDate.startsWith('0000-')||Number.isNaN(Date.parse(issueDate))||new Date(issueDate).toISOString().slice(0,10)!==issueDate)throw error(400,'Invalid issue date');
-  const currency=clean(input.currency_code||'PHP',3).toUpperCase();
+  // Validate the entire code, not its first three characters (PHPOOPS is not PHP).
+  const rawCurrency=input.currency_code==null||input.currency_code===''?'PHP':input.currency_code;
+  const currency=typeof rawCurrency==='string'?rawCurrency.trim().toUpperCase():'';
   if(!/^[A-Z]{3}$/.test(currency))throw error(400,'Invalid currency');
   // PostgreSQL NUMERIC(14,2) must not silently round or reject a value accepted by the API.
   // Keep Number for backward-compatible request fingerprints on previously valid receipts.
