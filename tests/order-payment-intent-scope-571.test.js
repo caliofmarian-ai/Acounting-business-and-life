@@ -323,7 +323,7 @@ test('Refund keys serialize before intent locks, then reserve exactly once',asyn
    if(sql.includes('FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE')){steps.push('LOCK');return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]}};
    if(sql.includes('FROM refunds WHERE request_key=$1')){steps.push('REPLAY');return{rowCount:0,rows:[]}};
    if(sql.includes('SUM(amount)')){steps.push('SUM');return{rows:[{total:'80.00'}]}};
-   if(sql.includes('INSERT INTO refunds(')){steps.push('INSERT');assert.equal(args[2],20);assert.equal(args[7],'refund_once_001');return{rows:[{id:39,status:'requested'}]}};
+   if(sql.includes('INSERT INTO refunds(')){steps.push('INSERT');assert.equal(args[2],20);assert.equal(args[6],'refund_once_001');return{rows:[{id:39,status:'requested'}]}};
    throw Error('Unexpected SQL: '+sql);
  },release(){releases++}};
  const result=await createRefundRequest({connect:async()=>client},{intentId:19,amount:20,requestedBy:7,idempotencyKey:'refund_once_001'});
