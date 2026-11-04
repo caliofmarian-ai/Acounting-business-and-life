@@ -11,10 +11,10 @@ const SECONDARY_TERRITORY_CODE='QA-SERVICE-OTHER';
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
-async function latestServiceApplication(pool,accountId){
+async function latestServiceApplication(pool,accountId,territoryId){
   const q=await pool.query(
-    "SELECT * FROM profile_applications WHERE account_id=$1 AND role='service_provider' ORDER BY id DESC LIMIT 1",
-    [Number(accountId)]
+    "SELECT * FROM profile_applications WHERE account_id=$1 AND role='service_provider' AND territory_id=$2 ORDER BY id DESC LIMIT 1",
+    [Number(accountId),Number(territoryId)]
   );
   return q.rows[0]||null;
 }
@@ -23,7 +23,7 @@ async function ensureServiceProviderApproved({
   pool,base,provider,adminToken,territoryId,categoryId,
   requestJson,expectStatus,ensureActiveRole
 }){
-  let application=await latestServiceApplication(pool,provider.accountId);
+  let application=await latestServiceApplication(pool,provider.accountId,territoryId);
 
   if(!application){
     const started=await requestJson(base,'/api/governance/service-provider/start',{
@@ -67,7 +67,7 @@ async function ensureServiceProviderApproved({
     expectStatus(submitted,200,'Local Services application submit');
   }
 
-  application=await latestServiceApplication(pool,provider.accountId);
+  application=await latestServiceApplication(pool,provider.accountId,territoryId);
   if(['submitted','under_review'].includes(application?.status)){
     const reviewed=await requestJson(base,'/api/governance/admin/applications/'+Number(application.id)+'/review',{
       method:'POST',
@@ -82,7 +82,7 @@ async function ensureServiceProviderApproved({
     expectStatus(reviewed,200,'Local Services Admin approval');
   }
 
-  application=await latestServiceApplication(pool,provider.accountId);
+  application=await latestServiceApplication(pool,provider.accountId,territoryId);
   if(application?.status!=='approved')throw new Error('Local Services application did not become approved.');
 
   const [profile,authorization,categoryAuthorization]=await Promise.all([

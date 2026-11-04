@@ -66,7 +66,7 @@ test('Home Money separates Customer payment receivable from service_provider_net
   assert.match(home,/payments\.outstanding_receivables/);
   assert.match(home,/receivable_job_count/);
   assert.match(home,/Separate service_provider_net allocation evidence/);
-  assert.match(moneyCore,/serviceProviderPaymentEvidence\(pool,accountId\)/);
+  assert.match(moneyCore,/serviceProviderPaymentEvidence\(rows\)/);
   assert.match(moneyCore,/netAllocations\(pool,'service_provider_net',accountId\)/);
   assert.match(moneyCore,/Completed job value is a commercial amount, not proof that money was received/);
 });

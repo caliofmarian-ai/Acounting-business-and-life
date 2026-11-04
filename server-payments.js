@@ -5,9 +5,9 @@ import { readFileSync } from 'node:fs';
 import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,createServiceJobPaymentIntent,
+  ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,createServiceJobPaymentIntent,paymentRequestIdempotencyKey,
   serviceJobPaymentSummary,paymentIntentDetail,
-  createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,createReconciliationRun,
+  createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,lockCurrentRefundAdminAuthority,createReconciliationRun,
   paymentFinanceOverview,mirrorConfirmedOrderPayment
 } from './payment-core.js';
 import {
@@ -601,16 +601,18 @@ app.get('/api/payments/open-orders',async(req,res,next)=>{try{
 
 app.post('/api/payments/intents/order/:id',body,async(req,res,next)=>{try{
   const me=await identity(req);
-  const idempotency=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
-  const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
+  const idempotency=paymentRequestIdempotencyKey(req.headers,req.body);
+  const provider=(req.body?.provider_code==null||req.body.provider_code==='')
+    ?(process.env.PAYMENT_PROVIDER_DEFAULT??''):req.body.provider_code;
   const intent=await createOrderPaymentIntent(pool,{orderId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,clientReference:req.body?.client_reference||''});
   res.status(201).json({...intent,provider_ready:intent.status!=='requires_provider',next_action:intent.status==='requires_provider'?'CONNECT_REAL_PAYMENT_PROVIDER':'PROVIDER_ADAPTER_REQUIRED'});
 }catch(e){next(e)}});
 
 app.post('/api/payments/intents/service-job/:id',body,async(req,res,next)=>{try{
   const me=await identity(req);
-  const idempotency=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
-  const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
+  const idempotency=paymentRequestIdempotencyKey(req.headers,req.body);
+  const provider=(req.body?.provider_code==null||req.body.provider_code==='')
+    ?(process.env.PAYMENT_PROVIDER_DEFAULT??''):req.body.provider_code;
   const intent=await createServiceJobPaymentIntent(pool,{
     serviceJobId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,
     logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,
@@ -951,10 +953,25 @@ app.post('/api/payments/admin/fee-policies/:id/rules',body,async(req,res,next)=>
 
 app.post('/api/payments/admin/refunds',body,async(req,res,next)=>{try{
   const me=await identity(req),assignment=await requireAdminPermission(pool,me.account.id,'payment.manage');
+  const requestKey=paymentRequestIdempotencyKey(req.headers,req.body);
   await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'refund_request',subjectType:'payment_intent',subjectId:req.body?.payment_intent_id||req.body?.payment_intent});
-  const row=await createRefundRequest(pool,{intentId:req.body?.payment_intent_id||req.body?.payment_intent,amount:req.body?.amount,reason:req.body?.reason||'',requestedBy:me.account.id});
-  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'payment.manage',targetType:'refund',targetId:String(row.id),eventCode:'refund_requested_provider_action_required',after:{amount:row.amount,status:row.status},reason:row.reason,correlationId:correlation(req)});
-  res.status(201).json({...row,next_action:'PROVIDER_REFUND_ADAPTER_REQUIRED'});
+  const row=await createRefundRequest(pool,{intentId:req.body?.payment_intent_id||req.body?.payment_intent,amount:req.body?.amount,reason:req.body?.reason||'',requestedBy:me.account.id,idempotencyKey:requestKey,
+    adminAudit:{assignmentId:assignment.id,correlationId:correlation(req)},
+    reauthorize:async client=>{
+      const current=await identity(req);
+      if(Number(current?.account?.id)!==Number(me.account.id))
+        throw Object.assign(new Error('Refund request session changed'),{status:401});
+      const active=await requireAdminPermission(client,me.account.id,'payment.manage');
+      if(Number(active?.id)!==Number(assignment.id))
+        throw Object.assign(new Error('Refund admin assignment changed'),{status:403});
+      // Permission helpers use transaction-scoped NOW(); validate a grant
+      // against wall-clock time after any lock wait, not transaction start.
+      await lockCurrentRefundAdminAuthority(client,{
+        actorAccountId:me.account.id,assignmentId:assignment.id
+      });
+    }});
+  const {__idempotent_replay:replayed,...publicRefund}=row;
+  res.status(replayed?200:201).json({...publicRefund,next_action:'PROVIDER_REFUND_ADAPTER_REQUIRED',already_reserved:Boolean(replayed)});
 }catch(e){next(e)}});
 
 app.post('/api/payments/admin/reconciliation',body,async(req,res,next)=>{try{
