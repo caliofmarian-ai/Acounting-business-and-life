@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createOrderPaymentIntent,createServiceJobPaymentIntent,paymentRequestIdempotencyKey} from '../payment-core.js';
+import {createOrderPaymentIntent,createServiceJobPaymentIntent,createRefundRequest,paymentRequestIdempotencyKey} from '../payment-core.js';
 
 // Source-executing synthetic SQL controls. No real account, database or provider.
 function paymentReplayFixture(existing,outstanding='200.00'){
@@ -312,4 +312,40 @@ test('Service Job same-key replay rejects another payment channel/currency witho
   const ok=serviceJobReplayFixture(original);
   assert.equal((await createServiceJobPaymentIntent(ok.pool,input)).id,199);
   assert.equal(ok.statements.filter(x=>x==='COMMIT').length,1);
+});
+
+test('Refund reservations lock the parent intent before summing and inserting',async()=>{
+  const steps=[];let released=0;
+  const client={async query(sql,args=[]){
+    if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK'){steps.push(sql);return{rows:[]}};
+    if(sql.includes('FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE')){
+      steps.push('LOCK');assert.deepEqual(args,['pi_refund']);return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]};
+    }
+    if(sql.includes('SUM(amount)')&&sql.includes('FROM refunds')){
+      steps.push('SUM');assert.deepEqual(args,[19]);return{rows:[{total:'80.00'}]};
+    }
+    if(sql.includes('INSERT INTO refunds(')){
+      steps.push('INSERT');assert.equal(args[2],20);
+      return{rows:[{id:39,status:'requested',amount:'20.00'}]};
+    }
+    throw Error('Unexpected SQL: '+sql);
+  },release(){released++}};
+  const saved=await createRefundRequest({connect:async()=>client},{intentId:'pi_refund',amount:20,requestedBy:7});
+  assert.equal(saved.id,39);
+  assert.deepEqual(steps,['BEGIN','LOCK','SUM','INSERT','COMMIT']);
+  assert.equal(released,1);
+});
+
+test('Refund overspend rolls back without an insert',async()=>{
+  const steps=[];let released=0;
+  const client={async query(sql){
+    if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK'){steps.push(sql);return{rows:[]}};
+    if(sql.includes('FOR UPDATE')){steps.push('LOCK');return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]}}
+    if(sql.includes('SUM(amount)')){steps.push('SUM');return{rows:[{total:'80.00'}]}}
+    throw Error('Unexpected mutation SQL: '+sql);
+  },release(){released++}};
+  await assert.rejects(createRefundRequest({connect:async()=>client},{intentId:19,amount:21}),
+    e=>e?.status===409&&/exceeds refundable balance/.test(e.message));
+  assert.deepEqual(steps,['BEGIN','LOCK','SUM','ROLLBACK']);
+  assert.equal(released,1);
 });
