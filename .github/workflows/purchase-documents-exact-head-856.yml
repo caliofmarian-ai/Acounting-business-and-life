@@ -5,7 +5,7 @@ on:
     paths:
       - merchant-purchase-documents.js
       - tests/purchase-documents-v1.test.js
-      - tests/purchase-documents-postgres-856.test.js
+      - scripts/purchase-documents-postgres-856.mjs
       - .github/workflows/purchase-documents-exact-head-856.yml
 permissions:
   contents: read
@@ -50,6 +50,6 @@ jobs:
           node-version: '20'
       - run: npm ci
       - name: Syntax check
-        run: node --check merchant-purchase-documents.js && node --check tests/purchase-documents-postgres-856.test.js && node --check tests/purchase-documents-v1.test.js
+        run: node --check merchant-purchase-documents.js && node --check scripts/purchase-documents-postgres-856.mjs && node --check tests/purchase-documents-v1.test.js
       - name: Unit and real isolated PostgreSQL round-trip
-        run: node --test tests/purchase-documents-v1.test.js tests/purchase-documents-postgres-856.test.js
+        run: node --test tests/purchase-documents-v1.test.js scripts/purchase-documents-postgres-856.mjs
