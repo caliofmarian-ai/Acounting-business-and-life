@@ -145,11 +145,12 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       assert.equal((await pool.query("SELECT count(*)::int n FROM payment_intents WHERE source_type='order' AND source_id=33")).rows[0].n,2);
     });
     await t.test('overlength keys reject distinct suffixes rather than collide',async()=>{
+      const beforeIntents=await count('payment_intents');
       for(const suffix of ['alpha','bravo']){
         await assert.rejects(createOrderPaymentIntent(pool,{...b,idempotencyKey:'x'.repeat(220)+suffix}),
           e=>e?.status===400&&e?.code==='PAYMENT_IDEMPOTENCY_KEY_INVALID');
       }
-      assert.equal(await count('payment_intents'),1);
+      assert.equal(await count('payment_intents'),beforeIntents);
     });
     await t.test('padded/control/nonstring keys never alias a committed intent',async()=>{
       const before=await count('payment_intents');
@@ -184,6 +185,8 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       assert.equal(await count('payment_allocations'),beforeAllocations);
     });
     await t.test('allocation error rolls back key; original attempt may be safely retried',async()=>{
+      const priorIntents=await count('payment_intents');
+      const priorAllocations=await count('payment_allocations');
       const key='rollback-only-key';
       const injected={connect:async()=>{
         const db=await pool.connect();
@@ -200,8 +203,8 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       assert.equal(before.rows[0].n,0);
       const accepted=await createOrderPaymentIntent(pool,{...b,idempotencyKey:key});
       assert.ok(accepted.id);
-      assert.equal(await count('payment_intents'),2);
-      assert.equal(await count('payment_allocations'),2);
+      assert.equal(await count('payment_intents'),priorIntents+1);
+      assert.equal(await count('payment_allocations'),priorAllocations+1);
     });
     await t.test('real PostgreSQL V2 Service Job quote authority, private replay and pending fence',async()=>{
       const input={serviceJobId:91,payerAccountId:7,idempotencyKey:'pg-job91-one-intent',logicalMethod:'card',providerCode:'sandbox_a'};
