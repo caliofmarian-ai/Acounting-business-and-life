@@ -12,8 +12,8 @@ const refundCents=(value,{request=false}={})=>{
     throw Object.assign(new Error('Refund amount must contain exact decimal cents'),{status:409,code:'REFUND_AMOUNT_INVALID'});
   const raw=String(value);
   const pattern=request
-    ? /^(?:0|[1-9]\\d{0,11})(?:\\.\\d{1,2})?$/
-    : /^(?:0|[1-9]\\d{0,29})(?:\\.\\d{1,2})?$/;
+    ? /^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/
+    : /^(?:0|[1-9]\d{0,29})(?:\.\d{1,2})?$/;
   if(!pattern.test(raw))
     throw Object.assign(new Error('Refund amount must contain exact decimal cents'),{status:409,code:'REFUND_AMOUNT_INVALID'});
   const [whole,fraction='']=raw.split('.');
