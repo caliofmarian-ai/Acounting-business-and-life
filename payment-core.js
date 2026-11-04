@@ -547,16 +547,43 @@ export async function feePolicyOverview(pool){
 }
 
 export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null}){
-  const i=await paymentIntentDetail(pool,intentId);
-  if(!i)throw Object.assign(new Error('Payment intent not found'),{status:404});
-  if(!['succeeded','partially_refunded'].includes(i.status))throw Object.assign(new Error('Only confirmed payments can be refunded'),{status:409});
-  const done=await pool.query("SELECT COALESCE(SUM(amount),0) total FROM refunds WHERE payment_intent_id=$1 AND status IN ('processing','succeeded','requested','manual_review')",[i.id]);
-  const remaining=money(Number(i.amount)-Number(done.rows[0].total)),amt=money(amount);
-  if(!Number.isFinite(amt)||amt<=0||amt>remaining+0.001)throw Object.assign(new Error('Refund amount exceeds refundable balance'),{status:409});
-  const q=await pool.query("INSERT INTO refunds(payment_intent_id,public_id,amount,currency_code,reason,status,requested_by_account_id) VALUES($1,$2,$3,$4,$5,'requested',$6) RETURNING *",[
-    i.id,'rf_'+crypto.randomBytes(14).toString('hex'),amt,i.currency_code,clean(reason,1000),requestedBy||null
-  ]);
-  return q.rows[0];
+  // Serialize refund reservations against the same payment. Independent
+  // SUM-then-INSERT pool queries let two concurrent requests each reserve
+  // the entire remaining balance before either INSERT becomes visible.
+  // No provider refund or external payment is performed in this transaction.
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const locked=await client.query(
+      'SELECT id,amount,currency_code,status FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE',
+      [String(intentId)]
+    );
+    const i=locked.rows[0];
+    if(!i)throw Object.assign(new Error('Payment intent not found'),{status:404});
+    if(!['succeeded','partially_refunded'].includes(i.status)){
+      throw Object.assign(new Error('Only confirmed payments can be refunded'),{status:409});
+    }
+    const done=await client.query(
+      "SELECT COALESCE(SUM(amount),0) total FROM refunds WHERE payment_intent_id=$1 AND status IN ('processing','succeeded','requested','manual_review')",
+      [i.id]
+    );
+    const remaining=money(Number(i.amount)-Number(done.rows[0].total));
+    const amt=money(amount);
+    if(!Number.isFinite(amt)||amt<=0||amt>remaining+0.001){
+      throw Object.assign(new Error('Refund amount exceeds refundable balance'),{status:409});
+    }
+    const q=await client.query(
+      "INSERT INTO refunds(payment_intent_id,public_id,amount,currency_code,reason,status,requested_by_account_id) VALUES($1,$2,$3,$4,$5,'requested',$6) RETURNING *",
+      [i.id,'rf_'+crypto.randomBytes(14).toString('hex'),amt,i.currency_code,clean(reason,1000),requestedBy||null]
+    );
+    await client.query('COMMIT');
+    return q.rows[0];
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    throw error;
+  }finally{
+    client.release();
+  }
 }
 
 export async function createReconciliationRun(pool,{providerCode,periodStart,periodEnd,statement='',startedBy=null}){
