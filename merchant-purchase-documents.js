@@ -29,12 +29,20 @@ export function normalizeMerchantPurchaseDocument(input={}){
   if(!/^[a-zA-Z0-9_-]{12,100}$/.test(key))throw error(400,'A stable client_request_key is required');
   const kind=clean(input.document_kind||'purchase_receipt',40).toLowerCase();
   if(!allowedKinds.has(kind))throw error(400,'Invalid purchase document kind');
-  const issueDate=clean(input.issue_date||new Date().toISOString().slice(0,10),10);
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)||Number.isNaN(Date.parse(issueDate))||new Date(issueDate).toISOString().slice(0,10)!==issueDate)throw error(400,'Invalid issue date');
+  // Validate the *entire* submitted date: never turn a malformed date into a valid one by truncation.
+  const issueDate=input.issue_date==null||input.issue_date===''?new Date().toISOString().slice(0,10):input.issue_date;
+  if(typeof issueDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)||issueDate.startsWith('0000-')||Number.isNaN(Date.parse(issueDate))||new Date(issueDate).toISOString().slice(0,10)!==issueDate)throw error(400,'Invalid issue date');
   const currency=clean(input.currency_code||'PHP',3).toUpperCase();
   if(!/^[A-Z]{3}$/.test(currency))throw error(400,'Invalid currency');
-  const amount=input.gross_amount==null||input.gross_amount===''?null:Number(input.gross_amount);
-  if(amount!==null&&(!Number.isFinite(amount)||amount<0||amount>1e12))throw error(400,'Invalid document amount');
+  // PostgreSQL NUMERIC(14,2) must not silently round or reject a value accepted by the API.
+  // Keep Number for backward-compatible request fingerprints on previously valid receipts.
+  const rawAmount=input.gross_amount;
+  if(rawAmount!==null&&rawAmount!==undefined&&rawAmount!==''&&
+     (typeof rawAmount!=='number'&&typeof rawAmount!=='string'||Object.is(rawAmount,-0)))throw error(400,'Invalid document amount');
+  const amountText=rawAmount==null||rawAmount===''?null:String(rawAmount);
+  if(amountText!==null&&!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(amountText))throw error(400,'Invalid document amount');
+  const amount=amountText===null?null:Number(amountText);
+  if(amount!==null&&(!Number.isFinite(amount)||amount>=1e12))throw error(400,'Invalid document amount');
   const links=Array.isArray(input.links)?input.links:[];
   if(links.length>100)throw error(400,'A document can link at most 100 purchase records');
   const unique=new Set();

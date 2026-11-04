@@ -51,6 +51,26 @@ test('fail closed for invalid business IDs, evidence amount, dates, links and re
   assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),links:[{kind:'purchase_order',id:8},{kind:'purchase_order',id:8}]}),/Duplicate linked purchase record/);
 });
 
+test('purchase evidence rejects date truncation and NUMERIC(14,2) rounding/overflow',()=>{
+  for(const issue_date of ['2026-10-30XXXXX','2026-10-30T00:00:00Z',' 2026-10-30','2026-10-30 ',
+    '2026-02-29','0000-01-01',7,true]) {
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),issue_date}),/Invalid issue date/);
+  }
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),issue_date:'2028-02-29'}).issueDate,'2028-02-29');
+  for(const gross_amount of ['100.005','0.001','1e3','-0.01','+1.00','999999999999.999',
+    '1000000000000',' 145.25','145.25 ',100.005,0.001,1e12,NaN,Infinity,-Infinity,-0,
+    false,true,[],{}]) {
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),gross_amount}),/Invalid document amount/);
+  }
+  for(const [gross_amount,expected] of [['0.01',0.01],['145.25',145.25],['999999999999.99',999999999999.99],
+    [0.01,0.01],[145.25,145.25],[999999999999.99,999999999999.99],[1000,1000]]) {
+    assert.equal(normalizeMerchantPurchaseDocument({...base(),gross_amount}).amount,expected);
+  }
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),gross_amount:''}).amount,null);
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),gross_amount:null}).amount,null);
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),gross_amount:'0.00'}).amount,0);
+});
+
 test('exact Merchant authorization, cross-business linked-record checks, and private audited file reads are wired',()=>{
   const core=read('merchant-purchase-documents.js');
   const entry=read('server-suppliers.js');
