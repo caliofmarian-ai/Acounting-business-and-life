@@ -28,7 +28,7 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       'CREATE TABLE payment_audit_events(actor_account_id bigint,payment_intent_id bigint,event_code text,provider_code text,after_json jsonb,correlation_id text)'
     ])await pool.query(sql);
     await pool.query('INSERT INTO businesses VALUES(6,2),(7,2)');
-    await pool.query("INSERT INTO orders VALUES(31,6,7,'online',200,200,0,'PHP'),(32,7,8,'online',200,200,0,'PHP')");
+    await pool.query("INSERT INTO orders VALUES(31,6,7,'online',200,200,0,'PHP'),(32,7,8,'online',200,200,0,'PHP'),(33,6,7,'online',200,200,0,'PHP')");
     // Real completed Pricing V2 service jobs, with distinct accepted-quote
     // snapshots: no real Customer/payment-provider accounts are used.
     await pool.query(`INSERT INTO service_jobs(id,customer_account_id,provider_account_id,status,
@@ -114,6 +114,35 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       await assert.rejects(createOrderPaymentIntent(pool,{...a,idempotencyKey:'new-key-after-paid'}),
         e=>e?.status===409&&/already paid/.test(e.message));
       assert.equal(await count('payment_intents'),1);
+    });
+    await t.test('different keys cannot create two live Order payment intents',async()=>{
+      const firstArgs={orderId:33,payerAccountId:7,idempotencyKey:'order33-first'};
+      const first=await createOrderPaymentIntent(pool,firstArgs);
+      const replay=await createOrderPaymentIntent(pool,firstArgs);
+      assert.equal(String(replay.id),String(first.id),'same key must replay safely');
+      for(const status of ['requires_provider','requires_action','processing']){
+        await pool.query('UPDATE payment_intents SET status=$1 WHERE id=$2',[status,first.id]);
+        await assert.rejects(
+          createOrderPaymentIntent(pool,{...firstArgs,idempotencyKey:'order33-new-'+status}),
+          e=>e?.status===409&&e?.code==='ORDER_PAYMENT_ALREADY_PENDING'
+        );
+      }
+      assert.equal((await pool.query("SELECT count(*)::int n FROM payment_intents WHERE source_type='order' AND source_id=33")).rows[0].n,1);
+      assert.equal((await pool.query('SELECT count(*)::int n FROM payment_allocations WHERE payment_intent_id=$1',[first.id])).rows[0].n,1);
+      // An aged PROCESSING payment could still settle asynchronously; TTL
+      // alone must not permit a second key to create another checkout.
+      await pool.query("UPDATE payment_intents SET expires_at=NOW()-INTERVAL '1 hour' WHERE id=$1",[first.id]);
+      await assert.rejects(
+        createOrderPaymentIntent(pool,{...firstArgs,idempotencyKey:'order33-new-expired-processing'}),
+        e=>e?.status===409&&e?.code==='ORDER_PAYMENT_ALREADY_PENDING'
+      );
+      // An unconfigured provider has no provider-backed charge in progress.
+      await pool.query("UPDATE payment_intents SET status='requires_provider' WHERE id=$1",[first.id]);
+      const replacement=await createOrderPaymentIntent(pool,{
+        ...firstArgs,idempotencyKey:'order33-after-unconfigured-expiry'
+      });
+      assert.notEqual(String(replacement.id),String(first.id));
+      assert.equal((await pool.query("SELECT count(*)::int n FROM payment_intents WHERE source_type='order' AND source_id=33")).rows[0].n,2);
     });
     await t.test('overlength keys reject distinct suffixes rather than collide',async()=>{
       for(const suffix of ['alpha','bravo']){

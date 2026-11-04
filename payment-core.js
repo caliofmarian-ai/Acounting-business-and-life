@@ -240,6 +240,22 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
     // A retry of the original key must remain recoverable after settlement
     // reduced outstanding to zero; only a NEW key is rejected as already paid.
     if(outstanding<=0)throw Object.assign(new Error('Order is already paid'),{status:409});
+    // A different key must not create a second live checkout for the same
+    // Order. The FOR UPDATE lock above serializes distinct-key requests too.
+    // Processing is never assumed safe to retry just because TTL elapsed.
+    const pending=await client.query(`
+      SELECT id FROM payment_intents
+      WHERE source_type='order' AND source_id=$1
+        AND (
+          status='processing'
+          OR (status IN ('requires_provider','requires_action')
+              AND (expires_at IS NULL OR expires_at>NOW()))
+        )
+      LIMIT 1
+    `,[o.id]);
+    if(pending.rowCount)throw Object.assign(new Error('An Order payment is already pending'),{
+      status:409,code:'ORDER_PAYMENT_ALREADY_PENDING'
+    });
     const configured=provider?await client.query("SELECT 1 FROM payment_provider_configs WHERE provider_code=$1 AND status IN ('sandbox','active')",[provider]):{rowCount:0};
     const ins=await client.query("INSERT INTO payment_intents(public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,provider_code,logical_method,currency_code,amount,status,client_reference,expires_at) VALUES($1,$2,'order',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW()+INTERVAL '30 minutes') RETURNING *",[
       'pi_'+crypto.randomBytes(16).toString('hex'),key,o.id,payerAccountId,o.business_id,o.territory_id,provider,normalizeMethod(logicalMethod),o.currency_code||'PHP',outstanding,configured.rowCount?'requires_action':'requires_provider',clean(clientReference,200)

@@ -88,6 +88,34 @@ test('An oversized payment key is rejected without truncation or lookup',async()
   assert.equal(f.statements.filter(x=>x.sql==='ROLLBACK').length,1);
 });
 
+test('Different Order key cannot bypass existing active payment checkout',async()=>{
+  const statements=[];
+  const client={
+    async query(sql,params=[]){
+      statements.push(sql);
+      if(['BEGIN','ROLLBACK','COMMIT'].includes(sql))return{rowCount:0,rows:[]};
+      if(sql.includes('FROM orders o JOIN businesses b'))return{rowCount:1,rows:[{
+        id:31,customer_account_id:7,business_id:6,territory_id:2,
+        payment_method:'online',outstanding_amount:'200',currency_code:'PHP'
+      }]};
+      if(sql.includes('pg_advisory_xact_lock'))return{rowCount:1,rows:[{}]};
+      if(sql.includes('FROM payment_intents WHERE idempotency_key'))return{rowCount:0,rows:[]};
+      if(sql.includes("source_type='order' AND source_id=$1")&&sql.includes("status='processing'")){
+        assert.deepEqual(params,[31]);
+        return{rowCount:1,rows:[{id:95}]};
+      }
+      throw Error('Unexpected payment-side SQL: '+sql);
+    },
+    release(){}
+  };
+  await assert.rejects(createOrderPaymentIntent({connect:async()=>client},{
+    ...args,idempotencyKey:'another-key-for-order-31'
+  }),e=>e?.status===409&&e?.code==='ORDER_PAYMENT_ALREADY_PENDING');
+  assert.equal(statements.includes('ROLLBACK'),true);
+  assert.equal(statements.includes('COMMIT'),false);
+  assert.equal(statements.some(s=>s.trim().startsWith('INSERT ')),false);
+});
+
 test('HTTP payment requests reject conflicting header/body idempotency identities without normalization',()=>{
   const key='literal-scope-key-31';
   assert.equal(paymentRequestIdempotencyKey({'idempotency-key':key},{}),key);
