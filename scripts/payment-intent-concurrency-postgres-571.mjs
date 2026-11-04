@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import {createOrderPaymentIntent,createServiceJobPaymentIntent} from '../payment-core.js';
+import {createOrderPaymentIntent,createServiceJobPaymentIntent,serviceJobPaymentSummary} from '../payment-core.js';
 
 // Real PostgreSQL 16, isolated disposable schema, synthetic financial identities only.
 test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60000},async t=>{
@@ -36,11 +36,13 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       currency_code,quote_amount) VALUES
       (91,7,17,'completed',NOW(),901,200,200,NOW(),'PHP',200),
       (92,7,17,'completed',NOW(),902,200,200,NOW(),'PHP',200),
-      (93,7,17,'completed',NOW(),903,200,200,NOW(),'PHP',200)`);
+      (93,7,17,'completed',NOW(),903,200,200,NOW(),'PHP',200),
+      (94,7,17,'completed',NOW(),904,200,200,NOW(),'PHP',200)`);
     await pool.query(`INSERT INTO service_job_quotes(id,job_id,status,total_amount,currency_code,legacy_record)
       VALUES(901,91,'accepted',200,'PHP',FALSE),
             (902,92,'accepted',200,'PHP',FALSE),
-            (903,93,'accepted',200,'PHP',FALSE)`);
+            (903,93,'accepted',200,'PHP',FALSE),
+            (904,94,'accepted',200,'PHP',FALSE)`);
 
     const count=async table=>Number((await pool.query('SELECT COUNT(*)::int n FROM '+table)).rows[0].n);
     const a={orderId:31,payerAccountId:7,idempotencyKey:'two-orders-one-key'};
@@ -244,6 +246,28 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       }
       assert.equal((await pool.query("SELECT count(*)::int n FROM payment_intents WHERE source_type='service_job'")).rows[0].n,1);
       assert.equal((await pool.query('SELECT count(*)::int n FROM payment_audit_events')).rows[0].n,1);
+    });
+    await t.test('expired processing Service Job intent remains pending; expired unconfigured attempt may be replaced',async()=>{
+      const input={serviceJobId:94,payerAccountId:7,idempotencyKey:'pg-job94-original',providerCode:'sandbox_a'};
+      const first=await createServiceJobPaymentIntent(pool,input);
+      assert.equal(first.status,'requires_provider');
+      await pool.query("UPDATE payment_intents SET status='processing',expires_at=NOW()-INTERVAL '1 hour' WHERE id=$1",[first.id]);
+      const pending=await serviceJobPaymentSummary(pool,94);
+      assert.equal(pending.payment.pending_count,1,'expired processing must remain pending');
+      assert.equal(pending.payment.pending_amount,200);
+      await assert.rejects(createServiceJobPaymentIntent(pool,{...input,idempotencyKey:'pg-job94-different'}),
+        e=>e?.status===409&&/already pending/.test(e.message));
+      const afterReject=await pool.query("SELECT status,cancelled_at FROM payment_intents WHERE id=$1",[first.id]);
+      assert.equal(afterReject.rows[0].status,'processing','expired processing must not be cancelled');
+      assert.equal(afterReject.rows[0].cancelled_at,null);
+      assert.equal((await pool.query("SELECT count(*)::int n FROM payment_intents WHERE source_type='service_job' AND source_id=94")).rows[0].n,1);
+      assert.equal((await pool.query("SELECT count(*)::int n FROM payment_audit_events WHERE after_json->>'service_job_id'='94'")).rows[0].n,1);
+      await pool.query("UPDATE payment_intents SET status='requires_provider' WHERE id=$1",[first.id]);
+      const replacement=await createServiceJobPaymentIntent(pool,{...input,idempotencyKey:'pg-job94-replacement'});
+      assert.notEqual(String(replacement.id),String(first.id));
+      assert.equal((await pool.query("SELECT status FROM payment_intents WHERE id=$1",[first.id])).rows[0].status,'cancelled');
+      assert.equal((await pool.query("SELECT count(*)::int n FROM payment_intents WHERE source_type='service_job' AND source_id=94")).rows[0].n,2);
+      assert.equal((await pool.query("SELECT count(*)::int n FROM payment_audit_events WHERE after_json->>'service_job_id'='94'")).rows[0].n,2);
     });
     await t.test('real PostgreSQL audit failure rolls back Service Job key, then same-key retry is safe',async()=>{
       const input={serviceJobId:93,payerAccountId:7,idempotencyKey:'pg-job93-retry-safe',providerCode:'sandbox_a'};

@@ -38,17 +38,19 @@ test('Service Job intent is idempotent within the same payment scope',()=>{
   assert.match(payment,/Number\(old\.payer_account_id\)!==Number\(payerAccountId\)/);
 });
 
-test('expired pending Service Job intents are cancelled before a replacement is created',()=>{
-  assert.match(payment,/source_type='service_job' AND source_id=\$1/);
-  assert.match(payment,/status IN \('requires_provider','requires_action','processing'\)/);
-  assert.match(payment,/expires_at IS NOT NULL AND expires_at<=NOW\(\)/);
-  assert.match(payment,/status='cancelled',cancelled_at=NOW\(\)/);
+test('only expired unconfigured Service Job attempts can be cancelled; processing stays live',()=>{
+  const service=payment.slice(payment.indexOf('export async function createServiceJobPaymentIntent('));
+  assert.match(service,/source_type='service_job' AND source_id=\$1/);
+  assert.match(service,/status IN \('requires_provider','requires_action'\)/);
+  assert.doesNotMatch(service,/status IN \('requires_provider','requires_action','processing'\)/);
+  assert.match(service,/expires_at IS NOT NULL AND expires_at<=NOW\(\)/);
+  assert.match(service,/status='cancelled',cancelled_at=NOW\(\)/);
 });
 
 test('active pending Service Job payment blocks another payment intent',()=>{
   assert.match(payment,/pending_amount/);
   assert.match(payment,/A Service Job payment is already pending/);
-  assert.match(payment,/if\(summary\.payment\.pending_amount>0\)/);
+  assert.match(payment,/if\(summary\.payment\.pending_count>0\|\|summary\.payment\.pending_amount>0\)/);
 });
 
 test('Service Job payment summary separates commercial value, confirmed payment, refunds and receivable',()=>{

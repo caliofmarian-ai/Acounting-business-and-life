@@ -287,13 +287,15 @@ async function serviceJobPaymentSummaryDb(db,jobId,{jobRow=null,lockJob=false}={
           WHERE status IN ('succeeded','partially_refunded','refunded')
         ),0) gross_confirmed,
         COALESCE(SUM(amount) FILTER(
-          WHERE status IN ('requires_provider','requires_action','processing')
-            AND (expires_at IS NULL OR expires_at>NOW())
+          WHERE status='processing'
+            OR (status IN ('requires_provider','requires_action')
+                AND (expires_at IS NULL OR expires_at>NOW()))
         ),0) pending_amount,
         COUNT(*) FILTER(WHERE status IN ('succeeded','partially_refunded','refunded'))::int confirmed_count,
         COUNT(*) FILTER(
-          WHERE status IN ('requires_provider','requires_action','processing')
-            AND (expires_at IS NULL OR expires_at>NOW())
+          WHERE status='processing'
+            OR (status IN ('requires_provider','requires_action')
+                AND (expires_at IS NULL OR expires_at>NOW()))
         )::int pending_count
       FROM payment_intents
       WHERE source_type='service_job' AND source_id=$1
@@ -429,12 +431,13 @@ export async function createServiceJobPaymentIntent(pool,{
     await client.query(`
       UPDATE payment_intents SET status='cancelled',cancelled_at=NOW(),updated_at=NOW()
       WHERE source_type='service_job' AND source_id=$1
-        AND status IN ('requires_provider','requires_action','processing')
+        AND status IN ('requires_provider','requires_action')
         AND expires_at IS NOT NULL AND expires_at<=NOW()
     `,[id]);
 
     if(summary.payment.outstanding<=0)throw Object.assign(new Error('Service Job is already paid'),{status:409});
-    if(summary.payment.pending_amount>0)throw Object.assign(new Error('A Service Job payment is already pending'),{status:409});
+    // A processing provider may settle even after expires_at: never treat TTL as cancellation.
+    if(summary.payment.pending_count>0||summary.payment.pending_amount>0)throw Object.assign(new Error('A Service Job payment is already pending'),{status:409});
 
     const ins=await client.query(`
       INSERT INTO payment_intents(
