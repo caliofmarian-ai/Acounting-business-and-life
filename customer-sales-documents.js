@@ -71,6 +71,15 @@ export function commercialOrderDocument(order,clock=new Date()){
     line_total:money(item.line_total)
   }));
   if(!items.length)throw err(409,'Order line item evidence is unavailable');
+  // Current canonical Orders persists subtotal = sum(recorded line_total) and
+  // total = subtotal + delivery_fee. Do not issue an immutable document whose
+  // visible line breakdown contradicts the recorded commercial total.
+  // Compare integer cents to avoid float drift; do not recalculate unit prices
+  // because Catalog modifiers and variants are included in saved line totals.
+  const cents=value=>Math.round(value*100);
+  const lineSumCents=items.reduce((sum,line)=>sum+cents(line.line_total),0);
+  if(lineSumCents!==cents(subtotal)||cents(subtotal)+cents(deliveryFee)!==cents(total))
+    throw err(409,'Order line, subtotal or delivery monetary evidence is inconsistent');
   const kind=paid>0?'payment_record':'order_summary';
   return {
     document_class:kind,fiscal_status:'internal_evidence',jurisdiction:'PH',

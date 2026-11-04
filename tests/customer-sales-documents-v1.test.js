@@ -83,6 +83,31 @@ test('Printable Customer document escapes untrusted Merchant and Inventory text'
   assert.match(html,/&lt;img src=x/);
 });
 
+test('Commercial order documents reject contradictory recorded line, subtotal and delivery totals',()=>{
+  const original=makeOrder();
+  const mismatchLine={...original,items:[{...original.items[0],line_total:'129.99'}]};
+  assert.throws(()=>commercialOrderDocument(mismatchLine),
+    /Order line, subtotal or delivery monetary evidence is inconsistent/);
+  const subtotalOnly={...original,subtotal:'129.99',
+    items:[{...original.items[0],line_total:'129.99'}]};
+  assert.throws(()=>commercialOrderDocument(subtotalOnly),
+    /Order line, subtotal or delivery monetary evidence is inconsistent/);
+  assert.throws(()=>commercialOrderDocument({...original,delivery_fee:'14.99'}),
+    /Order line, subtotal or delivery monetary evidence is inconsistent/);
+  const split=commercialOrderDocument({...original,items:[
+    {...original.items[0],id:1,quantity:'1',unit_price_snapshot:'70.00',line_total:'70.00'},
+    {...original.items[0],id:2,quantity:'1',unit_price_snapshot:'60.00',line_total:'60.00'}
+  ]});
+  assert.equal(split.items.length,2);
+  assert.equal(split.subtotal,130);
+  assert.equal(split.total,145);
+  const variant=commercialOrderDocument({...original,items:[
+    {...original.items[0],unit_price_snapshot:'60.00',line_total:'130.00'}
+  ]});
+  assert.equal(variant.items[0].line_total,130,
+    'modifier/variant pricing uses the recorded final line price, not a guessed base price');
+});
+
 test('Merchant-only send and private Customer read must enforce order and business identity',()=>{
   const core=read('customer-sales-documents.js');
   const server=read('server-notifications.js');
