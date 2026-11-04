@@ -93,26 +93,64 @@ function verifiedPurchaseResponse(response,purchaseId){
   return response;
 }
 
-function stable(value,depth=0){
+// Hash the canonical JSON stream directly: the existing 32 KiB maximum must
+// apply DURING serialization, not after allocating an unbounded canonical string.
+// The emitted order and bytes are the same as the original stable() algorithm.
+function stableToHash(value,hash,budget,depth=0){
   if(depth>16)throw bad('Purchase payload is nested too deeply');
-  if(value===null)return 'null';
-  if(typeof value==='string'||typeof value==='boolean')return JSON.stringify(value);
+  const write=chunk=>{
+    const size=Buffer.byteLength(chunk,'utf8');
+    if(size>32768-budget.bytes)throw bad('Purchase payload exceeds intent fingerprint limit');
+    budget.bytes+=size;
+    hash.update(chunk);
+  };
+  if(value===null){write('null');return}
+  if(typeof value==='string'){
+    // Do not stringify a huge, attacker-controlled string just to reject it.
+    if(Buffer.byteLength(value,'utf8')>32768-budget.bytes)throw bad('Purchase payload exceeds intent fingerprint limit');
+    write(JSON.stringify(value));return;
+  }
+  if(typeof value==='boolean'){write(JSON.stringify(value));return}
   if(typeof value==='number'){
     if(!Number.isFinite(value))throw bad('Purchase payload contains an invalid number');
-    return JSON.stringify(value);
+    write(JSON.stringify(value));return;
   }
-  if(Array.isArray(value))return `[${value.map(v=>stable(v,depth+1)).join(',')}]`;
-  if(typeof value!=='object'||Object.getPrototypeOf(value)!==Object.prototype){
+  if(Array.isArray(value)){
+    // Sparse or decorated JS arrays are not JSON request arrays and could
+    // otherwise omit an item or silently ignore a non-indexed instruction.
+    if(Object.keys(value).length!==value.length||Object.getOwnPropertySymbols(value).length){
+      throw bad('Purchase payload arrays must contain JSON-only values');
+    }
+    write('[');
+    for(let i=0;i<value.length;i++){
+      const entry=Object.getOwnPropertyDescriptor(value,String(i));
+      if(!entry||!Object.hasOwn(entry,'value'))throw bad('Purchase payload arrays must contain JSON-only values');
+      if(i)write(',');
+      stableToHash(entry.value,hash,budget,depth+1);
+    }
+    write(']');return;
+  }
+  if(typeof value!=='object'||Object.getPrototypeOf(value)!==Object.prototype||
+     Object.getOwnPropertySymbols(value).length){
     throw bad('Purchase payload must contain JSON-only values');
   }
   const keys=Object.keys(value).sort();
-  return `{${keys.map(k=>`${JSON.stringify(k)}:${stable(value[k],depth+1)}`).join(',')}}`;
+  write('{');
+  for(let i=0;i<keys.length;i++){
+    const key=keys[i],entry=Object.getOwnPropertyDescriptor(value,key);
+    if(!entry||!Object.hasOwn(entry,'value'))throw bad('Purchase payload must contain data-only values');
+    if(i)write(',');
+    write(JSON.stringify(key));
+    write(':');
+    stableToHash(entry.value,hash,budget,depth+1);
+  }
+  write('}');
 }
 export function inventoryPurchaseFingerprint(payload){
   if(!payload||typeof payload!=='object'||Array.isArray(payload))throw bad('Purchase payload must be a JSON object');
-  const canonical=stable(payload);
-  if(Buffer.byteLength(canonical,'utf8')>32768)throw bad('Purchase payload exceeds intent fingerprint limit');
-  return createHash('sha256').update('ABL-INVENTORY-PURCHASE-V1\n').update(canonical).digest('hex');
+  const hash=createHash('sha256').update('ABL-INVENTORY-PURCHASE-V1\n');
+  stableToHash(payload,hash,{bytes:0});
+  return hash.digest('hex');
 }
 
 // Call strictly AFTER BEGIN, on a single pg Client; the unique-key insert is

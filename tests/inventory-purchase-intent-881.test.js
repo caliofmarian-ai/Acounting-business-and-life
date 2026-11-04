@@ -19,6 +19,28 @@ test('stable fingerprint ignores JSON object member order, not value changes',()
   assert.match(inventoryPurchaseFingerprint(payload),/^[a-f0-9]{64}$/);
 });
 
+test('fingerprint streams bounded canonical bytes without changing existing intent keys',()=>{
+  // Literal hash from the prior canonical JSON + domain-separator implementation.
+  assert.equal(inventoryPurchaseFingerprint(payload),
+    '4b3a485040bf42ea9034e2e264f4a0d3f382c557e88ed7e22bbda3c5e1ee95d5');
+  assert.equal(inventoryPurchaseFingerprint({v:'x'.repeat(32760)}).length,64,
+    '32 KiB canonical UTF-8 JSON remains accepted at the exact boundary');
+  assert.throws(()=>inventoryPurchaseFingerprint({v:'x'.repeat(32761)}),
+    e=>e.status===400&&/fingerprint limit/.test(e.message));
+  assert.throws(()=>inventoryPurchaseFingerprint({v:'é'.repeat(16381)}),
+    e=>e.status===400&&/fingerprint limit/.test(e.message),
+    'UTF-8 byte size, not JavaScript character count, governs the limit');
+  const sparse=[1,,3];
+  assert.throws(()=>inventoryPurchaseFingerprint({items:sparse}),
+    e=>e.status===400&&/JSON-only/.test(e.message));
+  const decorated=[1];decorated.hidden='unhashed instruction';
+  assert.throws(()=>inventoryPurchaseFingerprint({items:decorated}),
+    e=>e.status===400&&/JSON-only/.test(e.message));
+  const getter=Object.defineProperty({},'item',{enumerable:true,get(){throw Error('must not execute')}});
+  assert.throws(()=>inventoryPurchaseFingerprint(getter),
+    e=>e.status===400&&/data-only/.test(e.message));
+});
+
 test('invalid key, identity or payload never reaches PostgreSQL',async()=>{
   for(const invalid of [null,42,true,'','short',' padded-key-1234','padded-key-1234 ','has space 123456','a'.repeat(129),'a\u0000'.repeat(12)]){
     await assert.rejects(claimInventoryPurchaseIntent(noDb,{businessId:1,accountId:2,intentKey:invalid,payload}),e=>e.status===400);
