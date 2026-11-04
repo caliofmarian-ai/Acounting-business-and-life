@@ -190,7 +190,8 @@ import {readRestaurantBacoorDatabaseSnapshot as readDbSnapshot}
 // this test: real isolated QA authorization and the seeder remain separate.
 function dbSnapshotHarness(change={}){
   const calls=[],authority=change.authority===undefined?
-    [{id:'987654321',name:fixture.business.name,country_code:'PH',currency_code:'PHP'}]:
+    [{id:'987654321',name:fixture.business.name,country_code:'PH',currency_code:'PHP',
+      account_mode:'company_test',test_role:'merchant',auth_status:'active',profile_status:'active'}]:
     change.authority;
   const fixtureRows={
     authority,storefront:change.storefront||[],inventory:change.inventory||[],
@@ -254,6 +255,29 @@ test('real Merchant binding is mandatory: missing/wrong business scope aborts an
     assert.equal(h.wasReleased(),true);
   }
 });
+
+test('only an active, correctly designated company-test Merchant may read the QA fixture',async()=>{
+  const valid={id:'987654321',name:fixture.business.name,country_code:'PH',currency_code:'PHP',
+    account_mode:'company_test',test_role:'merchant',auth_status:'active',profile_status:'active'};
+  for(const change of [
+    {account_mode:'personal'},{account_mode:null},{test_role:'supplier'},
+    {test_role:null},{auth_status:'suspended'},{auth_status:'closed'},
+    {profile_status:'pending'},{profile_status:'revoked'}
+  ]){
+    const h=dbSnapshotHarness({authority:[{...valid,...change}]});
+    await assert.rejects(readDbSnapshot(qaDbOptions(h)),
+      /exact active QA Merchant\/business binding unavailable/);
+    const authoritySql=h.calls.find(q=>q.sql.includes('FROM businesses b'))?.sql||'';
+    for(const condition of [
+      "a.account_mode='company_test'","a.test_role='merchant'",
+      "a.auth_status='active'","p.status='active'"
+    ])assert.ok(authoritySql.includes(condition),'SQL must enforce '+condition);
+    assert.equal(h.calls.some(q=>q.sql.includes('FROM inventory WHERE')),false);
+    assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+    assert.equal(h.wasReleased(),true);
+  }
+});
+
 test('published or payment-enabled storefront cannot masquerade as a safe QA restaurant',async()=>{
   const legal={business_id:'987654321',publication_status:'draft',merchant_domain:'food',
     pickup_enabled:false,delivery_enabled:false,cash_enabled:false,online_enabled:false,

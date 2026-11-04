@@ -19,14 +19,16 @@ const positiveId=(raw,label)=>{
 };
 const SQL={
   authority:[
-    'SELECT DISTINCT b.id,b.name,b.country_code,b.currency_code',
+    'SELECT DISTINCT b.id,b.name,b.country_code,b.currency_code,',
+    'a.account_mode,a.test_role,a.auth_status,p.status AS profile_status',
     'FROM businesses b',
     'JOIN profile_business_bindings pb ON pb.business_id=b.id',
     "AND pb.account_id=$2 AND pb.role='merchant' AND pb.status='active'",
     'JOIN business_memberships bm ON bm.business_id=b.id',
     'AND bm.account_id=$2 AND bm.active=TRUE',
-    'JOIN profiles p ON p.account_id=$2 AND p.role=\'merchant\' AND p.enabled=TRUE',
+    'JOIN profiles p ON p.account_id=$2 AND p.role=\'merchant\' AND p.enabled=TRUE AND p.status=\'active\'',
     "JOIN accounts a ON a.id=$2 AND a.active_role='merchant'",
+    "AND a.account_mode='company_test' AND a.test_role='merchant' AND a.auth_status='active'",
     'WHERE b.id=$1'
   ].join(' '),
   storefront:[
@@ -108,6 +110,10 @@ export async function readRestaurantBacoorDatabaseSnapshot({
     const authority=rows(await client.query(SQL.authority,[business,account]));
     if(authority.length!==1||
        String(authority[0].id)!==business||
+       authority[0].account_mode!=='company_test'||
+       authority[0].test_role!=='merchant'||
+       authority[0].auth_status!=='active'||
+       authority[0].profile_status!=='active'||
        authority[0].name!==plan.target.name||
        authority[0].country_code!=='PH'||authority[0].currency_code!=='PHP'){
       fail('exact active QA Merchant/business binding unavailable');
