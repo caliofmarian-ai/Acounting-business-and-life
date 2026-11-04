@@ -148,9 +148,12 @@ test('replayed identical request returns existing evidence without adding stock,
 });
 
 test('Philippines date fallback and explicit receipt date',()=>{
+  assert.equal(philippinesPurchaseDocumentDate(new Date('2026-11-04T15:59:59.999Z')),'2026-11-04');
   assert.equal(philippinesPurchaseDocumentDate(new Date('2026-11-04T16:00:00Z')),'2026-11-05');
   assert.equal(philippinesPurchaseDocumentDate(new Date('2026-12-31T16:00:00Z')),'2027-01-01');
+  const prior=philippinesPurchaseDocumentDate();
   const d=normalizeMerchantPurchaseDocument({...base(),issue_date:null});
-  assert.equal(d.issueDate,philippinesPurchaseDocumentDate());
+  const next=philippinesPurchaseDocumentDate();
+  assert.ok(d.issueDate===prior||d.issueDate===next,'fallback must be the current Philippines calendar day');
   assert.equal(normalizeMerchantPurchaseDocument(base()).issueDate,'2026-10-30');
 });
