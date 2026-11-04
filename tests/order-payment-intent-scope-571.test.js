@@ -315,6 +315,22 @@ test('Service Job same-key replay rejects another payment channel/currency witho
 });
 
 
+test('Refund reservations reject fractional cents and coercions before any DB connection',async()=>{
+  let acquired=0;
+  const pool={connect:async()=>{acquired++;throw Error('Unexpected database acquisition')}};
+  for(const amount of [
+    undefined,null,true,false,[],[1],{},'', ' 1.00','01.00','1e0','1.001','0.005',
+    0.015,1.999,'+1','-1','0.001',0,'0.00','9999999999999.00'
+  ]){
+    await assert.rejects(
+      createRefundRequest(pool,{intentId:19,amount,idempotencyKey:'refund_precise_preflight_001'}),
+      error=>error?.status===409,
+      'Fractional-cent or coerced amount must fail closed: '+String(amount)
+    );
+  }
+  assert.equal(acquired,0,'invalid money cannot read or mutate a financial ledger');
+});
+
 test('Refund keys serialize before intent locks, then reserve exactly once',async()=>{
  const steps=[];let releases=0;
  const client={async query(sql,args=[]){
@@ -323,7 +339,7 @@ test('Refund keys serialize before intent locks, then reserve exactly once',asyn
    if(sql.includes('FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE')){steps.push('LOCK');return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]}};
    if(sql.includes('FROM refunds WHERE request_key=$1')){steps.push('REPLAY');return{rowCount:0,rows:[]}};
    if(sql.includes('SUM(amount)')){steps.push('SUM');return{rows:[{total:'80.00'}]}};
-   if(sql.includes('INSERT INTO refunds(')){steps.push('INSERT');assert.equal(args[2],20);assert.equal(args[6],'refund_once_001');return{rows:[{id:39,status:'requested'}]}};
+   if(sql.includes('INSERT INTO refunds(')){steps.push('INSERT');assert.equal(args[2],'20.00');assert.equal(args[6],'refund_once_001');return{rows:[{id:39,status:'requested'}]}};
    throw Error('Unexpected SQL: '+sql);
  },release(){releases++}};
  const result=await createRefundRequest({connect:async()=>client},{intentId:19,amount:20,requestedBy:7,idempotencyKey:'refund_once_001'});

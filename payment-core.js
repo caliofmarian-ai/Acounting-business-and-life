@@ -3,6 +3,23 @@ import {resolveAcceptedServiceJobPayable} from './local-services-pricing-core.js
 
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
+// A refund reservation is money movement authority, never display rounding.
+// Reject coercions (booleans, arrays, exponents) and fractional cents BEFORE
+// acquiring locks or writing anything. PostgreSQL NUMERIC(14,2) requests are
+// stored as canonical decimal text to preserve each exact cent.
+const refundCents=(value,{request=false}={})=>{
+  if(typeof value!=='string'&&typeof value!=='number')
+    throw Object.assign(new Error('Refund amount must contain exact decimal cents'),{status:409,code:'REFUND_AMOUNT_INVALID'});
+  const raw=String(value);
+  const pattern=request
+    ? /^(?:0|[1-9]\\d{0,11})(?:\\.\\d{1,2})?$/
+    : /^(?:0|[1-9]\\d{0,29})(?:\\.\\d{1,2})?$/;
+  if(!pattern.test(raw))
+    throw Object.assign(new Error('Refund amount must contain exact decimal cents'),{status:409,code:'REFUND_AMOUNT_INVALID'});
+  const [whole,fraction='']=raw.split('.');
+  return BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));
+};
+const refundDecimal=cents=>(cents/100n).toString()+'.'+String(cents%100n).padStart(2,'0');
 const hash=v=>crypto.createHash('sha256').update(String(v??''),'utf8').digest('hex');
 const paymentIntentIdempotencyKey=raw=>{
   // This is a literal caller-owned identity, not display text. Trimming or
@@ -552,13 +569,14 @@ export async function createRefundRequest(pool,{intentId,amount,reason='',reques
   // Serialize one request identity globally (even across intent IDs) and all
   // refund reservations per parent intent. Recovery must never post twice.
   const requestKey=paymentIntentIdempotencyKey(idempotencyKey);
-  const amt=money(amount),normalizedReason=clean(reason,1000);
+  const amtCents=refundCents(amount,{request:true});
+  const amt=refundDecimal(amtCents),normalizedReason=clean(reason,1000);
   // Validate verified admin assignment before opening a financial transaction.
   // Core-only isolated ledgers may omit adminAudit; HTTP always supplies it.
   const auditAssignment=adminAudit===null?null:Number(adminAudit?.assignmentId);
   if(adminAudit!==null&&(!Number.isSafeInteger(auditAssignment)||auditAssignment<1))
     throw Object.assign(new Error('Verified admin assignment is required for refund audit'),{status:403});
-  if(!Number.isFinite(amt)||amt<=0)
+  if(amtCents<=0n)
     throw Object.assign(new Error('Refund amount must be positive'),{status:409});
   const client=await pool.connect();
   try{
@@ -574,7 +592,7 @@ export async function createRefundRequest(pool,{intentId,amount,reason='',reques
     if(previousQuery.rowCount){
       const previous=previousQuery.rows[0];
       if(Number(previous.payment_intent_id)!==Number(i.id)||
-         Number(previous.amount)!==amt||
+         refundCents(previous.amount)!==amtCents||
          String(previous.currency_code)!==String(i.currency_code)||
          String(previous.reason)!==normalizedReason||
          Number(previous.requested_by_account_id??0)!==Number(requestedBy??0))
@@ -590,8 +608,8 @@ export async function createRefundRequest(pool,{intentId,amount,reason='',reques
       "SELECT COALESCE(SUM(amount),0) total FROM refunds WHERE payment_intent_id=$1 AND status IN ('processing','succeeded','requested','manual_review')",
       [i.id]
     );
-    const remaining=money(Number(i.amount)-Number(done.rows[0].total));
-    if(amt>remaining+0.001)
+    const remainingCents=refundCents(i.amount)-refundCents(done.rows[0].total);
+    if(remainingCents<0n||amtCents>remainingCents)
       throw Object.assign(new Error('Refund amount exceeds refundable balance'),{status:409});
     const q=await client.query(
       "INSERT INTO refunds(payment_intent_id,public_id,amount,currency_code,reason,status,requested_by_account_id,request_key) VALUES($1,$2,$3,$4,$5,'requested',$6,$7) RETURNING *",

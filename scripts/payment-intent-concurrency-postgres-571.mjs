@@ -209,6 +209,18 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       assert.equal(await count('payment_intents'),priorIntents+1);
       assert.equal(await count('payment_allocations'),priorAllocations+1);
     });
+    await t.test('invalid fractional-cent and coerced refunds never write a real PostgreSQL reservation',async()=>{
+      const before=await count('refunds');
+      for(const amount of [true,[1],'0.015',0.015,'1e2','1.999',' 10.00','01.00','9999999999999.00']){
+        await assert.rejects(
+          createRefundRequest(pool,{intentId:'pi_qa_missing_refund_preflight',amount,
+            idempotencyKey:'pg_refund_invalid_fraction_001'}),
+          e=>e?.status===409&&e?.code==='REFUND_AMOUNT_INVALID'
+        );
+      }
+      assert.equal(await count('refunds'),before,
+        'no malformed amount can create a real PostgreSQL refund row');
+    });
     await t.test('two concurrent full-value refund reservations cannot exceed the succeeded payment',async()=>{
       // Use a synthetic succeeded intent, not a PayMongo provider or real refund.
       const seed=await pool.query(`INSERT INTO payment_intents(
