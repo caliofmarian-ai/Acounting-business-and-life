@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,createServiceJobPaymentIntent,paymentRequestIdempotencyKey,
   serviceJobPaymentSummary,paymentIntentDetail,
-  createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,createReconciliationRun,
+  createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,lockCurrentRefundAdminAuthority,createReconciliationRun,
   paymentFinanceOverview,mirrorConfirmedOrderPayment
 } from './payment-core.js';
 import {
@@ -966,20 +966,9 @@ app.post('/api/payments/admin/refunds',body,async(req,res,next)=>{try{
         throw Object.assign(new Error('Refund admin assignment changed'),{status:403});
       // Permission helpers use transaction-scoped NOW(); validate a grant
       // against wall-clock time after any lock wait, not transaction start.
-      const fresh=await client.query(`SELECT 1 FROM platform_admin_assignments a
-        WHERE a.id=$1 AND a.account_id=$2 AND a.status='active'
-          AND a.effective_from<=clock_timestamp()
-          AND (a.effective_until IS NULL OR a.effective_until>clock_timestamp())
-          AND (
-            a.admin_role='super_admin'
-            OR COALESCE(NULLIF(a.authority_rank,''),a.admin_role)='super_admin'
-            OR EXISTS (SELECT 1 FROM admin_permission_grants g
-              WHERE g.assignment_id=a.id AND g.permission_code='payment.manage'
-                AND g.status='active' AND g.effective_from<=clock_timestamp()
-                AND (g.effective_until IS NULL OR g.effective_until>clock_timestamp()))
-          )`,[assignment.id,me.account.id]);
-      if(!fresh.rowCount)
-        throw Object.assign(new Error('Refund admin grant expired or was revoked'),{status:403});
+      await lockCurrentRefundAdminAuthority(client,{
+        actorAccountId:me.account.id,assignmentId:assignment.id
+      });
     }});
   const {__idempotent_replay:replayed,...publicRefund}=row;
   res.status(replayed?200:201).json({...publicRefund,next_action:'PROVIDER_REFUND_ADAPTER_REQUIRED',already_reserved:Boolean(replayed)});

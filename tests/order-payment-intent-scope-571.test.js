@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createOrderPaymentIntent,createServiceJobPaymentIntent,createRefundRequest,paymentRequestIdempotencyKey} from '../payment-core.js';
+import {createOrderPaymentIntent,createServiceJobPaymentIntent,createRefundRequest,lockCurrentRefundAdminAuthority,paymentRequestIdempotencyKey} from '../payment-core.js';
 
 // Source-executing synthetic SQL controls. No real account, database or provider.
 function paymentReplayFixture(existing,outstanding='200.00'){
@@ -464,8 +464,34 @@ test('Admin HTTP refunds provide strict transactional audit and never append bes
   assert.match(route,/adminAudit:\s*\{assignmentId:assignment\.id,correlationId:correlation\(req\)\}/);
   assert.match(route,/reauthorize:async client=>/);
   assert.match(route,/requireAdminPermission\(client,me\.account\.id,'payment\.manage'\)/);
-  assert.match(route,/clock_timestamp\(\)/);
+  assert.match(route,/lockCurrentRefundAdminAuthority\(client,/);
   assert.doesNotMatch(route,/appendAdminAudit\(/);
+});
+
+
+test('Refund reauthorization holds current assignment and grant row locks',async()=>{
+  const statements=[];
+  const db={async query(sql,args){
+    statements.push({sql,args});
+    if(sql.includes('FROM platform_admin_assignments'))return{rowCount:1,rows:[{admin_role:'country_admin',authority_rank:'country_admin'}]};
+    if(sql.includes('FROM admin_permission_grants'))return{rowCount:1,rows:[{}]};
+    throw Error('Unexpected SQL');
+  }};
+  assert.equal(await lockCurrentRefundAdminAuthority(db,{actorAccountId:7,assignmentId:501}),true);
+  assert.deepEqual(statements.map(x=>x.args),[[501,7],[501]]);
+  for(const {sql} of statements){assert.match(sql,/FOR SHARE/);assert.match(sql,/clock_timestamp\(\)/)}
+  const denied={async query(sql){
+    if(sql.includes('FROM platform_admin_assignments'))return{rowCount:1,rows:[{admin_role:'country_admin'}]};
+    return{rowCount:0,rows:[]};
+  }};
+  await assert.rejects(lockCurrentRefundAdminAuthority(denied,{actorAccountId:7,assignmentId:501}),
+    e=>e.status===403&&/permission/.test(e.message));
+  let calls=0;
+  const root={async query(sql){calls++;assert.match(sql,/FROM platform_admin_assignments/);return{rowCount:1,rows:[{admin_role:'super_admin'}]}}};
+  assert.equal(await lockCurrentRefundAdminAuthority(root,{actorAccountId:7,assignmentId:501}),true);
+  assert.equal(calls,1,'super admin authority is held by assignment, not invented grant');
+  await assert.rejects(lockCurrentRefundAdminAuthority(root,{actorAccountId:0,assignmentId:501}),e=>e.status===403);
+  assert.equal(calls,1,'malformed actor is rejected without SQL');
 });
 
 test('Refund without a literal retry key never opens a DB transaction',async()=>{

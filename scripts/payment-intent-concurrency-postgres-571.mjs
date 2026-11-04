@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import {createOrderPaymentIntent,createServiceJobPaymentIntent,serviceJobPaymentSummary,createRefundRequest} from '../payment-core.js';
+import {createOrderPaymentIntent,createServiceJobPaymentIntent,serviceJobPaymentSummary,createRefundRequest,lockCurrentRefundAdminAuthority} from '../payment-core.js';
 
 // Real PostgreSQL 16, isolated disposable schema, synthetic financial identities only.
 test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60000},async t=>{
@@ -26,7 +26,9 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       'CREATE TABLE service_job_quotes(id bigint PRIMARY KEY,job_id bigint,status text,total_amount numeric(14,2),currency_code text,legacy_record boolean)',
       'CREATE TABLE refunds(id bigserial PRIMARY KEY,payment_intent_id bigint,public_id text UNIQUE,amount numeric(14,2),currency_code text,reason text,status text,requested_by_account_id bigint,request_key text UNIQUE)',
       'CREATE TABLE payment_audit_events(actor_account_id bigint,payment_intent_id bigint,event_code text,provider_code text,after_json jsonb,correlation_id text)',
-      'CREATE TABLE admin_audit_events(actor_account_id bigint,assignment_id bigint,permission_code text,country_code text,target_type text,target_id text,event_code text,after_json jsonb,reason text,correlation_id text)'
+      'CREATE TABLE admin_audit_events(actor_account_id bigint,assignment_id bigint,permission_code text,country_code text,target_type text,target_id text,event_code text,after_json jsonb,reason text,correlation_id text)',
+      'CREATE TABLE platform_admin_assignments(id bigint PRIMARY KEY,account_id bigint,admin_role text,authority_rank text,status text,effective_from timestamptz,effective_until timestamptz)',
+      'CREATE TABLE admin_permission_grants(id bigint PRIMARY KEY,assignment_id bigint,permission_code text,status text,effective_from timestamptz,effective_until timestamptz)'
     ])await pool.query(sql);
     await pool.query('INSERT INTO businesses VALUES(6,2),(7,2)');
     await pool.query("INSERT INTO orders VALUES(31,6,7,'online',200,200,0,'PHP'),(32,7,8,'online',200,200,0,'PHP'),(33,6,7,'online',200,200,0,'PHP')");
@@ -46,6 +48,46 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
             (904,94,'accepted',200,'PHP',FALSE)`);
 
     const count=async table=>Number((await pool.query('SELECT COUNT(*)::int n FROM '+table)).rows[0].n);
+
+    await t.test('real PostgreSQL delegated refund grant cannot revoke between authorization and transaction end',async()=>{
+      await pool.query(`INSERT INTO platform_admin_assignments
+        VALUES(501,7,'country_admin','country_admin','active',clock_timestamp()-INTERVAL '1 hour',NULL)`);
+      await pool.query(`INSERT INTO admin_permission_grants
+        VALUES(601,501,'payment.manage','active',clock_timestamp()-INTERVAL '1 hour',NULL)`);
+      const holder=await pool.connect(),revoker=await pool.connect();
+      let open=false,revoke;
+      try{
+        await holder.query('BEGIN');open=true;
+        assert.equal(await lockCurrentRefundAdminAuthority(holder,{actorAccountId:7,assignmentId:501}),true);
+        let finished=false;
+        revoke=revoker.query("UPDATE admin_permission_grants SET status='revoked' WHERE id=601").then(
+          ()=>{finished=true;},error=>{finished=true;throw error}
+        );
+        let blocked=false;
+        for(let i=0;i<30&&!blocked;i++){
+          await new Promise(resolve=>setTimeout(resolve,30));
+          const wait=await pool.query(`SELECT COUNT(*)::int n FROM pg_stat_activity
+            WHERE wait_event_type='Lock' AND state='active'
+              AND query LIKE 'UPDATE admin_permission_grants SET status=%'`);
+          blocked=wait.rows[0].n>0;
+        }
+        assert.equal(blocked,true,'actual revoker must wait for PostgreSQL SHARE row lock');
+        assert.equal(finished,false,'revocation cannot commit before refund transaction ends');
+        await holder.query('COMMIT');open=false;
+        await revoke;revoke=null;
+        await assert.rejects(lockCurrentRefundAdminAuthority(pool,{actorAccountId:7,assignmentId:501}),
+          e=>e.status===403,'subsequent attempt after revocation must deny');
+        await pool.query("UPDATE admin_permission_grants SET status='active' WHERE id=601");
+        await pool.query("UPDATE platform_admin_assignments SET effective_until=clock_timestamp()-INTERVAL '1 second' WHERE id=501");
+        await assert.rejects(lockCurrentRefundAdminAuthority(pool,{actorAccountId:7,assignmentId:501}),
+          e=>e.status===403,'expired assignment must deny');
+      }finally{
+        if(open)await holder.query('ROLLBACK').catch(()=>{});
+        if(revoke)await revoke.catch(()=>{});
+        holder.release();revoker.release();
+      }
+    });
+
     const a={orderId:31,payerAccountId:7,idempotencyKey:'two-orders-one-key'};
     const b={orderId:32,payerAccountId:8,idempotencyKey:'two-orders-one-key'};
     await t.test('two concurrent different Orders with one key: 409, not 23505 or a second intent',async()=>{

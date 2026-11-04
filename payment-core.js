@@ -565,6 +565,34 @@ export async function feePolicyOverview(pool){
   return rows;
 }
 
+// Hold the active assignment and its delegated payment.manage grant with
+// transaction-scoped PostgreSQL SHARE row locks until refund COMMIT/ROLLBACK.
+// Otherwise a revocation can commit after the last authorization SELECT.
+export async function lockCurrentRefundAdminAuthority(client,{actorAccountId,assignmentId}){
+  const actor=Number(actorAccountId),assignment=Number(assignmentId);
+  if(!Number.isSafeInteger(actor)||actor<1||!Number.isSafeInteger(assignment)||assignment<1)
+    throw Object.assign(new Error('Current refund admin authority is required'),{status:403});
+  const assigned=await client.query(`
+    SELECT admin_role,authority_rank FROM platform_admin_assignments
+     WHERE id=$1 AND account_id=$2 AND status='active'
+       AND effective_from<=clock_timestamp()
+       AND (effective_until IS NULL OR effective_until>clock_timestamp())
+     FOR SHARE`,[assignment,actor]);
+  if(assigned.rowCount!==1)
+    throw Object.assign(new Error('Refund admin assignment expired or was revoked'),{status:403});
+  const row=assigned.rows[0];
+  if(row.admin_role==='super_admin'||(row.authority_rank||row.admin_role)==='super_admin')return true;
+  const granted=await client.query(`
+    SELECT 1 FROM admin_permission_grants
+     WHERE assignment_id=$1 AND permission_code='payment.manage' AND status='active'
+       AND effective_from<=clock_timestamp()
+       AND (effective_until IS NULL OR effective_until>clock_timestamp())
+     FOR SHARE`,[assignment]);
+  if(granted.rowCount<1)
+    throw Object.assign(new Error('Refund admin permission expired or was revoked'),{status:403});
+  return true;
+}
+
 export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null,idempotencyKey,adminAudit=null,reauthorize=null}){
   // Serialize one request identity globally (even across intent IDs) and all
   // refund reservations per parent intent. Recovery must never post twice.
