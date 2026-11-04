@@ -23,6 +23,15 @@ const linkTables=Object.freeze({
 const fileTypes=['image/jpeg','image/png','image/webp','application/pdf'];
 export const MERCHANT_PURCHASE_FILE_MAX_BYTES=6*1024*1024;
 
+// The Philippines uses UTC+08 year-round; the server may run on UTC.
+export function philippinesPurchaseDocumentDate(instant=new Date()){
+  const t=instant instanceof Date?instant.getTime():NaN;
+  if(!Number.isFinite(t))throw error(400,'Invalid purchase document clock');
+  const ph=new Date(t+28800000);
+  if(!Number.isFinite(ph.getTime()))throw error(400,'Invalid purchase document clock');
+  return ph.toISOString().slice(0,10);
+}
+
 export function normalizeMerchantPurchaseDocument(input={}){
   const businessId=positiveId(input.business_id,'business_id');
   const key=clean(input.client_request_key,100);
@@ -30,7 +39,7 @@ export function normalizeMerchantPurchaseDocument(input={}){
   const kind=clean(input.document_kind||'purchase_receipt',40).toLowerCase();
   if(!allowedKinds.has(kind))throw error(400,'Invalid purchase document kind');
   // Validate the *entire* submitted date: never turn a malformed date into a valid one by truncation.
-  const issueDate=input.issue_date==null||input.issue_date===''?new Date().toISOString().slice(0,10):input.issue_date;
+  const issueDate=input.issue_date==null||input.issue_date===''?philippinesPurchaseDocumentDate():input.issue_date;
   if(typeof issueDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)||issueDate.startsWith('0000-')||Number.isNaN(Date.parse(issueDate))||new Date(issueDate).toISOString().slice(0,10)!==issueDate)throw error(400,'Invalid issue date');
   const currency=clean(input.currency_code||'PHP',3).toUpperCase();
   if(!/^[A-Z]{3}$/.test(currency))throw error(400,'Invalid currency');

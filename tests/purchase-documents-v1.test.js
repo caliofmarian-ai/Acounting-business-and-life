@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  normalizeMerchantPurchaseDocument,MERCHANT_PURCHASE_FILE_MAX_BYTES
+  normalizeMerchantPurchaseDocument,philippinesPurchaseDocumentDate,MERCHANT_PURCHASE_FILE_MAX_BYTES
 } from '../merchant-purchase-documents.js';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
@@ -145,4 +145,12 @@ test('replayed identical request returns existing evidence without adding stock,
   assert.equal(result.already_saved,true);
   assert.equal(result.document.id,23);
   assert.equal(queries,1);
+});
+
+test('Philippines date fallback and explicit receipt date',()=>{
+  assert.equal(philippinesPurchaseDocumentDate(new Date('2026-11-04T16:00:00Z')),'2026-11-05');
+  assert.equal(philippinesPurchaseDocumentDate(new Date('2026-12-31T16:00:00Z')),'2027-01-01');
+  const d=normalizeMerchantPurchaseDocument({...base(),issue_date:null});
+  assert.equal(d.issueDate,philippinesPurchaseDocumentDate());
+  assert.equal(normalizeMerchantPurchaseDocument(base()).issueDate,'2026-10-30');
 });
