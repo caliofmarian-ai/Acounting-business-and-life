@@ -28,6 +28,22 @@ export function stockIntakeOriginHeaders(context){
   }
   return Object.freeze({'x-abl-inventory-origin-business':String(context.businessId)});
 }
+// Forward-compatible #881 purchase key: one secure, literal key per approved row.
+// #882 is NOT installed in HTTP yet; this header does not enable safe retry.
+export function stockIntakePurchaseIntentKey(row,randomUUID=()=>globalThis.crypto?.randomUUID?.()){
+  if(!row||typeof row!=='object'||!['pending','posting'].includes(row.result))
+    throw new Error('A reviewed pending stock purchase is required for a stable intent key.');
+  if(row.purchaseIntentKey!==undefined){
+    if(typeof row.purchaseIntentKey!=='string'||!/^[a-zA-Z0-9_-]{12,128}$/.test(row.purchaseIntentKey))
+      throw new Error('Existing stock purchase intent key is invalid; reopen the reviewed batch.');
+    return row.purchaseIntentKey;
+  }
+  const key=randomUUID();
+  if(typeof key!=='string'||!/^[a-zA-Z0-9_-]{12,128}$/.test(key))
+    throw new Error('Secure purchase intent key unavailable. No purchase was submitted.');
+  row.purchaseIntentKey=key;
+  return key;
+}
 const NORMALIZE=value=>String(value??'').trim().toLocaleLowerCase('en-PH').replace(/\s+/g,' ');
 const CENTS=value=>Math.round((Number(value)+Number.EPSILON)*100)/100;
 
@@ -214,6 +230,8 @@ export function reviseStockIntakeRow(row,field,raw){
   if(Object.is(row[field],next))return false;
   const wasClassified=Boolean(stockIntakeClassification(row.classificationCode));
   row[field]=next;
+  // Edited physical/financial evidence means a new purchase intent.
+  delete row.purchaseIntentKey;
   // Initial choice is explicit human classification; a subsequent change
   // also demands renewed line review and both batch approvals.
   if(field!=='classificationCode'||wasClassified)row.requiresReview=true;
@@ -597,11 +615,16 @@ if(hasDocument){
         if(!validStockIntakeRow(row))throw new Error('Stock quantity, unit, category, cost or review confirmation is not valid.');
         const classification=stockIntakeClassification(row.classificationCode);
         if(!classification)throw new Error('Choose and verify the Inventory category before posting.');
+        // Bind the approved row to one fresh secure intent before HTTP dispatch.
+        // This is NOT a retry permission until #882 server integration is complete.
+        const intentKey=stockIntakePurchaseIntentKey(row);
+        const purchaseHeaders=Object.freeze({...purchaseOriginHeaders,
+          'x-abl-inventory-purchase-intent-key':intentKey});
         row.result='posting';renderRows();
         // From this point an interrupted response is uncertain; never auto-retry.
         purchaseDispatched=true;
         // Canonical atomic purchase + linked expense. This records an existing payment; no funds transfer occurs.
-        const result=await api('/api/inventory/purchase',{method:'POST',headers:purchaseOriginHeaders,body:JSON.stringify({
+        const result=await api('/api/inventory/purchase',{method:'POST',headers:purchaseHeaders,body:JSON.stringify({
           item:row.item,...classification,
           purchase_quantity:row.quantity,purchase_unit:row.unit,total_cost:CENTS(row.total),
           account:paidFrom,record_expense:true,

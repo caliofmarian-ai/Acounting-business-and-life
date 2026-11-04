@@ -7,7 +7,7 @@ import {
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
   STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes,
-  stockIntakeOriginHeaders
+  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -509,10 +509,57 @@ test('the shipped paid CSV purchase POST carries origin captured before asynchro
   assert.ok(snapshot>=0&&header>snapshot&&preflight>header&&dispatch>preflight,
     'capture originating business before asynchronous account/business/Inventory rechecks');
   const purchase=handler.slice(dispatch,dispatch+480);
-  assert.match(purchase,/method:'POST',headers:purchaseOriginHeaders,body:JSON\.stringify\(/);
+  assert.match(purchase,/method:'POST',headers:purchaseHeaders,body:JSON\.stringify\(/);
   assert.match(handler,/if\(!sameContext\(originalContext,state\.context\)\)/);
   assert.doesNotMatch(purchase,/workspace\.active_business_id|state\.context\.businessId|req\.body\.business_id/,
     'never retarget purchase from mutable selection or CSV-provided data');
   assert.match(handler,/row\.result='uncertain'/,
     'an interrupted POST must remain unknown and must not be retried automatically');
+});
+
+test('reviewed CSV purchase keeps one stable literal key, different purchases stay distinct',()=>{
+  const row={result:'pending',quantity:2,unit:'kg',total:120,classificationCode:'food_ingredient'};
+  let calls=0;
+  const first=stockIntakePurchaseIntentKey(row,()=>{calls++;return 'row_20261104_random_AAAA_12345'});
+  assert.equal(stockIntakePurchaseIntentKey(row,()=>{throw Error('unexpected regeneration')}),first);
+  assert.equal(calls,1);
+  const next={...row,purchaseIntentKey:undefined};
+  assert.notEqual(stockIntakePurchaseIntentKey(next,()=> 'row_20261104_random_BBBB_12345'),first);
+});
+
+test('editing approved physical quantity revokes the old receipt intent',()=>{
+  const row={result:'pending',quantity:2,unit:'kg',total:120,classificationCode:'food_ingredient',reviewConfirmed:true,selected:true};
+  stockIntakePurchaseIntentKey(row,()=> 'row_20261104_old_stable_12345');
+  assert.equal(reviseStockIntakeRow(row,'quantity','3'),true);
+  assert.equal(row.purchaseIntentKey,undefined);
+  assert.equal(row.reviewConfirmed,false);
+  assert.equal(row.selected,false);
+  assert.equal(stockIntakePurchaseIntentKey(row,()=> 'row_20261104_new_stable_12345'),'row_20261104_new_stable_12345');
+});
+
+test('insecure, corrupted or uncertain purchase intents fail closed',()=>{
+  for(const key of [undefined,null,'','tiny','a'.repeat(129),' whitespace_token_12345',32]){
+    const row={result:'pending'};
+    assert.throws(()=>stockIntakePurchaseIntentKey(row,()=>key),/Secure purchase intent key unavailable/);
+    assert.equal(row.purchaseIntentKey,undefined);
+  }
+  assert.throws(()=>stockIntakePurchaseIntentKey({result:'pending',purchaseIntentKey:'short'},()=> 'valid_stable_key_12345'),
+    /Existing stock purchase intent key is invalid/);
+  assert.throws(()=>stockIntakePurchaseIntentKey({result:'uncertain'},()=> 'valid_stable_key_12345'),
+    /reviewed pending stock purchase/);
+});
+
+test('actual CSV purchase includes reviewed origin and secure per-row intent but no retry',()=>{
+  const start=js.indexOf('  async function saveSelected(){');
+  const end=js.indexOf("  document.addEventListener('abl:auth-expired'",start);
+  const handler=js.slice(start,end);
+  const origin=handler.indexOf('purchaseOriginHeaders=stockIntakeOriginHeaders(originalContext)');
+  const preflight=handler.indexOf('guardNewPaidStockIntakeRow(row,state.inventory)');
+  const key=handler.indexOf('const intentKey=stockIntakePurchaseIntentKey(row)');
+  const dispatch=handler.indexOf("const result=await api('/api/inventory/purchase'");
+  assert.ok(origin>=0&&preflight>origin&&key>preflight&&dispatch>key);
+  assert.match(handler,/const purchaseHeaders=Object\.freeze\(\{\.\.\.purchaseOriginHeaders,\s*'x-abl-inventory-purchase-intent-key':intentKey\}\)/);
+  assert.match(handler,/method:'POST',headers:purchaseHeaders,body:JSON\.stringify\(/);
+  assert.match(handler,/row\.result='uncertain'/);
+  assert.match(js,/delete row\.purchaseIntentKey/);
 });
