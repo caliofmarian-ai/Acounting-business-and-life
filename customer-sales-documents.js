@@ -44,6 +44,27 @@ const evidenceCurrency=value=>{
     throw err(409,'Order currency evidence is invalid');
   return raw.toUpperCase();
 };
+// Order timestamps are economic evidence; never issue an immutable record
+// with an absent/ambiguous date or a process-timezone-dependent Date string.
+const orderSourceTime=value=>{
+  if(value instanceof Date){
+    if(!Number.isFinite(value.getTime()))throw err(409,'Order date evidence is invalid');
+    return value.toISOString();
+  }
+  if(typeof value!=='string')throw err(409,'Order date evidence is invalid');
+  // Require an explicit UTC/offset instant; a timezone-free value changes
+  // meaning between Node deployments and breaks source digest identity.
+  const match=/^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/.exec(value);
+  if(!match)throw err(409,'Order date evidence is invalid');
+  const year=Number(match[1]),month=Number(match[2]),day=Number(match[3]);
+  const leap=year%4===0&&(year%100!==0||year%400===0);
+  const days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+  if(year<1||month<1||month>12||day<1||day>days[month-1]||
+     !Number.isFinite(new Date(value).getTime()))
+    throw err(409,'Order date evidence is invalid');
+  // Keep valid literal source text for immutable digest compatibility.
+  return value;
+};
 const cleanHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 // Idempotency keys must never be truncated: distinct requests must not alias.
 const clientKey=value=>{
@@ -87,7 +108,7 @@ export function commercialOrderDocument(order,clock=new Date()){
     business_id:id(order.business_id),business_name:evidenceText(order.business_name,200,'Merchant name'),
     customer_account_id:id(order.customer_account_id),
     currency_code:evidenceCurrency(order.currency_code),
-    created_at:String(order.created_at||''),
+    created_at:orderSourceTime(order.created_at),
     document_created_at:clock.toISOString(),
     order_status:short(order.order_status,40),
     payment_status:short(order.payment_status,40),

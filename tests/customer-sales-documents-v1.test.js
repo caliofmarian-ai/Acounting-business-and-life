@@ -56,6 +56,29 @@ test('Economic snapshot digest stays constant across document generation timesta
   assert.notEqual(orderDocumentDigest(a),orderDocumentDigest(c));
 });
 
+test('Immutable order date requires an unambiguous real instant, stable for PostgreSQL Date',()=>{
+  const base=makeOrder();
+  for(const value of [undefined,null,'','2026-10-30T06:00:00','2026-10-30 06:00:00Z',
+    '2026-02-30T06:00:00Z','2025-02-29T06:00:00Z','2026-13-01T06:00:00Z',
+    '2026-12-01T25:00:00Z','not-a-date',new Date('invalid')]){
+    assert.throws(()=>commercialOrderDocument({...base,created_at:value}),
+      /Order date evidence is invalid/,'invalid/ambiguous timestamp: '+String(value));
+  }
+  const explicit='2026-10-30T06:00:00Z';
+  const asText=commercialOrderDocument({...base,created_at:explicit});
+  const asPgDate=commercialOrderDocument({...base,created_at:new Date(explicit)});
+  assert.equal(asText.created_at,explicit);
+  assert.equal(asPgDate.created_at,'2026-10-30T06:00:00.000Z');
+  assert.equal(asPgDate.created_at,new Date(explicit).toISOString());
+  assert.equal(orderDocumentDigest(asPgDate),
+    orderDocumentDigest(commercialOrderDocument({...base,created_at:new Date(explicit)})));
+  const offset=commercialOrderDocument({...base,created_at:'2026-10-30T14:00:00+08:00'});
+  assert.equal(offset.created_at,'2026-10-30T14:00:00+08:00');
+  assert.match(salesDocumentPrintHtml(offset),/Order date: 30 Oct 2026, 14:00 PHT/);
+  assert.equal(commercialOrderDocument({...base,created_at:'2024-02-29T06:00:00Z'}).created_at,
+    '2024-02-29T06:00:00Z','leap-year dates remain valid');
+});
+
 test('Printable order and record timestamps use Asia/Manila and preserve date rollover',()=>{
   const snapshot=commercialOrderDocument(makeOrder(),new Date('2026-10-30T08:00:00.000Z'));
   const html=salesDocumentPrintHtml(snapshot);
