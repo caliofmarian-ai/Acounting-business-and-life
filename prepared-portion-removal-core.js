@@ -25,13 +25,29 @@ export function parsePreparedRemoval(body,expectedBusinessId){
   return{businessId,productId,quantity,reason,idempotencyKey,treatment:preparedRemovalTreatment(reason)};
 }
 export function estimatedPreparedRemovalCost(components,quantity){
-  if(!Number.isFinite(quantity)||quantity<=0)throw new RangeError('Quantity must be positive.');
-  const unrounded=components.reduce((sum,c)=>{
-    const perPortion=Number(c.recipe_quantity),unitCost=Number(c.unit_cost);
-    if(!Number.isFinite(perPortion)||perPortion<=0||!Number.isFinite(unitCost)||unitCost<0){
-      throw new RangeError('Recipe quantity and inventory unit cost must be valid.');
+  // Decimal scales match PostgreSQL recipe/quantity (4dp) and unit cost (6dp).
+  // Multiply and aggregate exactly before rounding once to PHP cents.
+  const scaled=(value,decimals,label)=>{
+    if((typeof value!=='number'&&typeof value!=='string')||
+       (typeof value==='number'&&!Number.isFinite(value))){
+      throw new RangeError(label+' must be a finite decimal.');
     }
-    return sum+perPortion*unitCost*quantity;
-  },0);
-  return Math.round((unrounded+Number.EPSILON)*100)/100;
+    const match=/^(\d+)(?:\.(\d+))?$/.exec(String(value).trim());
+    if(!match||match[2]?.length>decimals)throw new RangeError(label+' has invalid precision.');
+    return BigInt(match[1])*10n**BigInt(decimals)+BigInt((match[2]||'').padEnd(decimals,'0')||'0');
+  };
+  const portions=scaled(quantity,4,'Quantity');
+  if(portions<=0n)throw new RangeError('Quantity must be positive.');
+  if(!Array.isArray(components)||!components.length)throw new RangeError('Recipe ingredients are required.');
+  let exact=0n;
+  for(const component of components){
+    const perPortion=scaled(component.recipe_quantity,4,'Recipe quantity');
+    const unitCost=scaled(component.unit_cost,6,'Inventory unit cost');
+    if(perPortion<=0n)throw new RangeError('Recipe quantity must be positive.');
+    exact+=perPortion*unitCost*portions;
+  }
+  // Exact amount is in 10^-14 PHP; positive half-cent rounds up once.
+  const cents=(exact*100n+50000000000000n)/100000000000000n;
+  if(cents>99999999999999n)throw new RangeError('Estimated removal cost exceeds NUMERIC(14,2).');
+  return Number(cents)/100;
 }

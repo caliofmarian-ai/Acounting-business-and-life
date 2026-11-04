@@ -28,3 +28,23 @@ test('costs use recipe ingredient snapshot quantities and reject corrupt values'
   ],2),136.84);
   assert.throws(()=>estimatedPreparedRemovalCost([{recipe_quantity:0,unit_cost:1}],2),RangeError);
 });
+
+
+test('removal cost rounds exact half-cent boundaries without binary-float understatement',()=>{
+  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:1,unit_cost:2.135}],1),2.14);
+  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:1,unit_cost:4.015}],1),4.02);
+  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:1,unit_cost:0.005},{recipe_quantity:1,unit_cost:0.005}],1),0.01);
+  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:'0.3333',unit_cost:'1.000000'}],3),1);
+});
+test('prepared removal cost refuses corrupt precision, non-decimal inputs and DB amount overflow',()=>{
+  for(const [parts,amount] of [
+    [[],1],
+    [[{recipe_quantity:1,unit_cost:1.0000001}],1],
+    [[{recipe_quantity:1,unit_cost:'1e3'}],1],
+    [[{recipe_quantity:1,unit_cost:Infinity}],1],
+    [[{recipe_quantity:1,unit_cost:true}],1],
+    [[{recipe_quantity:1,unit_cost:-1}],1],
+    [[{recipe_quantity:1,unit_cost:999999999999.99}],2],
+    [[{recipe_quantity:1,unit_cost:2}],0]
+  ])assert.throws(()=>estimatedPreparedRemovalCost(parts,amount),RangeError);
+});
