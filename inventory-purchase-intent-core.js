@@ -225,6 +225,11 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
 }
 
 // Integration-safe transaction coordinator for the existing authenticated HTTP
+// Every caller MUST supply a current Merchant grant check on the SAME locked
+// PostgreSQL client: check after waiting for locks (including replay) and before
+// final COMMIT. The checker must read live, origin-bound membership/grants with
+// clock_timestamp() and lock the relevant authorization row (FOR SHARE or
+// stronger) through COMMIT; a cached session boolean is NOT sufficient.
 // purchase route (NOT mounted here). Its caller must FIRST bind an authorized
 // originating Merchant/business and provide the same pg Client for every
 // stock/lot/purchase/expense/reconciliation query inside createPurchase.
@@ -242,17 +247,34 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
   };
   // Reject malformed request context before BEGIN; no partial write is possible.
   inventoryPurchaseFingerprint(context.payload);
+  const verifyCurrent=options?.verifyCurrentMerchantAuthority;
+  if(typeof verifyCurrent!=='function'){
+    throw bad('A current origin-bound Merchant authority verifier is required',
+      'INVENTORY_PURCHASE_INTENT_AUTH_REQUIRED',403);
+  }
+  const assertAuthorized=async stage=>{
+    const allowed=await verifyCurrent(client,Object.freeze({
+      businessId:context.businessId,accountId:context.accountId,
+      intentKey:context.intentKey,stage
+    }));
+    if(allowed!==true){
+      throw bad('Current Merchant purchase authority is unavailable or revoked',
+        'INVENTORY_PURCHASE_INTENT_FORBIDDEN',403);
+    }
+  };
   let started=false;
   try{
     await client.query('BEGIN');
     started=true;
     const claim=await claimInventoryPurchaseIntent(client,context);
     if(claim.kind==='replay'){
+      await assertAuthorized('replay');
       await client.query('COMMIT');
       started=false;
       return claim; // No purchase callback, inventory delta, lot or second expense.
     }
     await lockInventoryPurchaseBusiness(client,context.businessId);
+    await assertAuthorized('before-write');
     const created=await createPurchase(client);
     if(!created||typeof created!=='object'||Array.isArray(created)){
       throw bad('The purchase callback must return a committed response and purchase ID');
@@ -260,6 +282,7 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
     const response=await finishInventoryPurchaseIntent(client,{
       ...context,purchaseId:created.purchaseId,response:created.response
     });
+    await assertAuthorized('before-commit');
     await client.query('COMMIT');
     started=false;
     return {kind:'new',purchaseId:String(created.purchaseId),response};

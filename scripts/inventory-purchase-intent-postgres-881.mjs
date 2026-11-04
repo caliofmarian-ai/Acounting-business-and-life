@@ -20,7 +20,16 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let checks=0;
 function eq(x,y,label){assert.equal(x,y,label);checks++}
 const params=(businessId,intentKey,body=payload)=>({
-  businessId,accountId:501,intentKey,payload:body
+  businessId,accountId:501,intentKey,payload:body,
+  // A real PostgreSQL authorization lock protects against permission
+  // revocation after waiting for an Inventory business or intent lock.
+  // This is a synthetic fixture, never a real Merchant membership grant.
+  verifyCurrentMerchantAuthority:async(tx,ctx)=>{
+    const grant=await tx.query(
+      'SELECT enabled FROM synthetic_purchase_grants WHERE business_id=$1 AND account_id=$2 FOR SHARE',
+      [ctx.businessId,ctx.accountId]);
+    return grant.rowCount===1&&grant.rows[0].enabled===true;
+  }
 });
 async function post(client,businessId,intentKey,body=payload){
   // Exercise the same transaction coordinator that the later authorized
@@ -63,7 +72,11 @@ try{
       'business_id BIGINT REFERENCES businesses(id),inventory_id BIGINT REFERENCES inventory(id));'+
     'CREATE TABLE synthetic_lots(id BIGSERIAL PRIMARY KEY,purchase_id BIGINT REFERENCES inventory_purchases(id));'+
     'CREATE TABLE synthetic_expenses(id BIGSERIAL PRIMARY KEY,purchase_id BIGINT REFERENCES inventory_purchases(id));'+
-    'INSERT INTO businesses VALUES(101),(102); INSERT INTO accounts VALUES(501),(502)');
+    'CREATE TABLE synthetic_purchase_grants(business_id BIGINT REFERENCES businesses(id),'+
+      'account_id BIGINT REFERENCES accounts(id),enabled BOOLEAN NOT NULL,'+
+      'PRIMARY KEY(business_id,account_id));'+
+    'INSERT INTO businesses VALUES(101),(102); INSERT INTO accounts VALUES(501),(502);'+
+    'INSERT INTO synthetic_purchase_grants VALUES(101,501,true),(102,501,true)');
   await pool.query(INVENTORY_PURCHASE_INTENT_SCHEMA);
   const a=await pool.connect(),b=await pool.connect();
   try{
@@ -381,6 +394,77 @@ try{
     eq(serialReplay.kind,'replay','safe retry commits one replayable snapshot');
     eq(String(serialReplay.response.purchase.id),String(serialRetry.response.purchase.id),
       'serialized response retry and replay share the same purchase identity');
+
+    // Verify authorization at the actual lock boundary, not from a cached
+    // HTTP session that may have been revoked while PostgreSQL was waiting.
+    const revokedKey='61234567-0000-4000-9000-123456789012';
+    const revokedBody={...payload,item:'Synthetic revoked grant 881'};
+    const stockBeforeRevoked=(await pool.query(
+      'SELECT count(*)::int AS n FROM inventory WHERE business_id=101')).rows[0].n;
+    await pool.query(
+      'UPDATE synthetic_purchase_grants SET enabled=false WHERE business_id=101 AND account_id=501');
+    let revokedNew=null;
+    try{await post(a,101,revokedKey,revokedBody)}catch(error){revokedNew=error}
+    eq(revokedNew?.code,'INVENTORY_PURCHASE_INTENT_FORBIDDEN',
+      'revoked Merchant grant prevents new purchase after business lock');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+      [revokedKey])).rows[0].n,0,'revoked grant rolls back new intent reservation');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory WHERE business_id=101')).rows[0].n,
+      stockBeforeRevoked,'revoked grant causes no new stock write');
+    let revokedReplay=null;
+    try{await post(a,101,callbackKey,callbackBody)}catch(error){revokedReplay=error}
+    eq(revokedReplay?.code,'INVENTORY_PURCHASE_INTENT_FORBIDDEN',
+      'revoked Merchant grant cannot retrieve previously committed purchase snapshot');
+    await pool.query(
+      'UPDATE synthetic_purchase_grants SET enabled=true WHERE business_id=101 AND account_id=501');
+    const authorizedAfter=await post(a,101,revokedKey,revokedBody);
+    eq(authorizedAfter.kind,'new','restored authorized Merchant can complete the same rolled-back key');
+    const authorizedReplay=await post(a,101,revokedKey,revokedBody);
+    eq(authorizedReplay.kind,'replay','authorized replay is still idempotent');
+
+    // Put a real PostgreSQL advisory lock between HTTP's initial context
+    // and the mutation. Revoke the grant WHILE the waiting connection is
+    // blocked, then release the lock and assert no stock/expense/intent.
+    const waitedKey='71234567-0000-4000-9000-123456789012';
+    const waitedBody={...payload,item:'Synthetic revoked while waiting 881'};
+    const blocker=await pool.connect();
+    let blockedPromise=null,blockedError=null,observedWait=false;
+    try{
+      const pid=(await a.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      await blocker.query('BEGIN');
+      await lockInventoryPurchaseBusiness(blocker,101);
+      blockedPromise=post(a,101,waitedKey,waitedBody).catch(error=>{blockedError=error});
+      for(let i=0;i<40;i++){
+        const status=await pool.query(
+          'SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',[pid]);
+        if(status.rows[0]?.wait_event_type==='Lock'){observedWait=true;break}
+        await sleep(50);
+      }
+      eq(observedWait,true,'purchase actually waits on a PostgreSQL advisory business lock');
+      await pool.query(
+        'UPDATE synthetic_purchase_grants SET enabled=false WHERE business_id=101 AND account_id=501');
+    }finally{
+      await blocker.query('ROLLBACK').catch(()=>{});
+      blocker.release();
+      if(blockedPromise)await blockedPromise;
+    }
+    eq(blockedError?.code,'INVENTORY_PURCHASE_INTENT_FORBIDDEN',
+      'grant revoked DURING lock wait denies the resumed purchase');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+      [waitedKey])).rows[0].n,0,'blocked revoked grant leaves no durable intent');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory WHERE business_id=101 AND item=$1',
+      [waitedBody.item])).rows[0].n,0,'blocked revoked grant leaves no stock');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM synthetic_expenses WHERE purchase_id IN ('+
+      'SELECT id FROM inventory_purchases WHERE business_id=101 AND inventory_id IN ('+
+      'SELECT id FROM inventory WHERE item=$1))',[waitedBody.item])).rows[0].n,0,
+      'blocked revoked grant leaves no expense');
+    await pool.query(
+      'UPDATE synthetic_purchase_grants SET enabled=true WHERE business_id=101 AND account_id=501');
 
     console.log(JSON.stringify({ok:true,realPostgresAssertions:checks,
       isolatedDb:'abl_purchase_intent_ci',liveRouteIntegrated:false}));

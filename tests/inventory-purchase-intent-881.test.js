@@ -183,20 +183,25 @@ test('transaction executor commits one purchase, then replays without touching i
     }
     throw new Error('Unexpected SQL');
   }};
-  const opts={businessId:1,accountId:2,intentKey:key,payload};
+  const opts={businessId:1,accountId:2,intentKey:key,payload,
+    verifyCurrentMerchantAuthority:async (connection,authority)=>{
+      assert.equal(connection,client);
+      events.push('authorize:'+authority.stage);
+      return true;
+    }};
   const response={purchase:{id:42},inventory:{quantity:'2'},lot:{id:75},transaction:{id:80}};
   const first=await executeInventoryPurchaseIntent(client,opts,async connection=>{
     assert.equal(connection,client);events.push('purchase');
     return{purchaseId:42,response};
   });
   assert.deepEqual(first,{kind:'new',purchaseId:'42',response});
-  assert.deepEqual(events,['BEGIN','claim','lock','purchase','finish','COMMIT']);
+  assert.deepEqual(events,['BEGIN','claim','lock','authorize:before-write','purchase','finish','authorize:before-commit','COMMIT']);
   const second=await executeInventoryPurchaseIntent(client,opts,async()=>{
     throw new Error('Must not post a replay');
   });
   assert.equal(second.kind,'replay');
   assert.deepEqual(second.response,response);
-  assert.deepEqual(events.slice(6),['BEGIN','claim','replay','COMMIT']);
+  assert.deepEqual(events.slice(8),['BEGIN','claim','replay','authorize:replay','COMMIT']);
 });
 
 test('transaction executor rolls back failed callback and validates before BEGIN',async()=>{
@@ -207,14 +212,46 @@ test('transaction executor rolls back failed callback and validates before BEGIN
     if(sql.includes('pg_advisory_xact_lock')){events.push('lock');return{rowCount:1,rows:[]}}
     throw new Error('Unexpected query');
   }};
-  const opts={businessId:1,accountId:2,intentKey:key,payload};
+  const opts={businessId:1,accountId:2,intentKey:key,payload,
+    verifyCurrentMerchantAuthority:async(_client,authority)=>{
+      events.push('authorize:'+authority.stage);return true;
+    }};
   await assert.rejects(executeInventoryPurchaseIntent(client,opts,async()=>{
     events.push('purchase');throw new Error('synthetic purchase failure');
   }),/synthetic purchase failure/);
-  assert.deepEqual(events,['BEGIN','claim','lock','purchase','ROLLBACK']);
+  assert.deepEqual(events,['BEGIN','claim','lock','authorize:before-write','purchase','ROLLBACK']);
   events.length=0;
   await assert.rejects(executeInventoryPurchaseIntent(client,{...opts,intentKey:'bad'},async()=>{}),
     e=>e.status===400);
   await assert.rejects(executeInventoryPurchaseIntent(client,opts,null),e=>e.status===400);
   assert.deepEqual(events,[],'invalid input never begins a transaction');
+});
+
+test('no authority verifier fails closed without BEGIN; denied locked origin cannot write or replay',async()=>{
+  const events=[];
+  const client={async query(sql){
+    if(sql==='BEGIN'||sql==='ROLLBACK'||sql==='COMMIT'){
+      events.push(sql);return{rowCount:0,rows:[]};
+    }
+    if(sql.includes('INSERT INTO inventory_purchase_intents')){
+      events.push('claim');return{rowCount:1,rows:[{intent_key:key}]};
+    }
+    if(sql.includes('pg_advisory_xact_lock')){
+      events.push('lock');return{rowCount:1,rows:[]};
+    }
+    throw new Error('Unexpected SQL after denial');
+  }};
+  const baseline={businessId:1,accountId:2,intentKey:key,payload};
+  await assert.rejects(executeInventoryPurchaseIntent(client,baseline,async()=>{}),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_AUTH_REQUIRED'&&e.status===403);
+  assert.deepEqual(events,[],'missing verifier must not begin a transaction');
+  await assert.rejects(executeInventoryPurchaseIntent(client,{
+    ...baseline,verifyCurrentMerchantAuthority:async (connection,authority)=>{
+      assert.equal(connection,client);
+      assert.equal(authority.stage,'before-write');
+      events.push('deny');return false;
+    }
+  },async()=>{throw new Error('Purchase must never run after revoked grant')}),
+  e=>e.code==='INVENTORY_PURCHASE_INTENT_FORBIDDEN'&&e.status===403);
+  assert.deepEqual(events,['BEGIN','claim','lock','deny','ROLLBACK']);
 });
