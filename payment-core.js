@@ -28,6 +28,21 @@ const paymentProviderCode=raw=>{
   }
   return raw;
 };
+// Intent creation accepts canonical logical methods only. The broader
+// normalizeMethod() is retained for legacy historical imports, but must not
+// silently collapse two different customer-supplied payment instructions into
+// one idempotent replay (e.g. unknown wallet names -> online_other).
+const PAYMENT_INTENT_METHOD_CODES=new Set([
+  'cash','external_transfer','ewallet','bank_transfer','card','online_other'
+]);
+function paymentIntentLogicalMethod(raw){
+  if(typeof raw!=='string'||!PAYMENT_INTENT_METHOD_CODES.has(raw)){
+    throw Object.assign(new Error('Use an explicit canonical payment method code'),{
+      status:400,code:'PAYMENT_METHOD_INVALID'
+    });
+  }
+  return raw;
+}
 // HTTP callers may supply this identity in either header or JSON body.
 // Contradictory values cannot be silently resolved in favor of one channel:
 // that could acknowledge a different committed same-scope payment.
@@ -48,7 +63,7 @@ export function paymentRequestIdempotencyKey(headers={},body={}){
 // Amount is intentionally NOT compared: a legitimate settled retry may see a
 // smaller (or zero) outstanding balance than its original committed intent.
 function assertPaymentIntentReplayDetails(existing,{logicalMethod,providerCode,currencyCode}){
-  const method=normalizeMethod(logicalMethod),provider=paymentProviderCode(providerCode);
+  const method=paymentIntentLogicalMethod(logicalMethod),provider=paymentProviderCode(providerCode);
   const currency=String(currencyCode||'PHP').toUpperCase();
   if(existing.logical_method!==method||String(existing.provider_code??'')!==provider||
      String(existing.currency_code??'').toUpperCase()!==currency){
@@ -212,6 +227,7 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
   try{
     await client.query('BEGIN');
     const provider=paymentProviderCode(providerCode);
+    const requestedMethod=paymentIntentLogicalMethod(logicalMethod);
     const q=await client.query("SELECT o.*,b.territory_id FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1 FOR UPDATE OF o",[Number(orderId)]);
     if(!q.rowCount)throw Object.assign(new Error('Order not found'),{status:404});
     const o=q.rows[0];
@@ -258,7 +274,7 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
     });
     const configured=provider?await client.query("SELECT 1 FROM payment_provider_configs WHERE provider_code=$1 AND status IN ('sandbox','active')",[provider]):{rowCount:0};
     const ins=await client.query("INSERT INTO payment_intents(public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,provider_code,logical_method,currency_code,amount,status,client_reference,expires_at) VALUES($1,$2,'order',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW()+INTERVAL '30 minutes') RETURNING *",[
-      'pi_'+crypto.randomBytes(16).toString('hex'),key,o.id,payerAccountId,o.business_id,o.territory_id,provider,normalizeMethod(logicalMethod),o.currency_code||'PHP',outstanding,configured.rowCount?'requires_action':'requires_provider',clean(clientReference,200)
+      'pi_'+crypto.randomBytes(16).toString('hex'),key,o.id,payerAccountId,o.business_id,o.territory_id,provider,requestedMethod,o.currency_code||'PHP',outstanding,configured.rowCount?'requires_action':'requires_provider',clean(clientReference,200)
     ]);
     await insertBaseOrderAllocations(client,ins.rows[0],o);
     await client.query('COMMIT');
@@ -404,6 +420,7 @@ export async function createServiceJobPaymentIntent(pool,{
   try{
     await client.query('BEGIN');
     const provider=paymentProviderCode(providerCode);
+    const requestedMethod=paymentIntentLogicalMethod(logicalMethod);
     const id=Number(serviceJobId);
     const q=await client.query("SELECT * FROM service_jobs WHERE id=$1 FOR UPDATE",[id]);
     if(!q.rowCount)throw Object.assign(new Error('Service Job not found'),{status:404});
@@ -447,7 +464,7 @@ export async function createServiceJobPaymentIntent(pool,{
       RETURNING *
     `,[
       'pi_'+crypto.randomBytes(16).toString('hex'),key,id,Number(payerAccountId),provider,
-      normalizeMethod(logicalMethod),job.currency_code||'PHP',summary.payment.outstanding,clean(clientReference,200)
+      requestedMethod,job.currency_code||'PHP',summary.payment.outstanding,clean(clientReference,200)
     ]);
     await client.query(`
       INSERT INTO payment_audit_events(actor_account_id,payment_intent_id,event_code,provider_code,after_json,correlation_id)

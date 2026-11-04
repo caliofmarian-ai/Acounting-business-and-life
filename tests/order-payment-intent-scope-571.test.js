@@ -169,6 +169,52 @@ test('Provider identity rejects silent padding, truncation or nonstring alias be
     e=>e?.status===409&&e?.code==='PAYMENT_INTENT_DETAILS_CONFLICT');
 });
 
+test('Order and Service Job checkout reject noncanonical method aliases before key lookup',async()=>{
+  // General legacy normalization maps unknown values to online_other and
+  // specific wallets to ewallet. New payment instructions must never reuse
+  // an existing key by silently conflating a distinct requested channel.
+  for(const logicalMethod of [
+    'wallet-A','wallet-B','gcash','maya','card ','CARD',
+    'unrecognized',123,false,null,[],{}
+  ]){
+    const order=paymentReplayFixture({...authorizedIntent});
+    await assert.rejects(createOrderPaymentIntent(order.pool,{...args,logicalMethod}),
+      e=>e?.status===400&&e?.code==='PAYMENT_METHOD_INVALID');
+    assert.equal(order.statements.some(x=>x.sql.includes('pg_advisory_xact_lock')),false);
+    assert.equal(order.statements.some(x=>x.sql.includes('FROM payment_intents')),false);
+    assert.equal(order.statements.filter(x=>x.sql==='ROLLBACK').length,1);
+    assert.equal(order.releases(),1);
+
+    const job=serviceJobReplayFixture({
+      id:199,source_type:'service_job',source_id:91,payer_account_id:7,
+      logical_method:'online_other',provider_code:'',currency_code:'PHP'
+    });
+    await assert.rejects(createServiceJobPaymentIntent(job.pool,{
+      serviceJobId:91,payerAccountId:7,idempotencyKey:'service-job-key-91',logicalMethod
+    }),e=>e?.status===400&&e?.code==='PAYMENT_METHOD_INVALID');
+    assert.equal(job.statements.some(x=>x.includes('FROM payment_intents')),false);
+    assert.equal(job.statements.filter(x=>x==='ROLLBACK').length,1);
+    assert.equal(job.releases(),1);
+  }
+});
+
+test('Order and Service Job preserve valid canonical payment-method replay',async()=>{
+  for(const method of ['cash','external_transfer','ewallet','bank_transfer','card','online_other']){
+    const order=paymentReplayFixture({...authorizedIntent,logical_method:method});
+    assert.equal((await createOrderPaymentIntent(order.pool,{...args,logicalMethod:method})).id,95);
+    assert.equal(order.statements.filter(x=>x.sql==='COMMIT').length,1);
+
+    const job=serviceJobReplayFixture({
+      id:199,source_type:'service_job',source_id:91,payer_account_id:7,
+      logical_method:method,provider_code:'',currency_code:'PHP'
+    });
+    assert.equal((await createServiceJobPaymentIntent(job.pool,{
+      serviceJobId:91,payerAccountId:7,idempotencyKey:'service-job-key-91',logicalMethod:method
+    })).id,199);
+    assert.equal(job.statements.filter(x=>x==='COMMIT').length,1);
+  }
+});
+
 test('Service Job rejects malformed provider identity before payment intent query',async()=>{
   const prior={id:199,source_type:'service_job',source_id:91,payer_account_id:7,
     logical_method:'online_other',provider_code:'',currency_code:'PHP'};
