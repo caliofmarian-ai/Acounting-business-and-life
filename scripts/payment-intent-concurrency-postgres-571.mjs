@@ -24,7 +24,7 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       'CREATE TABLE payment_allocations(payment_intent_id bigint,component_code text,economic_party_type text,economic_party_id text,gross_base numeric(14,2),amount numeric(14,2),currency_code text,settlement_status text,rule_snapshot jsonb)',
       'CREATE TABLE service_jobs(id bigint PRIMARY KEY,customer_account_id bigint,provider_account_id bigint,status text,customer_confirmed_at timestamptz,accepted_quote_id bigint,agreed_total numeric(14,2),final_price numeric(14,2),pricing_locked_at timestamptz,currency_code text,quote_amount numeric(14,2),legacy_final_adjustment numeric(14,2))',
       'CREATE TABLE service_job_quotes(id bigint PRIMARY KEY,job_id bigint,status text,total_amount numeric(14,2),currency_code text,legacy_record boolean)',
-      'CREATE TABLE refunds(id bigserial PRIMARY KEY,payment_intent_id bigint,public_id text UNIQUE,amount numeric(14,2),currency_code text,reason text,status text,requested_by_account_id bigint)',
+      'CREATE TABLE refunds(id bigserial PRIMARY KEY,payment_intent_id bigint,public_id text UNIQUE,amount numeric(14,2),currency_code text,reason text,status text,requested_by_account_id bigint,request_key text UNIQUE)',
       'CREATE TABLE payment_audit_events(actor_account_id bigint,payment_intent_id bigint,event_code text,provider_code text,after_json jsonb,correlation_id text)'
     ])await pool.query(sql);
     await pool.query('INSERT INTO businesses VALUES(6,2),(7,2)');
@@ -216,7 +216,7 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       ) VALUES('pi_qa_refund_race','qa_refund_race','order',31,7,6,2,'','card','PHP',200,'succeeded')
       RETURNING id`);
       const id=seed.rows[0].id;
-      const input={intentId:id,amount:200,reason:'isolated concurrent reservation',requestedBy:7};
+      const input={intentId:id,amount:200,reason:'isolated concurrent reservation',requestedBy:7,idempotencyKey:'pg_refund_concurrent_a'};
       let atRead,releaseFirst,atLock;
       const firstRead=new Promise(resolve=>{atRead=resolve});
       const firstGo=new Promise(resolve=>{releaseFirst=resolve});
@@ -241,7 +241,7 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
         first=createRefundRequest(wrap('A'),input);
         await firstRead;
         let secondDone=false;
-        second=createRefundRequest(wrap('B'),input).then(
+        second=createRefundRequest(wrap('B'),{...input,idempotencyKey:'pg_refund_concurrent_b'}).then(
           value=>{secondDone=true;return {value}},
           error=>{secondDone=true;return {error}}
         );
@@ -267,7 +267,13 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       const q=await pool.query('SELECT count(*)::int n, COALESCE(SUM(amount),0) total FROM refunds WHERE payment_intent_id=$1',[id]);
       assert.equal(q.rows[0].n,1);
       assert.equal(Number(q.rows[0].total),200);
-      await assert.rejects(createRefundRequest(pool,input),e=>e?.status===409);
+      const replay=await createRefundRequest(pool,input);
+      assert.equal(replay.__idempotent_replay,true,'same-key network retry recovers prior reservation');
+      assert.equal(replay.id,winner.id);
+      await assert.rejects(createRefundRequest(pool,{...input,amount:199}),
+        e=>e?.status===409&&e?.code==='REFUND_REQUEST_KEY_CONFLICT');
+      await assert.rejects(createRefundRequest(pool,{...input,idempotencyKey:'pg_refund_concurrent_c'}),
+        e=>e?.status===409&&/exceeds refundable balance/.test(e.message));
       assert.equal((await pool.query('SELECT count(*)::int n FROM refunds WHERE payment_intent_id=$1',[id])).rows[0].n,1);
     });
     await t.test('refund insert failure rolls back and permits corrected reservation',async()=>{
@@ -286,7 +292,7 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
         END; $refusal$`);
       await pool.query(`CREATE TRIGGER payment_ci_reject_refund
         BEFORE INSERT ON refunds FOR EACH ROW EXECUTE FUNCTION payment_ci_reject_refund()`);
-      const input={intentId:id,amount:130,requestedBy:7};
+      const input={intentId:id,amount:130,requestedBy:7,idempotencyKey:'pg_refund_rollback_first'};
       try{
         await assert.rejects(createRefundRequest(pool,input),e=>e?.code==='P0001');
         assert.equal((await pool.query('SELECT count(*)::int n FROM refunds WHERE payment_intent_id=$1',[id])).rows[0].n,0);
@@ -296,9 +302,9 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       }
       const first=await createRefundRequest(pool,input);
       assert.equal(Number(first.amount),130);
-      const remainder=await createRefundRequest(pool,{intentId:'pi_qa_refund_rollback',amount:70,requestedBy:7});
+      const remainder=await createRefundRequest(pool,{intentId:'pi_qa_refund_rollback',amount:70,requestedBy:7,idempotencyKey:'pg_refund_rollback_second'});
       assert.equal(Number(remainder.amount),70);
-      await assert.rejects(createRefundRequest(pool,{intentId:id,amount:1,requestedBy:7}),
+      await assert.rejects(createRefundRequest(pool,{intentId:id,amount:1,requestedBy:7,idempotencyKey:'pg_refund_rollback_over'}),
         e=>e?.status===409);
       const sum=await pool.query('SELECT count(*)::int n, COALESCE(SUM(amount),0) total FROM refunds WHERE payment_intent_id=$1',[id]);
       assert.equal(sum.rows[0].n,2);

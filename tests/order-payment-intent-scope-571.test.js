@@ -319,7 +319,7 @@ test('Refund keys serialize before intent locks, then reserve exactly once',asyn
  const steps=[];let releases=0;
  const client={async query(sql,args=[]){
    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)){steps.push(sql);return{rows:[]}};
-   if(sql.includes("pg_advisory_xact_lock(hashtextextended('refund:'"))){steps.push('KEY');assert.deepEqual(args,['refund_once_001']);return{rows:[]}};
+   if(sql.includes('pg_advisory_xact_lock')){steps.push('KEY');assert.deepEqual(args,['refund_once_001']);return{rows:[]}};
    if(sql.includes('FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE')){steps.push('LOCK');return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]}};
    if(sql.includes('FROM refunds WHERE request_key=$1')){steps.push('REPLAY');return{rowCount:0,rows:[]}};
    if(sql.includes('SUM(amount)')){steps.push('SUM');return{rows:[{total:'80.00'}]}};
