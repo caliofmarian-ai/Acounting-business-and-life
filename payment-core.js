@@ -565,7 +565,7 @@ export async function feePolicyOverview(pool){
   return rows;
 }
 
-export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null,idempotencyKey,adminAudit=null}){
+export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null,idempotencyKey,adminAudit=null,reauthorize=null}){
   // Serialize one request identity globally (even across intent IDs) and all
   // refund reservations per parent intent. Recovery must never post twice.
   const requestKey=paymentIntentIdempotencyKey(idempotencyKey);
@@ -576,6 +576,8 @@ export async function createRefundRequest(pool,{intentId,amount,reason='',reques
   const auditAssignment=adminAudit===null?null:Number(adminAudit?.assignmentId);
   if(adminAudit!==null&&(!Number.isSafeInteger(auditAssignment)||auditAssignment<1))
     throw Object.assign(new Error('Verified admin assignment is required for refund audit'),{status:403});
+  if(adminAudit!==null&&typeof reauthorize!=='function')
+    throw Object.assign(new Error('Current admin authorization is required for refund reservation'),{status:403});
   if(amtCents<=0n)
     throw Object.assign(new Error('Refund amount must be positive'),{status:409});
   const client=await pool.connect();
@@ -588,6 +590,10 @@ export async function createRefundRequest(pool,{intentId,amount,reason='',reques
     );
     const i=locked.rows[0];
     if(!i)throw Object.assign(new Error('Payment intent not found'),{status:404});
+    // A blocked transaction may resume after a session or admin grant was
+    // revoked. Recheck authority AFTER the lock, before replay or mutation.
+    // The callback uses the same client to avoid pool-connection starvation.
+    if(adminAudit!==null)await reauthorize(client);
     const previousQuery=await client.query('SELECT * FROM refunds WHERE request_key=$1',[requestKey]);
     if(previousQuery.rowCount){
       const previous=previousQuery.rows[0];

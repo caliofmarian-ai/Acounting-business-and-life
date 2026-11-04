@@ -333,7 +333,19 @@ test('payment key atomicity and scoped replay (isolated PostgreSQL)',{timeout:60
       const intentId=seed.rows[0].id;
       const input={intentId,amount:75,requestedBy:7,reason:'qa audit atomicity',
         idempotencyKey:'pg_refund_audit_atomic_001',
-        adminAudit:{assignmentId:501,correlationId:'qa-refund-audit-001'}};
+        adminAudit:{assignmentId:501,correlationId:'qa-refund-audit-001'},
+        reauthorize:async client=>{
+          const check=await client.query('SELECT 1 AS authorized');
+          assert.equal(check.rows[0].authorized,1,'same transaction client must be reused');
+        }};
+      await assert.rejects(createRefundRequest(pool,{
+        ...input,reauthorize:async client=>{
+          assert.equal((await client.query('SELECT 1 AS authorized')).rows[0].authorized,1);
+          throw Object.assign(new Error('isolated revoked operator after lock'),{status:403});
+        }
+      }),e=>e?.status===403);
+      assert.equal((await pool.query('SELECT COUNT(*)::int n FROM refunds WHERE payment_intent_id=$1',[intentId])).rows[0].n,0,
+        'revoked operator cannot reserve a refund after the lock');
       await pool.query(`CREATE FUNCTION payment_ci_refuse_refund_audit()
         RETURNS trigger LANGUAGE plpgsql AS $refusal$
         BEGIN

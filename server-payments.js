@@ -956,7 +956,31 @@ app.post('/api/payments/admin/refunds',body,async(req,res,next)=>{try{
   const requestKey=paymentRequestIdempotencyKey(req.headers,req.body);
   await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'refund_request',subjectType:'payment_intent',subjectId:req.body?.payment_intent_id||req.body?.payment_intent});
   const row=await createRefundRequest(pool,{intentId:req.body?.payment_intent_id||req.body?.payment_intent,amount:req.body?.amount,reason:req.body?.reason||'',requestedBy:me.account.id,idempotencyKey:requestKey,
-    adminAudit:{assignmentId:assignment.id,correlationId:correlation(req)}});
+    adminAudit:{assignmentId:assignment.id,correlationId:correlation(req)},
+    reauthorize:async client=>{
+      const current=await identity(req);
+      if(Number(current?.account?.id)!==Number(me.account.id))
+        throw Object.assign(new Error('Refund request session changed'),{status:401});
+      const active=await requireAdminPermission(client,me.account.id,'payment.manage');
+      if(Number(active?.id)!==Number(assignment.id))
+        throw Object.assign(new Error('Refund admin assignment changed'),{status:403});
+      // Permission helpers use transaction-scoped NOW(); validate a grant
+      // against wall-clock time after any lock wait, not transaction start.
+      const fresh=await client.query(`SELECT 1 FROM platform_admin_assignments a
+        WHERE a.id=$1 AND a.account_id=$2 AND a.status='active'
+          AND a.effective_from<=clock_timestamp()
+          AND (a.effective_until IS NULL OR a.effective_until>clock_timestamp())
+          AND (
+            a.admin_role='super_admin'
+            OR COALESCE(NULLIF(a.authority_rank,''),a.admin_role)='super_admin'
+            OR EXISTS (SELECT 1 FROM admin_permission_grants g
+              WHERE g.assignment_id=a.id AND g.permission_code='payment.manage'
+                AND g.status='active' AND g.effective_from<=clock_timestamp()
+                AND (g.effective_until IS NULL OR g.effective_until>clock_timestamp()))
+          )`,[assignment.id,me.account.id]);
+      if(!fresh.rowCount)
+        throw Object.assign(new Error('Refund admin grant expired or was revoked'),{status:403});
+    }});
   const {__idempotent_replay:replayed,...publicRefund}=row;
   res.status(replayed?200:201).json({...publicRefund,next_action:'PROVIDER_REFUND_ADAPTER_REQUIRED',already_reserved:Boolean(replayed)});
 }catch(e){next(e)}});
