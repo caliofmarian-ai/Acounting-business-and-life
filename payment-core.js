@@ -548,11 +548,16 @@ export async function feePolicyOverview(pool){
   return rows;
 }
 
-export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null,idempotencyKey}){
+export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null,idempotencyKey,adminAudit=null}){
   // Serialize one request identity globally (even across intent IDs) and all
   // refund reservations per parent intent. Recovery must never post twice.
   const requestKey=paymentIntentIdempotencyKey(idempotencyKey);
   const amt=money(amount),normalizedReason=clean(reason,1000);
+  // Validate verified admin assignment before opening a financial transaction.
+  // Core-only isolated ledgers may omit adminAudit; HTTP always supplies it.
+  const auditAssignment=adminAudit===null?null:Number(adminAudit?.assignmentId);
+  if(adminAudit!==null&&(!Number.isSafeInteger(auditAssignment)||auditAssignment<1))
+    throw Object.assign(new Error('Verified admin assignment is required for refund audit'),{status:403});
   if(!Number.isFinite(amt)||amt<=0)
     throw Object.assign(new Error('Refund amount must be positive'),{status:409});
   const client=await pool.connect();
@@ -592,6 +597,20 @@ export async function createRefundRequest(pool,{intentId,amount,reason='',reques
       "INSERT INTO refunds(payment_intent_id,public_id,amount,currency_code,reason,status,requested_by_account_id,request_key) VALUES($1,$2,$3,$4,$5,'requested',$6,$7) RETURNING *",
       [i.id,'rf_'+crypto.randomBytes(14).toString('hex'),amt,i.currency_code,normalizedReason,requestedBy||null,requestKey]
     );
+    // appendAdminAudit is best-effort and historically runs AFTER COMMIT.
+    // Financial reservation and mandatory audit must instead commit together:
+    // a failed audit INSERT rolls back refund, idempotency key and row locks.
+    if(adminAudit!==null){
+      await client.query(`INSERT INTO admin_audit_events(
+        actor_account_id,assignment_id,permission_code,country_code,target_type,
+        target_id,event_code,after_json,reason,correlation_id
+      ) VALUES($1,$2,'payment.manage','PH','refund',$3,
+        'refund_requested_provider_action_required',$4::jsonb,$5,$6)`,[
+        requestedBy,auditAssignment,String(q.rows[0].id),
+        JSON.stringify({amount:q.rows[0].amount,status:q.rows[0].status}),
+        normalizedReason,clean(adminAudit.correlationId,120)
+      ]);
+    }
     await client.query('COMMIT');
     return {...q.rows[0],__idempotent_replay:false};
   }catch(error){

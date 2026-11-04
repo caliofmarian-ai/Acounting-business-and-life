@@ -378,6 +378,46 @@ test('Overspending refund rolls back and never inserts',async()=>{
  assert.deepEqual(steps,['BEGIN','KEY','LOCK','REPLAY','SUM','ROLLBACK']);
 });
 
+
+test('Admin refund audit failure rolls back both reservation and key before COMMIT',async()=>{
+  const steps=[];let fail=true;
+  const client={async query(sql,args=[]){
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)){steps.push(sql);return{rows:[]}};
+    if(sql.includes('pg_advisory_xact_lock')){steps.push('KEY');return{rows:[]}};
+    if(sql.includes('FROM payment_intents WHERE')){steps.push('LOCK');return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]}};
+    if(sql.includes('FROM refunds WHERE request_key=$1')){steps.push('REPLAY');return{rowCount:0,rows:[]}};
+    if(sql.includes('SUM(amount)')){steps.push('SUM');return{rows:[{total:'0.00'}]}};
+    if(sql.includes('INSERT INTO refunds(')){steps.push('INSERT');return{rows:[{id:39,amount:'20.00',status:'requested'}]}};
+    if(sql.includes('INSERT INTO admin_audit_events(')){
+      steps.push('AUDIT');assert.equal(args[0],7);assert.equal(args[1],501);
+      assert.equal(args[2],'39');assert.deepEqual(JSON.parse(args[3]),{amount:'20.00',status:'requested'});
+      assert.equal(args[5],'correlation-test-001');
+      if(fail)throw Object.assign(new Error('audit failed'),{code:'P0001'});
+      return{rows:[]};
+    }
+    throw Error('Unexpected refund SQL: '+sql);
+  },release(){}};
+  const input={intentId:19,amount:20,requestedBy:7,idempotencyKey:'refund_atomic_audit_001',
+    adminAudit:{assignmentId:501,correlationId:'correlation-test-001'}};
+  await assert.rejects(createRefundRequest({connect:async()=>client},input),e=>e.code==='P0001');
+  assert.deepEqual(steps,['BEGIN','KEY','LOCK','REPLAY','SUM','INSERT','AUDIT','ROLLBACK']);
+  fail=false;steps.length=0;
+  const accepted=await createRefundRequest({connect:async()=>client},input);
+  assert.equal(accepted.__idempotent_replay,false);
+  assert.deepEqual(steps,['BEGIN','KEY','LOCK','REPLAY','SUM','INSERT','AUDIT','COMMIT']);
+});
+
+test('Admin HTTP refunds provide strict transactional audit and never append best-effort audit after COMMIT',async()=>{
+  const fs=await import('node:fs');
+  const server=fs.readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');
+  const start=server.indexOf("app.post('/api/payments/admin/refunds'");
+  const end=server.indexOf("app.post('/api/payments/admin/reconciliation'",start);
+  assert.ok(start>=0&&end>start);
+  const route=server.slice(start,end);
+  assert.match(route,/adminAudit:\s*\{assignmentId:assignment\.id,correlationId:correlation\(req\)\}/);
+  assert.doesNotMatch(route,/appendAdminAudit\(/);
+});
+
 test('Refund without a literal retry key never opens a DB transaction',async()=>{
  let n=0;await assert.rejects(createRefundRequest({connect:async()=>{n++;throw Error('unexpected')}},{intentId:19,amount:20}),
   e=>e.status===400&&e.code==='PAYMENT_IDEMPOTENCY_KEY_INVALID');

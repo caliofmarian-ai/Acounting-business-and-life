@@ -955,9 +955,9 @@ app.post('/api/payments/admin/refunds',body,async(req,res,next)=>{try{
   const me=await identity(req),assignment=await requireAdminPermission(pool,me.account.id,'payment.manage');
   const requestKey=paymentRequestIdempotencyKey(req.headers,req.body);
   await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'refund_request',subjectType:'payment_intent',subjectId:req.body?.payment_intent_id||req.body?.payment_intent});
-  const row=await createRefundRequest(pool,{intentId:req.body?.payment_intent_id||req.body?.payment_intent,amount:req.body?.amount,reason:req.body?.reason||'',requestedBy:me.account.id,idempotencyKey:requestKey});
+  const row=await createRefundRequest(pool,{intentId:req.body?.payment_intent_id||req.body?.payment_intent,amount:req.body?.amount,reason:req.body?.reason||'',requestedBy:me.account.id,idempotencyKey:requestKey,
+    adminAudit:{assignmentId:assignment.id,correlationId:correlation(req)}});
   const {__idempotent_replay:replayed,...publicRefund}=row;
-  if(!replayed)await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'payment.manage',targetType:'refund',targetId:String(row.id),eventCode:'refund_requested_provider_action_required',after:{amount:row.amount,status:row.status},reason:row.reason,correlationId:correlation(req)});
   res.status(replayed?200:201).json({...publicRefund,next_action:'PROVIDER_REFUND_ADAPTER_REQUIRED',already_reserved:Boolean(replayed)});
 }catch(e){next(e)}});
 
