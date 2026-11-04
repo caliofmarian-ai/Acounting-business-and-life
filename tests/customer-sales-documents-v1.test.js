@@ -101,6 +101,13 @@ test('Commercial order documents reject contradictory recorded line, subtotal an
   assert.equal(split.items.length,2);
   assert.equal(split.subtotal,130);
   assert.equal(split.total,145);
+  const tiny=commercialOrderDocument({...original,
+    subtotal:'0.03',delivery_fee:'0.02',total:'0.05',
+    paid_amount:'0.05',outstanding_amount:'0.00',items:[
+      {...original.items[0],id:1,quantity:'1',unit_price_snapshot:'0.01',line_total:'0.01'},
+      {...original.items[0],id:2,quantity:'1',unit_price_snapshot:'0.02',line_total:'0.02'}
+    ]});
+  assert.equal(tiny.total,0.05,'cent-exact multi-line amounts are not compared as floats');
   const variant=commercialOrderDocument({...original,items:[
     {...original.items[0],unit_price_snapshot:'60.00',line_total:'130.00'}
   ]});
