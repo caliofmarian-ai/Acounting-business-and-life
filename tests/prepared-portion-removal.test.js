@@ -48,3 +48,27 @@ test('prepared removal cost refuses corrupt precision, non-decimal inputs and DB
     [[{recipe_quantity:1,unit_cost:2}],0]
   ])assert.throws(()=>estimatedPreparedRemovalCost(parts,amount),RangeError);
 });
+
+test('non-sale stock write rejects coerced identity, reasons and fractional amounts',()=>{
+  for(const business_id of [true,[12],{valueOf:()=>12},'1.2e1',' 12 ','12.0',false]){
+    assert.throws(()=>parsePreparedRemoval({...example,business_id},12),e=>e.status===409);
+  }
+  for(const product_id of [true,[81],{valueOf:()=>81},'8.1e1',' 81 ','81.0',false]){
+    assert.throws(()=>parsePreparedRemoval({...example,product_id},12),e=>e.status===400);
+  }
+  for(const quantity of [true,[2],{valueOf:()=>2},'2e0','2.00001',2.000000000001,
+     '0.00001','2.00junk',' 2 ',false]){
+    assert.throws(()=>parsePreparedRemoval({...example,quantity},12),e=>e.status===400);
+  }
+  for(const reason of [['owner_consumption'],{toString:()=> 'owner_consumption'}]){
+    assert.throws(()=>parsePreparedRemoval({...example,reason},12),e=>e.status===400);
+  }
+  for(const idempotency_key of [['retry-unique-001'],{toString:()=> 'retry-unique-001'}]){
+    assert.throws(()=>parsePreparedRemoval({...example,idempotency_key},12),e=>e.status===400);
+  }
+  const valid=parsePreparedRemoval({...example,business_id:'12',product_id:'81',quantity:'0.0001'},12);
+  assert.equal(valid.productId,81);
+  assert.equal(valid.quantity,0.0001);
+  assert.equal(parsePreparedRemoval({...example,quantity:'2.0000'},12).quantity,2);
+  assert.equal(parsePreparedRemoval(example,12).quantity,2);
+});

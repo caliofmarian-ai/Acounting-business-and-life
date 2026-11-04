@@ -6,16 +6,32 @@ export const PREPARED_REMOVAL_REASONS=Object.freeze({
   quality_rejected:'Rejected at quality control'
 });
 export const preparedRemovalTreatment=reason=>reason==='owner_consumption'?'noncash_owner_draw':'noncash_product_loss';
+const preparedPositiveId=value=>{
+  // JSON identity must not be implicitly coerced from booleans, arrays or objects.
+  if((typeof value!=='number'&&typeof value!=='string')||
+     (typeof value==='string'&&!/^\d+$/.test(value)))return null;
+  const n=Number(value);
+  return Number.isSafeInteger(n)&&n>0?n:null;
+};
+const preparedPortions=value=>{
+  if((typeof value!=='number'&&typeof value!=='string')||
+     (typeof value==='number'&&!Number.isFinite(value)))return null;
+  // Match the 4-decimal recipe/stock contract exactly: no exponent, coercion
+  // or epsilon tolerance that could post different quantities to DB and ledger.
+  const text=String(value);
+  if(!/^(?:0|[1-9]\d{0,3})(?:\.\d{1,4})?$/.test(text))return null;
+  const n=Number(text);
+  return n>0&&n<=9999?n:null;
+};
 export function parsePreparedRemoval(body,expectedBusinessId){
-  const businessId=Number(body?.business_id);
-  if(!Number.isSafeInteger(businessId)||businessId!==Number(expectedBusinessId)){
+  const businessId=preparedPositiveId(body?.business_id);
+  if(businessId===null||businessId!==Number(expectedBusinessId)){
     throw Object.assign(new Error('Merchant business changed. Reopen Quick Sale and try again.'),{status:409});
   }
-  const productId=Number(body?.product_id),quantity=Number(body?.quantity);
-  const reason=String(body?.reason||'').trim();
-  const idempotencyKey=String(body?.idempotency_key||'').trim();
-  if(!Number.isSafeInteger(productId)||productId<1||!Number.isFinite(quantity)||quantity<=0||quantity>9999||
-     Math.abs(quantity*10000-Math.round(quantity*10000))>1e-7||
+  const productId=preparedPositiveId(body?.product_id),quantity=preparedPortions(body?.quantity);
+  const reason=typeof body?.reason==='string'?body.reason.trim():'';
+  const idempotencyKey=typeof body?.idempotency_key==='string'?body.idempotency_key.trim():'';
+  if(productId===null||quantity===null||
      !Object.hasOwn(PREPARED_REMOVAL_REASONS,reason)){
     throw Object.assign(new Error('Choose a prepared product, a valid portion quantity and a removal reason.'),{status:400});
   }
