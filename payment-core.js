@@ -97,6 +97,8 @@ export async function ensurePaymentSchema(pool){
     "CREATE TABLE IF NOT EXISTS payment_allocations(id BIGSERIAL PRIMARY KEY,payment_intent_id BIGINT NOT NULL REFERENCES payment_intents(id) ON DELETE CASCADE,component_code TEXT NOT NULL,economic_party_type TEXT NOT NULL,economic_party_id TEXT NOT NULL DEFAULT '',gross_base NUMERIC(14,2) NOT NULL DEFAULT 0,amount NUMERIC(14,2) NOT NULL,currency_code TEXT NOT NULL DEFAULT 'PHP',fee_policy_version_id BIGINT REFERENCES fee_policy_versions(id),rule_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,settlement_status TEXT NOT NULL DEFAULT 'pending',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(component_code IN ('merchandise','delivery','platform_fee','country_operator_fee','territory_operator_fee','processor_fee','tax','withholding','refund','merchant_net','supplier_net','service_provider_net','courier_net')),CHECK(settlement_status IN ('pending','eligible','held','processing','paid','failed','reversed','manual_review')))",
     "CREATE INDEX IF NOT EXISTS payment_allocations_intent_idx ON payment_allocations(payment_intent_id,id)",
     "CREATE TABLE IF NOT EXISTS refunds(id BIGSERIAL PRIMARY KEY,payment_intent_id BIGINT NOT NULL REFERENCES payment_intents(id) ON DELETE RESTRICT,public_id TEXT NOT NULL UNIQUE,provider_refund_id TEXT NOT NULL DEFAULT '',amount NUMERIC(14,2) NOT NULL CHECK(amount>0),currency_code TEXT NOT NULL DEFAULT 'PHP',reason TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'requested',requested_by_account_id BIGINT REFERENCES accounts(id),provider_status TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),processed_at TIMESTAMPTZ,CHECK(status IN ('requested','processing','succeeded','failed','cancelled','manual_review')))",
+    "ALTER TABLE refunds ADD COLUMN IF NOT EXISTS request_key TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS refunds_request_key_unique ON refunds(request_key) WHERE request_key IS NOT NULL",
     "CREATE TABLE IF NOT EXISTS settlements(id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,beneficiary_type TEXT NOT NULL,beneficiary_ref TEXT NOT NULL,provider_code TEXT NOT NULL DEFAULT '',provider_settlement_id TEXT NOT NULL DEFAULT '',currency_code TEXT NOT NULL DEFAULT 'PHP',gross_amount NUMERIC(14,2) NOT NULL DEFAULT 0,deduction_amount NUMERIC(14,2) NOT NULL DEFAULT 0,net_amount NUMERIC(14,2) NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'pending',evidence_reference TEXT NOT NULL DEFAULT '',period_start TIMESTAMPTZ,period_end TIMESTAMPTZ,created_by_account_id BIGINT REFERENCES accounts(id),paid_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(status IN ('pending','eligible','held','processing','paid','failed','reversed','manual_review')))",
     "CREATE TABLE IF NOT EXISTS settlement_lines(id BIGSERIAL PRIMARY KEY,settlement_id BIGINT NOT NULL REFERENCES settlements(id) ON DELETE CASCADE,payment_allocation_id BIGINT NOT NULL REFERENCES payment_allocations(id) ON DELETE RESTRICT,amount NUMERIC(14,2) NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(settlement_id,payment_allocation_id))",
     "CREATE TABLE IF NOT EXISTS reconciliation_runs(id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,provider_code TEXT NOT NULL,period_start TIMESTAMPTZ NOT NULL,period_end TIMESTAMPTZ NOT NULL,status TEXT NOT NULL DEFAULT 'running',internal_payment_total NUMERIC(14,2) NOT NULL DEFAULT 0,provider_payment_total NUMERIC(14,2) NOT NULL DEFAULT 0,internal_settlement_total NUMERIC(14,2) NOT NULL DEFAULT 0,provider_settlement_total NUMERIC(14,2) NOT NULL DEFAULT 0,mismatch_count INTEGER NOT NULL DEFAULT 0,statement_sha256 TEXT NOT NULL DEFAULT '',started_by_account_id BIGINT REFERENCES accounts(id),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),completed_at TIMESTAMPTZ,CHECK(status IN ('running','matched','mismatch','failed','manual_review')))",
@@ -546,44 +548,56 @@ export async function feePolicyOverview(pool){
   return rows;
 }
 
-export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null}){
-  // Serialize refund reservations against the same payment. Independent
-  // SUM-then-INSERT pool queries let two concurrent requests each reserve
-  // the entire remaining balance before either INSERT becomes visible.
-  // No provider refund or external payment is performed in this transaction.
+export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null,idempotencyKey}){
+  // Serialize one request identity globally (even across intent IDs) and all
+  // refund reservations per parent intent. Recovery must never post twice.
+  const requestKey=paymentIntentIdempotencyKey(idempotencyKey);
+  const amt=money(amount),normalizedReason=clean(reason,1000);
+  if(!Number.isFinite(amt)||amt<=0)
+    throw Object.assign(new Error('Refund amount must be positive'),{status:409});
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('refund:' || $1::text, 0))",[requestKey]);
     const locked=await client.query(
       'SELECT id,amount,currency_code,status FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE',
       [String(intentId)]
     );
     const i=locked.rows[0];
     if(!i)throw Object.assign(new Error('Payment intent not found'),{status:404});
-    if(!['succeeded','partially_refunded'].includes(i.status)){
-      throw Object.assign(new Error('Only confirmed payments can be refunded'),{status:409});
+    const previousQuery=await client.query('SELECT * FROM refunds WHERE request_key=$1',[requestKey]);
+    if(previousQuery.rowCount){
+      const previous=previousQuery.rows[0];
+      if(Number(previous.payment_intent_id)!==Number(i.id)||
+         Number(previous.amount)!==amt||
+         String(previous.currency_code)!==String(i.currency_code)||
+         String(previous.reason)!==normalizedReason||
+         Number(previous.requested_by_account_id??0)!==Number(requestedBy??0))
+        throw Object.assign(new Error('Refund key belongs to different details'),{
+          status:409,code:'REFUND_REQUEST_KEY_CONFLICT'
+        });
+      await client.query('COMMIT');
+      return {...previous,__idempotent_replay:true};
     }
+    if(!['succeeded','partially_refunded'].includes(i.status))
+      throw Object.assign(new Error('Only confirmed payments can be refunded'),{status:409});
     const done=await client.query(
       "SELECT COALESCE(SUM(amount),0) total FROM refunds WHERE payment_intent_id=$1 AND status IN ('processing','succeeded','requested','manual_review')",
       [i.id]
     );
     const remaining=money(Number(i.amount)-Number(done.rows[0].total));
-    const amt=money(amount);
-    if(!Number.isFinite(amt)||amt<=0||amt>remaining+0.001){
+    if(amt>remaining+0.001)
       throw Object.assign(new Error('Refund amount exceeds refundable balance'),{status:409});
-    }
     const q=await client.query(
-      "INSERT INTO refunds(payment_intent_id,public_id,amount,currency_code,reason,status,requested_by_account_id) VALUES($1,$2,$3,$4,$5,'requested',$6) RETURNING *",
-      [i.id,'rf_'+crypto.randomBytes(14).toString('hex'),amt,i.currency_code,clean(reason,1000),requestedBy||null]
+      "INSERT INTO refunds(payment_intent_id,public_id,amount,currency_code,reason,status,requested_by_account_id,request_key) VALUES($1,$2,$3,$4,$5,'requested',$6,$7) RETURNING *",
+      [i.id,'rf_'+crypto.randomBytes(14).toString('hex'),amt,i.currency_code,normalizedReason,requestedBy||null,requestKey]
     );
     await client.query('COMMIT');
-    return q.rows[0];
+    return {...q.rows[0],__idempotent_replay:false};
   }catch(error){
     await client.query('ROLLBACK').catch(()=>{});
     throw error;
-  }finally{
-    client.release();
-  }
+  }finally{client.release()}
 }
 
 export async function createReconciliationRun(pool,{providerCode,periodStart,periodEnd,statement='',startedBy=null}){

@@ -314,38 +314,72 @@ test('Service Job same-key replay rejects another payment channel/currency witho
   assert.equal(ok.statements.filter(x=>x==='COMMIT').length,1);
 });
 
-test('Refund reservations lock the parent intent before summing and inserting',async()=>{
-  const steps=[];let released=0;
-  const client={async query(sql,args=[]){
-    if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK'){steps.push(sql);return{rows:[]}};
-    if(sql.includes('FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE')){
-      steps.push('LOCK');assert.deepEqual(args,['pi_refund']);return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]};
-    }
-    if(sql.includes('SUM(amount)')&&sql.includes('FROM refunds')){
-      steps.push('SUM');assert.deepEqual(args,[19]);return{rows:[{total:'80.00'}]};
-    }
-    if(sql.includes('INSERT INTO refunds(')){
-      steps.push('INSERT');assert.equal(args[2],20);
-      return{rows:[{id:39,status:'requested',amount:'20.00'}]};
-    }
-    throw Error('Unexpected SQL: '+sql);
-  },release(){released++}};
-  const saved=await createRefundRequest({connect:async()=>client},{intentId:'pi_refund',amount:20,requestedBy:7});
-  assert.equal(saved.id,39);
-  assert.deepEqual(steps,['BEGIN','LOCK','SUM','INSERT','COMMIT']);
-  assert.equal(released,1);
+
+test('Refund keys serialize before intent locks, then reserve exactly once',async()=>{
+ const steps=[];let releases=0;
+ const client={async query(sql,args=[]){
+   if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)){steps.push(sql);return{rows:[]}};
+   if(sql.includes("pg_advisory_xact_lock(hashtextextended('refund:'"))){steps.push('KEY');assert.deepEqual(args,['refund_once_001']);return{rows:[]}};
+   if(sql.includes('FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE')){steps.push('LOCK');return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]}};
+   if(sql.includes('FROM refunds WHERE request_key=$1')){steps.push('REPLAY');return{rowCount:0,rows:[]}};
+   if(sql.includes('SUM(amount)')){steps.push('SUM');return{rows:[{total:'80.00'}]}};
+   if(sql.includes('INSERT INTO refunds(')){steps.push('INSERT');assert.equal(args[2],20);assert.equal(args[7],'refund_once_001');return{rows:[{id:39,status:'requested'}]}};
+   throw Error('Unexpected SQL: '+sql);
+ },release(){releases++}};
+ const result=await createRefundRequest({connect:async()=>client},{intentId:19,amount:20,requestedBy:7,idempotencyKey:'refund_once_001'});
+ assert.equal(result.id,39);assert.equal(result.__idempotent_replay,false);
+ assert.deepEqual(steps,['BEGIN','KEY','LOCK','REPLAY','SUM','INSERT','COMMIT']);assert.equal(releases,1);
 });
 
-test('Refund overspend rolls back without an insert',async()=>{
-  const steps=[];let released=0;
-  const client={async query(sql){
-    if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK'){steps.push(sql);return{rows:[]}};
-    if(sql.includes('FOR UPDATE')){steps.push('LOCK');return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]}}
-    if(sql.includes('SUM(amount)')){steps.push('SUM');return{rows:[{total:'80.00'}]}}
-    throw Error('Unexpected mutation SQL: '+sql);
-  },release(){released++}};
-  await assert.rejects(createRefundRequest({connect:async()=>client},{intentId:19,amount:21}),
-    e=>e?.status===409&&/exceeds refundable balance/.test(e.message));
-  assert.deepEqual(steps,['BEGIN','LOCK','SUM','ROLLBACK']);
-  assert.equal(released,1);
+test('Existing refund key replays unchanged row after payment becomes refunded',async()=>{
+ const actions=[];
+ const client={async query(sql){
+   actions.push(sql);
+   if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)||sql.includes('pg_advisory_xact_lock'))return{rows:[]};
+   if(sql.includes('FROM payment_intents WHERE'))return{rows:[{id:19,status:'refunded',amount:'100.00',currency_code:'PHP'}]};
+   if(sql.includes('FROM refunds WHERE request_key=$1'))return{rowCount:1,rows:[{
+     id:39,payment_intent_id:19,requested_by_account_id:7,amount:'20.00',currency_code:'PHP',reason:'review'
+   }]};
+   throw Error('Unexpected read/mutation: '+sql);
+ },release(){}};
+ const result=await createRefundRequest({connect:async()=>client},{intentId:19,amount:20,reason:'review',requestedBy:7,idempotencyKey:'refund_replay_001'});
+ assert.equal(result.id,39);assert.equal(result.__idempotent_replay,true);
+ assert.ok(!actions.some(sql=>sql.includes('INSERT INTO refunds')||sql.includes('SUM(amount)')));
+});
+
+test('Same refund key rejects changed amount, reason or operator',async()=>{
+ let rollbacks=0;
+ const client={async query(sql){
+  if(sql==='ROLLBACK'){rollbacks++;return{rows:[]}};
+  if(sql==='BEGIN'||sql.includes('pg_advisory_xact_lock'))return{rows:[]};
+  if(sql.includes('FROM payment_intents WHERE'))return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]};
+  if(sql.includes('FROM refunds WHERE request_key=$1'))return{rowCount:1,rows:[{payment_intent_id:19,amount:'20.00',currency_code:'PHP',reason:'review',requested_by_account_id:7}]};
+  throw Error('Unexpected SQL: '+sql);
+ },release(){}};
+ for(const changed of [{amount:21},{reason:'different'},{requestedBy:8}]){
+  await assert.rejects(createRefundRequest({connect:async()=>client},{
+   intentId:19,amount:20,reason:'review',requestedBy:7,idempotencyKey:'refund_reused_001',...changed
+  }),e=>e?.status===409&&e?.code==='REFUND_REQUEST_KEY_CONFLICT');
+ }
+ assert.equal(rollbacks,3);
+});
+
+test('Overspending refund rolls back and never inserts',async()=>{
+ const steps=[];
+ const client={async query(sql){
+  if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)){steps.push(sql);return{rows:[]}};
+  if(sql.includes('pg_advisory_xact_lock')){steps.push('KEY');return{rows:[]}};
+  if(sql.includes('FOR UPDATE')){steps.push('LOCK');return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]}};
+  if(sql.includes('FROM refunds WHERE request_key=$1')){steps.push('REPLAY');return{rowCount:0,rows:[]}};
+  if(sql.includes('SUM(amount)')){steps.push('SUM');return{rows:[{total:'80.00'}]}};
+  throw Error('Unexpected SQL: '+sql);
+ },release(){}};
+ await assert.rejects(createRefundRequest({connect:async()=>client},{intentId:19,amount:21,idempotencyKey:'refund_over_001'}),e=>e.status===409);
+ assert.deepEqual(steps,['BEGIN','KEY','LOCK','REPLAY','SUM','ROLLBACK']);
+});
+
+test('Refund without a literal retry key never opens a DB transaction',async()=>{
+ let n=0;await assert.rejects(createRefundRequest({connect:async()=>{n++;throw Error('unexpected')}},{intentId:19,amount:20}),
+  e=>e.status===400&&e.code==='PAYMENT_IDEMPOTENCY_KEY_INVALID');
+ assert.equal(n,0);
 });
