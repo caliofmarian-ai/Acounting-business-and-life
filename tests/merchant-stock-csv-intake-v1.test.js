@@ -6,7 +6,8 @@ import {
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
-  STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes
+  STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes,
+  stockIntakeOriginHeaders
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -476,4 +477,42 @@ test('a changed CSV selection immediately revokes OLD paid approvals before the 
   assert.ok(js.includes("$('post').disabled=state.busy||!state.context"),'renderRows disables Post via current controls');
   assert.ok(handler.includes('if(!csvReadIsCurrent(ticket,state.csvReadRevision,state.busy))return;'),
     'stale new-file responses cannot restore a previous batch');
+});
+
+test('reviewed stock CSV binds purchase origin to immutable verified Merchant business, not later preference',()=>{
+  const initial={accountId:91,businessId:101,businessName:'Synthetic Merchant A'};
+  const headers=stockIntakeOriginHeaders(initial);
+  assert.deepEqual(headers,{'x-abl-inventory-origin-business':'101'});
+  assert.equal(Object.isFrozen(headers),true,'a later callback cannot retarget a dispatched origin');
+  initial.businessId=202; // Later workspace preference changes: already captured A remains A.
+  assert.equal(headers['x-abl-inventory-origin-business'],'101');
+  assert.deepEqual(stockIntakeOriginHeaders(initial),{'x-abl-inventory-origin-business':'202'});
+  for(const invalid of [null,undefined,{}, {accountId:91},{businessId:101},
+    {accountId:91,businessId:0},{accountId:91,businessId:-1},
+    {accountId:91,businessId:'101'},{accountId:'91',businessId:101},
+    {accountId:91,businessId:1.5},{accountId:91,businessId:Number.MAX_SAFE_INTEGER+1},
+    {accountId:0,businessId:101}]){
+    assert.throws(()=>stockIntakeOriginHeaders(invalid),/Verified Merchant business origin unavailable/,
+      'bad Merchant origin must fail closed before any POST: '+JSON.stringify(invalid));
+  }
+});
+
+test('the shipped paid CSV purchase POST carries origin captured before asynchronous preflight',()=>{
+  const start=js.indexOf('  async function saveSelected(){');
+  const end=js.indexOf("  document.addEventListener('abl:auth-expired'",start);
+  assert.ok(start>=0&&end>start,'actual Merchant receiving handler must exist');
+  const handler=js.slice(start,end);
+  const snapshot=handler.indexOf('const originalContext=state.context&&{...state.context};');
+  const header=handler.indexOf('purchaseOriginHeaders=stockIntakeOriginHeaders(originalContext)');
+  const preflight=handler.indexOf('await assertLiveContext()');
+  const dispatch=handler.indexOf("const result=await api('/api/inventory/purchase'");
+  assert.ok(snapshot>=0&&header>snapshot&&preflight>header&&dispatch>preflight,
+    'capture originating business before asynchronous account/business/Inventory rechecks');
+  const purchase=handler.slice(dispatch,dispatch+480);
+  assert.match(purchase,/method:'POST',headers:purchaseOriginHeaders,body:JSON\.stringify\(/);
+  assert.match(handler,/if\(!sameContext\(originalContext,state\.context\)\)/);
+  assert.doesNotMatch(purchase,/workspace\.active_business_id|state\.context\.businessId|req\.body\.business_id/,
+    'never retarget purchase from mutable selection or CSV-provided data');
+  assert.match(handler,/row\.result='uncertain'/,
+    'an interrupted POST must remain unknown and must not be retried automatically');
 });

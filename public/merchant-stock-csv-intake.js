@@ -18,6 +18,16 @@ export function stockIntakeClassification(code){
   const {inventory_domain,stock_role,inventory_type}=STOCK_INTAKE_CLASSIFICATIONS[code];
   return{inventory_domain,stock_role,inventory_type};
 }
+// #841/#842 server authority: capture the already verified originating Merchant
+// before any asynchronous stock/Money preflight. Never derive this header from
+// the mutable selected-business preference, the CSV, or the HTTP response.
+export function stockIntakeOriginHeaders(context){
+  if(!Number.isSafeInteger(context?.accountId)||context.accountId<1||
+     !Number.isSafeInteger(context?.businessId)||context.businessId<1){
+    throw new Error('Verified Merchant business origin unavailable. Reload before receiving stock.');
+  }
+  return Object.freeze({'x-abl-inventory-origin-business':String(context.businessId)});
+}
 const NORMALIZE=value=>String(value??'').trim().toLocaleLowerCase('en-PH').replace(/\s+/g,' ');
 const CENTS=value=>Math.round((Number(value)+Number.EPSILON)*100)/100;
 
@@ -548,6 +558,10 @@ if(hasDocument){
   }
   async function saveSelected(){
     if($('post').disabled||state.busy)return;
+    const originalContext=state.context&&{...state.context};
+    let purchaseOriginHeaders;
+    try{purchaseOriginHeaders=stockIntakeOriginHeaders(originalContext)}
+    catch(error){message('results',error.message,'error');return}
     // Invalidate outstanding file reads before the first durable request.
     state.csvReadRevision++;
     state.busy=true;state.stop=false;updateControls();
@@ -562,7 +576,6 @@ if(hasDocument){
       return false;
     };
     if(!requireCurrent()){state.busy=false;updateControls();return;}
-    const originalContext=state.context;
     const paidFrom=$('purchaseAccount').value,originalDate=$('purchaseDate').value;
     const pending=state.rows.filter(row=>row.selected&&validStockIntakeRow(row));
     let saved=0;
@@ -588,7 +601,7 @@ if(hasDocument){
         // From this point an interrupted response is uncertain; never auto-retry.
         purchaseDispatched=true;
         // Canonical atomic purchase + linked expense. This records an existing payment; no funds transfer occurs.
-        const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({
+        const result=await api('/api/inventory/purchase',{method:'POST',headers:purchaseOriginHeaders,body:JSON.stringify({
           item:row.item,...classification,
           purchase_quantity:row.quantity,purchase_unit:row.unit,total_cost:CENTS(row.total),
           account:paidFrom,record_expense:true,
