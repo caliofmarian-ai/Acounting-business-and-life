@@ -181,3 +181,102 @@ test('partial or drifted stores cannot masquerade as an empty QA restaurant',()=
     assert.throws(()=>auditAll(fixture,data),/QA (cross-store|inventory|product|recipe batch) audit refused/);
   }
 });
+
+
+import {readRestaurantBacoorDatabaseSnapshot as readDbSnapshot}
+  from '../qa/restaurant-bacoor-db-snapshot-853.js';
+
+// These are synthetic SQL-result fixtures. No PostgreSQL session is opened by
+// this test: real isolated QA authorization and the seeder remain separate.
+function dbSnapshotHarness(change={}){
+  const calls=[],authority=change.authority===undefined?
+    [{id:'987654321',name:fixture.business.name,country_code:'PH',currency_code:'PHP'}]:
+    change.authority;
+  const fixtureRows={
+    authority,storefront:change.storefront||[],inventory:change.inventory||[],
+    products:change.products||[],catalog:change.catalog||[],batches:change.batches||[],
+    components:change.components||[],legacy:change.legacy||[]
+  };
+  let released=false,connected=0;
+  const client={
+    async query(sql,params){
+      calls.push({sql,params});
+      if(change.failOn&&sql.includes(change.failOn))throw new Error('synthetic read interruption');
+      if(/^BEGIN |^SET LOCAL |^ROLLBACK$/.test(sql))return {rows:[],rowCount:0};
+      let kind=null;
+      if(sql.includes('FROM businesses b'))kind='authority';
+      else if(sql.includes('FROM merchant_storefronts'))kind='storefront';
+      else if(sql.includes('FROM inventory WHERE'))kind='inventory';
+      else if(sql.includes('FROM products WHERE'))kind='products';
+      else if(sql.includes('FROM marketplace_products'))kind='catalog';
+      else if(sql.includes('FROM product_recipe_batches'))kind='batches';
+      else if(sql.includes('FROM recipe_batch_components'))kind='components';
+      else if(sql.includes('FROM recipes r'))kind='legacy';
+      assert.ok(kind,'unexpected read-only SQL contract');
+      assert.deepEqual(params,kind==='authority'?['987654321','123456789']:
+        ['987654321']);
+      return {rows:fixtureRows[kind],rowCount:fixtureRows[kind].length};
+    },
+    release(){released=true}
+  };
+  return {
+    connect:async()=>{connected++;return client},
+    calls,wasReleased:()=>released,connections:()=>connected
+  };
+}
+const qaDbOptions=h=>({
+  connect:h.connect,accountId:'123456789',businessId:'987654321',fixture
+});
+test('one READ ONLY repeatable-read snapshot classifies a truly empty isolated Merchant fixture but permits no write',async()=>{
+  const h=dbSnapshotHarness();
+  const outcome=await readDbSnapshot(qaDbOptions(h));
+  assert.equal(outcome.status,'ALL_STORES_EMPTY_UNAPPROVED');
+  assert.equal(outcome.readOnly,true);
+  assert.equal(outcome.consistentSnapshot,true);
+  assert.equal(outcome.executable,false);
+  assert.match(outcome.gate,/NO WRITES/);
+  assert.doesNotMatch(JSON.stringify(outcome),/"accountId"|"businessId"|"987654321"/);
+  assert.equal(h.connections(),1);
+  assert.equal(h.wasReleased(),true);
+  assert.equal(h.calls[0].sql,'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+  assert.equal(h.calls.filter(x=>x.sql.startsWith('SELECT ')).length,8);
+  assert.ok(h.calls.every(x=>/^(BEGIN|SET LOCAL|SELECT|ROLLBACK)/.test(x.sql)));
+});
+test('real Merchant binding is mandatory: missing/wrong business scope aborts and rolls back',async()=>{
+  for(const authority of [[],[{id:'987654321',name:'QA Fish Kitchen',
+      country_code:'PH',currency_code:'PHP'}],[
+      {id:'987654321',name:fixture.business.name,country_code:'IE',currency_code:'EUR'}
+    ]]){
+    const h=dbSnapshotHarness({authority});
+    await assert.rejects(readDbSnapshot(qaDbOptions(h)),/exact active QA Merchant\/business binding unavailable/);
+    assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+    assert.equal(h.wasReleased(),true);
+  }
+});
+test('published or payment-enabled storefront cannot masquerade as a safe QA restaurant',async()=>{
+  const legal={business_id:'987654321',publication_status:'draft',merchant_domain:'food',
+    pickup_enabled:false,delivery_enabled:false,cash_enabled:false,online_enabled:false,
+    public_location_enabled:false,public_reputation_enabled:false,
+    price_comparison_enabled:false};
+  for(const storefront of [[{...legal,published:true,publication_status:'published'}],
+    [{...legal,cash_enabled:true}],[{...legal,business_id:'999999'}]]){
+    const h=dbSnapshotHarness({storefront});
+    await assert.rejects(readDbSnapshot(qaDbOptions(h)),/storefront is not a private/);
+    assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+  }
+});
+test('partial inventory is never treated as an empty restaurant and read failures release the client',async()=>{
+  for(const h of [dbSnapshotHarness({inventory:[{id:'1',business_id:'987654321',item:'Chicken meat'}]}),
+    dbSnapshotHarness({failOn:'FROM marketplace_products'})]){
+    await assert.rejects(readDbSnapshot(qaDbOptions(h)),/(QA (inventory|cross-store)|synthetic read interruption)/);
+    assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+    assert.equal(h.wasReleased(),true);
+  }
+});
+test('invalid selected identities are rejected before acquiring any client',async()=>{
+  const h=dbSnapshotHarness();
+  await assert.rejects(readDbSnapshot({...qaDbOptions(h),accountId:'000123'}),/invalid account ID/);
+  await assert.rejects(readDbSnapshot({...qaDbOptions(h),businessId:'1 OR 1=1'}),/invalid business ID/);
+  assert.equal(h.connections(),0);
+});
