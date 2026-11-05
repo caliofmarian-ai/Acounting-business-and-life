@@ -671,7 +671,7 @@ test('Current Merchant business and the recipient Customer retain legitimate pri
 });
 
 function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,authorized=()=>true,account=()=>81,activeBusiness=()=>44,recipient=()=>({email:'verified@example.test',email_verified_at:'2026-10-30'})}={}){
-  const state={permissions:0,identities:0,documentWrites:0,queueStarts:0,queuePendingMarks:0,recipientReads:0,workspaceReads:0};
+  const state={permissions:0,identities:0,documentWrites:0,snapshotReads:0,queueStarts:0,queuePendingMarks:0,recipientReads:0,workspaceReads:0};
   const order=makeOrder(),snapshot=commercialOrderDocument(order);
   const pool={
     query:async sql=>{
@@ -704,6 +704,19 @@ function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,au
       throw Error('Unexpected SQL in send authorization test: '+sql.slice(0,100));
     },
     connect:async()=>{
+      // The order detail now uses a dedicated PostgreSQL repeatable-read
+      // transaction before the separate email queue transaction. Keep the
+      // fixture's existing deferred authorization hooks on its SELECTs.
+      if(!state.snapshotReads++){
+        return {
+          async query(sql){
+            if(sql.startsWith('BEGIN TRANSACTION')||sql==='COMMIT'||sql==='ROLLBACK')
+              return{rowCount:0,rows:[]};
+            return pool.query(sql);
+          },
+          release(){}
+        };
+      }
       state.queueStarts++;
       if(!holdQueue)throw Error('Unauthorized email queue was reached');
       return{
