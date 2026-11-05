@@ -562,6 +562,52 @@ try{
     await pool.query(
       'UPDATE synthetic_purchase_grants SET enabled=true WHERE business_id=101 AND account_id=501');
 
+    // Actual PostgreSQL interleaving of mutable purchase provenance.
+    // The new intent must hold a source-row lock through its COMMIT, and a
+    // later owner change must make the old business replay fail closed.
+    const originKey='a1234567-0000-4000-9000-123456789012';
+    const originItem=(await pool.query(
+      "INSERT INTO inventory(business_id,item,quantity) VALUES(101,'Origin lock 881',0) RETURNING id"
+    )).rows[0];
+    const originPurchase=(await pool.query(
+      'INSERT INTO inventory_purchases(business_id,inventory_id) VALUES(101,$1) RETURNING id',
+      [originItem.id])).rows[0];
+    let inTx=false,move=null;
+    try{
+      await a.query('BEGIN');inTx=true;
+      eq((await claimInventoryPurchaseIntent(a,params(101,originKey))).kind,'new',
+        'new provenance intent reserved');
+      await finishInventoryPurchaseIntent(a,{
+        businessId:101,accountId:501,intentKey:originKey,purchaseId:originPurchase.id,
+        response:{purchase:{id:originPurchase.id},transaction:{total:'0.00'}}
+      });
+      const moverPid=(await b.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      move=b.query('UPDATE inventory_purchases SET business_id=102 WHERE id=$1',
+        [originPurchase.id]);
+      let waiting=false;
+      for(let i=0;i<40;i++){
+        const state=await pool.query('SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',
+          [moverPid]);
+        if(state.rows[0]?.wait_event_type==='Lock'){waiting=true;break}
+        await sleep(50);
+      }
+      eq(waiting,true,'real PostgreSQL update waits on purchase ownership lock');
+      await a.query('COMMIT');inTx=false;
+      await move;move=null;
+      let movedReplay=null;
+      try{await post(a,101,originKey)}catch(e){movedReplay=e}
+      eq(movedReplay?.status,409,'moved source purchase cannot replay original business response');
+      await pool.query('UPDATE inventory_purchases SET business_id=101 WHERE id=$1',
+        [originPurchase.id]);
+      eq((await post(a,101,originKey)).kind,'replay',
+        'original-business provenance restored permits exact response replay');
+    }finally{
+      if(inTx)await a.query('ROLLBACK').catch(()=>{});
+      if(move)await move.catch(()=>{});
+      await pool.query('UPDATE inventory_purchases SET business_id=101 WHERE id=$1',
+        [originPurchase.id]).catch(()=>{});
+    }
+
     console.log(JSON.stringify({ok:true,realPostgresAssertions:checks,
       isolatedDb:'abl_purchase_intent_ci',liveRouteIntegrated:false}));
   }finally{a.release();b.release()}

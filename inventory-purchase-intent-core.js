@@ -227,9 +227,18 @@ export async function claimInventoryPurchaseIntent(client,{businessId,accountId,
     RETURNING intent_key
   `,args);
   if(inserted.rowCount===1)return{kind:'new',fingerprint};
+  // The purchase's current business provenance must also be locked; a
+  // previously committed response cannot be exposed after ownership changes.
   const prior=await client.query(`
     SELECT payload_sha256,purchase_id,response_json FROM inventory_purchase_intents
-    WHERE business_id=$1 AND account_id=$2 AND intent_key=$3 FOR UPDATE
+    WHERE business_id=$1 AND account_id=$2 AND intent_key=$3
+      AND EXISTS (
+        SELECT 1 FROM inventory_purchases AS source_purchase
+        WHERE source_purchase.id=inventory_purchase_intents.purchase_id
+          AND source_purchase.business_id=inventory_purchase_intents.business_id
+        FOR SHARE
+      )
+    FOR UPDATE
   `,args.slice(0,3));
   if(prior.rowCount!==1)throw bad('Purchase intent changed during replay','INVENTORY_PURCHASE_INTENT_RETRY',409);
   const row=prior.rows[0];
@@ -268,6 +277,8 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
   verifiedPurchaseResponse(snapshot,args[3]);
   // Do not associate a scoped Merchant intent with another business's purchase.
   // The database relationship is checked inside this SAME open transaction.
+  // UPDATE ... FROM alone does not lock the source purchase. A correlated
+  // FOR SHARE hold keeps its business identity stable through this COMMIT.
   const saved=await client.query(`
     UPDATE inventory_purchase_intents AS intent
        SET purchase_id=$4,response_json=$5::jsonb,committed_at=NOW()
@@ -275,6 +286,12 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
      WHERE intent.business_id=$1 AND intent.account_id=$2
        AND intent.intent_key=$3 AND intent.purchase_id IS NULL
        AND purchase.id=$4 AND purchase.business_id=intent.business_id
+       AND EXISTS (
+         SELECT 1 FROM inventory_purchases AS source_purchase
+         WHERE source_purchase.id=purchase.id
+           AND source_purchase.business_id=intent.business_id
+         FOR SHARE
+       )
      RETURNING intent.purchase_id
   `,[...args,json]);
   if(saved.rowCount!==1)throw bad('Purchase intent was already committed or missing','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
