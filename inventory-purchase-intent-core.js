@@ -99,6 +99,45 @@ function verifiedPurchaseResponse(response,purchaseId){
   return response;
 }
 
+// PostgreSQL JSONB cannot represent NaN/Infinity/undefined and JSON.stringify
+// silently turns them into null or omits them. The saved/replayed response is
+// accounting evidence: fail rather than persist a different economic snapshot.
+// Genuine Date timestamps remain supported and are serialized as ISO strings.
+function requireLosslessPurchaseSnapshot(value,depth=0,ancestors=new WeakSet()){
+  const invalid=()=>bad('Purchase response contains lossy or non-JSON evidence',
+    'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+  if(depth>32)throw invalid();
+  if(value===null||typeof value==='string'||typeof value==='boolean')return;
+  if(typeof value==='number'){
+    if(!Number.isFinite(value))throw invalid();
+    return;
+  }
+  if(typeof value!=='object')throw invalid();
+  if(value instanceof Date){
+    if(!Number.isFinite(value.getTime()))throw invalid();
+    return;
+  }
+  if(!Array.isArray(value)&&Object.getPrototypeOf(value)!==Object.prototype&&
+     Object.getPrototypeOf(value)!==null)throw invalid();
+  if(ancestors.has(value)||Object.getOwnPropertySymbols(value).length||Object.hasOwn(value,'toJSON'))throw invalid();
+  ancestors.add(value);
+  if(Array.isArray(value)){
+    if(Object.keys(value).length!==value.length)throw invalid();
+    for(let i=0;i<value.length;i++){
+      const item=Object.getOwnPropertyDescriptor(value,String(i));
+      if(!item||!Object.hasOwn(item,'value'))throw invalid();
+      requireLosslessPurchaseSnapshot(item.value,depth+1,ancestors);
+    }
+  }else{
+    for(const key of Object.getOwnPropertyNames(value)){
+      const item=Object.getOwnPropertyDescriptor(value,key);
+      if(!item?.enumerable||!Object.hasOwn(item,'value'))throw invalid();
+      requireLosslessPurchaseSnapshot(item.value,depth+1,ancestors);
+    }
+  }
+  ancestors.delete(value);
+}
+
 // Hash the canonical JSON stream directly: the existing 32 KiB maximum must
 // apply DURING serialization, not after allocating an unbounded canonical string.
 // The emitted order and bytes are the same as the original stable() algorithm.
@@ -203,6 +242,7 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
   const args=[dbId(businessId,'Business'),dbId(accountId,'Account'),literalKey(intentKey),dbId(purchaseId,'Purchase')];
   if(!response||typeof response!=='object'||Array.isArray(response))throw bad('A committed purchase response object is required');
   verifiedPurchaseResponse(response,args[3]);
+  requireLosslessPurchaseSnapshot(response);
   // The original response object is NOT necessarily the JSON response that
   // PostgreSQL will persist (e.g. a nested toJSON method or Date). Validate
   // the actual bytes before committing so neither first response nor replay

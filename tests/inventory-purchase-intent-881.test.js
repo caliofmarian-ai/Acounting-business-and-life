@@ -184,6 +184,37 @@ test('serialized purchase identity is validated before SQL and first response ma
   assert.notEqual(result,original);
 });
 
+test('response snapshot rejects silently dropped or nullified financial evidence before SQL',async()=>{
+  const ctx={businessId:1,accountId:2,intentKey:key,purchaseId:44};
+  let queries=0;
+  const noWrites={async query(){queries++;throw Error('Invalid response must not reach SQL')}};
+  const badSnapshots=[
+    {purchase:{id:44},expense:{total:NaN}},
+    {purchase:{id:44},inventory:{stock_balance:Infinity}},
+    {purchase:{id:44},lot:{unit_cost:-Infinity}},
+    {purchase:{id:44},expense:{total:undefined}},
+    {purchase:{id:44},items:[1,,3]},
+    {purchase:{id:44},expense:{total:1n}},
+    {purchase:{id:44},created_at:new Date(NaN)},
+    {purchase:{id:44},expense:{toJSON(){return{total:1}}}},
+    {purchase:{id:44},expense:Object.defineProperty({},'amount',{get(){throw Error('getter executed')},enumerable:true})}
+  ];
+  const cyclic={purchase:{id:44}};cyclic.self=cyclic;
+  badSnapshots.push(cyclic);
+  for(const response of badSnapshots){
+    await assert.rejects(finishInventoryPurchaseIntent(noWrites,{...ctx,response}),
+      e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&e.status===409);
+  }
+  assert.equal(queries,0,'lossy evidence must be rejected before any persisted intent update');
+  let stored=null;
+  const accepted={async query(_sql,args){stored=JSON.parse(args[4]);return{rowCount:1,rows:[{purchase_id:44}]}}};
+  const valid={purchase:{id:44},expense:{total:0},
+    generated_at:new Date('2026-11-05T00:00:00.000Z')};
+  assert.deepEqual(await finishInventoryPurchaseIntent(accepted,{...ctx,response:valid}),stored);
+  assert.equal(stored.generated_at,'2026-11-05T00:00:00.000Z');
+  assert.equal(stored.expense.total,0);
+});
+
 test('transaction executor commits one purchase, then replays without touching inventory',async()=>{
   const events=[];let committed=null;let draft=null;
   const client={async query(sql,args){
