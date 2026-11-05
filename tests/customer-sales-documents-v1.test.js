@@ -138,6 +138,35 @@ test('Commercial order documents reject contradictory recorded line, subtotal an
     'modifier/variant pricing uses the recorded final line price, not a guessed base price');
 });
 
+test('Commercial order identity is literal, never coerced from arrays, booleans or wrappers',()=>{
+  const base=makeOrder();
+  const canonical=commercialOrderDocument({...base,
+    id:'123',business_id:'44',customer_account_id:'81',
+    items:[{...base.items[0],id:'1'}]
+  });
+  assert.equal(canonical.source_order_id,123);
+  assert.equal(canonical.business_id,44);
+  assert.equal(canonical.customer_account_id,81);
+  assert.equal(canonical.items[0].item_id,1);
+  const invalid=[true,false,[1],{toString:()=> '1'},new Number(1),
+    new String('1'),'01','1e0',' 1 ','0x01',1.5,Number.MAX_SAFE_INTEGER+1];
+  for(const bad of invalid){
+    for(const field of ['id','business_id','customer_account_id']){
+      assert.throws(()=>commercialOrderDocument({...base,[field]:bad}),
+        error=>error.status>=400&&error.status<500,
+        field+' must reject a nonliteral economic identity');
+    }
+    assert.throws(()=>commercialOrderDocument({...base,
+      items:[{...base.items[0],id:bad}]
+    }),error=>error.status===400&&/Order line/.test(error.message));
+  }
+  for(const malformed of [undefined,null,{},'not a row',[],[null],[false],[[1]]]){
+    assert.throws(()=>commercialOrderDocument({...base,items:malformed}),
+      error=>error.status===409&&/Order line item evidence/.test(error.message),
+      'malformed line data must be a controlled conflict, not a 500');
+  }
+});
+
 test('Merchant-only send and private Customer read must enforce order and business identity',()=>{
   const core=read('customer-sales-documents.js');
   const server=read('server-notifications.js');

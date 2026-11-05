@@ -4,8 +4,13 @@ import {emitNotificationEvent} from './notification-core.js';
 
 const err=(status,message)=>Object.assign(new Error(message),{status});
 const id=(v,label='Identifier')=>{
-  const n=Number(v);
-  if(!Number.isSafeInteger(n)||n<1)throw err(400,label+' must be a positive integer');
+  // Economic identity comes from explicit database/HTTP identifiers, never
+  // implicit Number() coercion of arrays, booleans or user-defined objects.
+  const raw=typeof v==='string'?v:
+    (typeof v==='number'&&Number.isSafeInteger(v)?String(v):null);
+  if(!raw||!/^[1-9][0-9]*$/.test(raw))throw err(400,label+' must be a positive integer');
+  const n=Number(raw);
+  if(!Number.isSafeInteger(n))throw err(400,label+' must be a positive integer');
   return n;
 };
 // NUMERIC(12,2) order values must be exact evidence, never silently coerced or rounded.
@@ -84,14 +89,19 @@ export function commercialOrderDocument(order,clock=new Date()){
   if(Math.round(paid*100)+Math.round(outstanding*100)!==Math.round(total*100))
     throw err(409,'Order monetary evidence is inconsistent');
   if(paid<=0&&order.order_status!=='completed')throw err(409,'Document is available after recorded payment or order completion');
-  const items=(order.items||[]).map(item=>({
-    item_id:id(item.id,'Order line'),
-    name:evidenceText(item.name_snapshot,200,'Order line name'),
-    quantity:orderQuantity(item.quantity),
-    unit_price:money(item.unit_price_snapshot),
-    line_total:money(item.line_total)
-  }));
-  if(!items.length)throw err(409,'Order line item evidence is unavailable');
+  if(!Array.isArray(order.items)||!order.items.length)
+    throw err(409,'Order line item evidence is unavailable');
+  const items=order.items.map(item=>{
+    if(!item||typeof item!=='object'||Array.isArray(item))
+      throw err(409,'Order line item evidence is invalid');
+    return {
+      item_id:id(item.id,'Order line'),
+      name:evidenceText(item.name_snapshot,200,'Order line name'),
+      quantity:orderQuantity(item.quantity),
+      unit_price:money(item.unit_price_snapshot),
+      line_total:money(item.line_total)
+    };
+  });
   // Current canonical Orders persists subtotal = sum(recorded line_total) and
   // total = subtotal + delivery_fee. Do not issue an immutable document whose
   // visible line breakdown contradicts the recorded commercial total.
