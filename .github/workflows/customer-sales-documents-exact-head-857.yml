@@ -4,6 +4,7 @@ on:
     paths:
       - 'customer-sales-documents.js'
       - 'tests/customer-sales-documents-v1.test.js'
+      - 'scripts/customer-sales-document-snapshot-postgres-857.mjs'
       - '.github/workflows/customer-sales-documents-exact-head-857.yml'
 permissions:
   contents: read
@@ -14,6 +15,27 @@ jobs:
   source:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_sales_snapshot_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_sales_snapshot_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_sales_snapshot_ci
+      ABL_SALES_SNAPSHOT_CI: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,6 +44,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - run: npm ci
       - name: Assert exact PR head and check source
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -31,3 +54,6 @@ jobs:
           node --check customer-sales-documents.js
           node --check tests/customer-sales-documents-v1.test.js
           node --test tests/customer-sales-documents-v1.test.js
+          node --check scripts/customer-sales-document-snapshot-postgres-857.mjs
+      - name: Real isolated PostgreSQL order snapshot and concurrent payment evidence
+        run: node scripts/customer-sales-document-snapshot-postgres-857.mjs
