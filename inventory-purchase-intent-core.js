@@ -385,3 +385,65 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
     throw error;
   }
 }
+
+
+/**
+ * Read-only reconciliation, NOT a safe-post retry. An absent row may reflect
+ * an in-flight transaction, not a failed purchase. In particular, NEVER call
+ * executeInventoryPurchaseIntent just to inspect an unknown COMMIT: if the
+ * prior INSERT rolled back it could create a new stock/lot/expense operation.
+ * The caller must bind the actual session's business/account and verify live,
+ * row-locked Merchant authority on this same pg client through COMMIT.
+ */
+export async function inspectInventoryPurchaseIntent(client,options){
+  if(!client||typeof client.query!=='function')throw bad('A transactional client is required');
+  const business=dbId(options?.businessId,'Business');
+  const account=dbId(options?.accountId,'Account');
+  const key=literalKey(options?.intentKey);
+  const fingerprint=inventoryPurchaseFingerprint(options?.payload);
+  const verify=options?.verifyCurrentMerchantAuthority;
+  if(typeof verify!=='function')throw bad('Current Merchant grant verifier required',
+    'INVENTORY_PURCHASE_INTENT_AUTH_REQUIRED',403);
+  let started=false;
+  try{
+    await client.query('BEGIN');started=true;
+    const allowed=await verify(client,Object.freeze({
+      businessId:business,accountId:account,intentKey:key,stage:'reconcile'
+    }));
+    if(allowed!==true)throw bad('Current Merchant authority revoked',
+      'INVENTORY_PURCHASE_INTENT_FORBIDDEN',403);
+    // No INSERT or business advisory lock here; neither missing nor pending
+    // keys may be treated as permission to create a new purchase.
+    const found=await client.query(`
+      SELECT payload_sha256,purchase_id,response_json
+        FROM inventory_purchase_intents
+       WHERE business_id=$1 AND account_id=$2 AND intent_key=$3
+       FOR SHARE
+    `,[business,account,key]);
+    if(found.rowCount===0){
+      await client.query('COMMIT');started=false;
+      return{kind:'unconfirmed',safeToRetry:false};
+    }
+    if(found.rowCount!==1)throw bad('Ambiguous purchase intent',
+      'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+    const row=found.rows[0];
+    if(row.payload_sha256!==fingerprint)throw bad('Purchase intent key reused with different details',
+      'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+    if(row.purchase_id==null||row.response_json==null)throw bad('Purchase intent incomplete',
+      'INVENTORY_PURCHASE_INTENT_INCOMPLETE',409);
+    const purchase=dbId(row.purchase_id,'Purchase');
+    // Lock the actual purchase as well as its private response: provenance
+    // must remain tied to this business until the inspection completes.
+    const source=await client.query(`
+      SELECT id FROM inventory_purchases WHERE id=$1 AND business_id=$2 FOR SHARE
+    `,[purchase,business]);
+    if(source.rowCount!==1)throw bad('Original purchase provenance has changed',
+      'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+    const response=verifiedPurchaseResponse(row.response_json,purchase);
+    await client.query('COMMIT');started=false;
+    return{kind:'committed',purchaseId:purchase,response,safeToRetry:false};
+  }catch(error){
+    if(started)await client.query('ROLLBACK').catch(()=>{});
+    throw error;
+  }
+}

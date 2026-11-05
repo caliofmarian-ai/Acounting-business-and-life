@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   inventoryPurchaseFingerprint,claimInventoryPurchaseIntent,
   lockInventoryPurchaseBusiness,finishInventoryPurchaseIntent,
-  executeInventoryPurchaseIntent,
+  executeInventoryPurchaseIntent,inspectInventoryPurchaseIntent,
   INVENTORY_PURCHASE_INTENT_SCHEMA
 } from '../inventory-purchase-intent-core.js';
 
@@ -397,4 +397,55 @@ test('lost COMMIT acknowledgement is explicitly unknown; same-key reconciliation
   assert.equal(replay.response.expense.total,'2.75');
   assert.equal(creationCalls,1);
   assert.deepEqual(events.slice(-5),['BEGIN','claim','replay','authorize:replay','COMMIT']);
+});
+
+test('read-only reconciliation distinguishes unconfirmed from committed without INSERT',async()=>{
+  let committed=false,permitted=true,ownership=true;
+  const queries=[];
+  const client={async query(sql){
+    queries.push(sql);
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0,rows:[]};
+    if(sql.includes('FROM inventory_purchase_intents'))return committed?{
+      rowCount:1,rows:[{payload_sha256:inventoryPurchaseFingerprint(payload),
+        purchase_id:44,response_json:{purchase:{id:44},expense:{total:'12.50'}}}]
+    }:{rowCount:0,rows:[]};
+    if(sql.includes('FROM inventory_purchases'))return{rowCount:ownership?1:0,rows:ownership?[{id:44}]:[]};
+    throw Error('Unexpected query during read-only reconciliation');
+  }};
+  const opts={businessId:1,accountId:2,intentKey:key,payload,
+    verifyCurrentMerchantAuthority:async(_db,grant)=>{
+      assert.equal(grant.stage,'reconcile');return permitted;
+    }};
+  assert.deepEqual(await inspectInventoryPurchaseIntent(client,opts),
+    {kind:'unconfirmed',safeToRetry:false});
+  committed=true;
+  const result=await inspectInventoryPurchaseIntent(client,opts);
+  assert.equal(result.kind,'committed');
+  assert.equal(result.purchaseId,'44');
+  assert.equal(result.response.expense.total,'12.50');
+  assert.equal(result.safeToRetry,false);
+  assert.ok(queries.every(sql=>!/(INSERT|UPDATE|DELETE|pg_advisory_xact_lock)/i.test(sql)));
+  ownership=false;
+  await assert.rejects(inspectInventoryPurchaseIntent(client,opts),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+  assert.equal(queries.at(-1),'ROLLBACK');
+  permitted=false;
+  const seen=queries.length;
+  await assert.rejects(inspectInventoryPurchaseIntent(client,opts),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_FORBIDDEN');
+  assert.deepEqual(queries.slice(seen),['BEGIN','ROLLBACK']);
+  await assert.rejects(inspectInventoryPurchaseIntent(client,{...opts,
+    payload:{...payload,total_cost:'999.00'},verifyCurrentMerchantAuthority:async()=>true}),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+});
+
+test('unverified or malformed inspection never begins a database transaction',async()=>{
+  let queries=0;const db={query(){queries++;throw Error('unexpected SQL')}};
+  const options={businessId:1,accountId:2,intentKey:key,payload};
+  await assert.rejects(inspectInventoryPurchaseIntent(db,options),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_AUTH_REQUIRED');
+  await assert.rejects(inspectInventoryPurchaseIntent(db,{
+    ...options,payload:{cost:NaN},verifyCurrentMerchantAuthority:async()=>true
+  }),e=>e.status===400);
+  assert.equal(queries,0);
 });

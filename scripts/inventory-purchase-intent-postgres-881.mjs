@@ -6,7 +6,7 @@ import {
   INVENTORY_PURCHASE_INTENT_SCHEMA,
   claimInventoryPurchaseIntent,
   finishInventoryPurchaseIntent,
-  lockInventoryPurchaseBusiness,executeInventoryPurchaseIntent
+  lockInventoryPurchaseBusiness,executeInventoryPurchaseIntent,inspectInventoryPurchaseIntent
 } from '../inventory-purchase-intent-core.js';
 
 if(process.env.NODE_ENV!=='test' || process.env.ABL_PURCHASE_INTENT_CI!=='1' ||
@@ -607,6 +607,40 @@ try{
       await pool.query('UPDATE inventory_purchases SET business_id=101 WHERE id=$1',
         [originPurchase.id]).catch(()=>{});
     }
+
+    // Real isolated PG reconciliation after the synthetic lost acknowledgement:
+    // unlike a same-key POST, a missing key is never inserted or retried.
+    const beforeInspect=(await pool.query(
+      'SELECT count(*)::int AS n FROM inventory_purchase_intents')).rows[0].n;
+    const beforeInspectPurchases=(await pool.query(
+      'SELECT count(*)::int AS n FROM inventory_purchases')).rows[0].n;
+    const seen=await inspectInventoryPurchaseIntent(a,params(101,lostAckKey,lostAckBody));
+    eq(seen.kind,'committed','inspect confirms real durable purchase');
+    eq(seen.safeToRetry,false,'confirmed result never requests new posting');
+    eq(String(seen.purchaseId),String(durable.rows[0].purchase_id),
+      'inspect returns original source purchase');
+    const absent=await inspectInventoryPurchaseIntent(a,params(101,
+      'b1234567-0000-4000-9000-123456789013',lostAckBody));
+    eq(absent.kind,'unconfirmed','absent intent is ambiguous, not failed');
+    eq(absent.safeToRetry,false,'missing key does not authorize retry');
+    eq((await pool.query('SELECT count(*)::int AS n FROM inventory_purchase_intents')).rows[0].n,
+      beforeInspect,'reconciliation cannot reserve an absent key');
+    eq((await pool.query('SELECT count(*)::int AS n FROM inventory_purchases')).rows[0].n,
+      beforeInspectPurchases,'reconciliation cannot create a purchase');
+    let mismatch=null;
+    try{await inspectInventoryPurchaseIntent(a,params(101,lostAckKey,{
+      ...lostAckBody,cost:'12.51'}))}catch(error){mismatch=error}
+    eq(mismatch?.code,'INVENTORY_PURCHASE_INTENT_CONFLICT',
+      'reconciliation rejects changed paid instructions');
+    await pool.query(
+      'UPDATE synthetic_purchase_grants SET enabled=false WHERE business_id=101 AND account_id=501');
+    let denied=null;
+    try{await inspectInventoryPurchaseIntent(a,params(101,lostAckKey,lostAckBody))}
+    catch(error){denied=error}
+    eq(denied?.code,'INVENTORY_PURCHASE_INTENT_FORBIDDEN',
+      'revoked Merchant cannot inspect private purchase');
+    await pool.query(
+      'UPDATE synthetic_purchase_grants SET enabled=true WHERE business_id=101 AND account_id=501');
 
     console.log(JSON.stringify({ok:true,realPostgresAssertions:checks,
       isolatedDb:'abl_purchase_intent_ci',liveRouteIntegrated:false}));
