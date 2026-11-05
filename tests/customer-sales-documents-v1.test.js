@@ -1219,3 +1219,32 @@ test('the latest document dialog error remains visible and actionable',async()=>
   assert.equal(ui.state().modal.isError,true);
   assert.equal(ui.state().modal.content.textContent,'Unable to load purchase documents.');
 });
+
+
+test('Archived purchase records show Philippine civil date and saved currency without fictitious zero',()=>{
+  const source=read('public/order-sales-documents-ui.js');
+  const start=source.indexOf('  const date=value=>');
+  const end=source.indexOf('  async function api(',start);
+  assert.ok(start>=0&&end>start,'execute actual shipped date/currency helpers');
+  const {date,peso}=new Function(source.slice(start,end)+'return {date,peso};')();
+  const instant='2026-12-31T20:05:00Z';
+  const expected=new Intl.DateTimeFormat('en-PH',{
+    timeZone:'Asia/Manila',day:'2-digit',month:'2-digit',year:'numeric'
+  }).format(new Date(instant));
+  const utc=new Intl.DateTimeFormat('en-PH',{
+    timeZone:'UTC',day:'2-digit',month:'2-digit',year:'numeric'
+  }).format(new Date(instant));
+  assert.notEqual(expected,utc,'PH year crosses before UTC year');
+  assert.equal(date(instant),expected);
+  assert.equal(date(null),'Date unavailable');
+  assert.equal(date('invalid'),'Date unavailable');
+  assert.equal(peso('145.00','PHP'),'₱145.00');
+  assert.equal(peso('145.00','usd'),'USD 145.00');
+  assert.equal(peso('0.00','PHP'),'₱0.00');
+  assert.equal(peso(null,'PHP'),'Amount unavailable');
+  assert.equal(peso('invalid','PHP'),'Amount unavailable');
+  assert.equal(peso('145.00',null),'Amount unavailable');
+  for(const field of ['total','paid','amount_due'])
+    assert.ok(source.includes('peso(d.'+field+',d.currency_code)'),
+      'archive must use own saved currency for '+field);
+});

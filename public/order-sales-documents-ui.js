@@ -3,8 +3,25 @@
   const API='/api/notifications/order-sales-documents';
   let modal=null,mode='',activeBusiness=null,documentLoadEpoch=0;
   const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const date=value=>{try{return new Date(value).toLocaleDateString('en-PH')}catch{return String(value||'')}};
-  const peso=value=>'₱'+new Intl.NumberFormat('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value)||0);
+  // Use the Philippines calendar day even when a Customer opens this in
+  // a browser outside PH. Printed document dates already use Asia/Manila.
+  const date=value=>{
+    if(!(value instanceof Date)&&(typeof value!=='string'||!value.trim()))return 'Date unavailable';
+    const instant=new Date(value);
+    if(!Number.isFinite(instant.getTime()))return 'Date unavailable';
+    return new Intl.DateTimeFormat('en-PH',{
+      timeZone:'Asia/Manila',day:'2-digit',month:'2-digit',year:'numeric'
+    }).format(instant);
+  };
+  // Archived documents have an authoritative saved currency; invalid data
+  // must not silently become PHP or a fictitious zero-amount record.
+  const peso=(value,currency='PHP')=>{
+    const raw=(typeof value==='string'||typeof value==='number')?String(value):'';
+    const code=typeof currency==='string'&&/^[A-Za-z]{3}$/.test(currency)?currency.toUpperCase():null;
+    if(!code||!/^(?:0|[1-9][0-9]{0,9})(?:[.][0-9]{1,2})?$/.test(raw))return 'Amount unavailable';
+    return (code==='PHP'?'₱':code+' ')+
+      new Intl.NumberFormat('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(raw));
+  };
   async function api(path,init={}){
     const response=await fetch(path,{credentials:'same-origin',cache:'no-store',...init});
     const data=await response.json().catch(()=>({}));
@@ -51,8 +68,8 @@
   const documentLink=id=>API+'/'+Number(id)+'/print';
   function documentItem(d){
     return '<div class="osdRow"><strong>'+esc(d.order_number||'Order')+' · '+esc(d.document_class.replaceAll('_',' '))+'</strong>'+
-      '<small>'+esc(d.company_name||'Merchant')+' · '+esc(date(d.created_at))+' · '+esc(peso(d.total))+'</small>'+
-      '<small>Recorded paid: '+esc(peso(d.paid))+' · Still due: '+esc(peso(d.amount_due))+'</small>'+
+      '<small>'+esc(d.company_name||'Merchant')+' · '+esc(date(d.created_at))+' · '+esc(peso(d.total,d.currency_code))+'</small>'+
+      '<small>Recorded paid: '+esc(peso(d.paid,d.currency_code))+' · Still due: '+esc(peso(d.amount_due,d.currency_code))+'</small>'+
       '<a href="'+documentLink(d.id)+'" target="_blank" rel="noopener">View / Print / Save as PDF</a></div>';
   }
   async function customer(){
