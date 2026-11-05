@@ -18,6 +18,15 @@ const positiveId=(value,label='Identifier')=>{
   if(!Number.isSafeInteger(id)||id<1)throw error(400,label+' must be a positive integer');
   return id;
 };
+// Optional receipt evidence is normalized only after checking the ENTIRE supplied
+// value. Silent truncation/coercion would seal different source records under
+// the same client-intent fingerprint and make a retry impossible to repair.
+const evidenceField=(value,max,label)=>{
+  if(value==null)return '';
+  if(typeof value!=='string')throw error(400,label+' must be a string');
+  if(value.length>max)throw error(400,label+' exceeds supported length');
+  return value.trim();
+};
 const allowedKinds=new Set(['invoice','purchase_receipt','order_slip','other']);
 const linkTables=Object.freeze({
   inventory_purchase:'inventory_purchases',
@@ -44,7 +53,8 @@ export function normalizeMerchantPurchaseDocument(input={}){
   if(typeof key!=='string'||!/^[a-zA-Z0-9_-]{12,100}$/.test(key)){
     throw error(400,'A stable client_request_key is required');
   }
-  const kind=clean(input.document_kind||'purchase_receipt',40).toLowerCase();
+  const kind=(input.document_kind==null||input.document_kind===''?'purchase_receipt':
+    evidenceField(input.document_kind,40,'Document kind')).toLowerCase();
   if(!allowedKinds.has(kind))throw error(400,'Invalid purchase document kind');
   // Validate the *entire* submitted date: never turn a malformed date into a valid one by truncation.
   const issueDate=input.issue_date==null||input.issue_date===''?philippinesPurchaseDocumentDate():input.issue_date;
@@ -68,7 +78,7 @@ export function normalizeMerchantPurchaseDocument(input={}){
   if(links.length>100)throw error(400,'A document can link at most 100 purchase records');
   const unique=new Set();
   const normalizedLinks=links.map(item=>{
-    const kind=clean(item?.kind,32),id=positiveId(item?.id,'Linked record');
+    const kind=evidenceField(item?.kind,32,'Linked record kind'),id=positiveId(item?.id,'Linked record');
     if(!Object.hasOwn(linkTables,kind))throw error(400,'Unsupported purchase record link');
     const key=kind+':'+id;
     if(unique.has(key))throw error(400,'Duplicate linked purchase record');
@@ -79,16 +89,16 @@ export function normalizeMerchantPurchaseDocument(input={}){
   if(input.data_url!=null&&typeof input.data_url!=='string')throw error(400,'Evidence data must be a string');
   if(input.file_name!=null&&typeof input.file_name!=='string')throw error(400,'File name must be a string');
   const dataUrl=clean(input.data_url,9*1024*1024);
-  const fileName=clean(input.file_name,220);
+  const fileName=evidenceField(input.file_name,220,'File name');
   if(dataUrl&&!fileName)throw error(400,'File name is required for uploaded evidence');
   if(dataUrl&&!/^data:(image\/jpeg|image\/png|image\/webp|application\/pdf);base64,/i.test(dataUrl))throw error(400,'Only JPEG, PNG, WEBP or PDF files are accepted');
   if(dataUrl.length>8*1024*1024+100)throw error(413,'Evidence file is too large');
   if(fileName&&!dataUrl)throw error(400,'An uploaded file must contain evidence data');
   return{
     businessId,key,kind,issueDate,currency,amount,
-    issuer:clean(input.issuer_name,180),
-    documentNumber:clean(input.document_number,120),
-    note:clean(input.note,1000),
+    issuer:evidenceField(input.issuer_name,180,'Issuer name'),
+    documentNumber:evidenceField(input.document_number,120,'Document number'),
+    note:evidenceField(input.note,1000,'Document note'),
     links:normalizedLinks,dataUrl,fileName
   };
 }
@@ -135,11 +145,14 @@ async function requireMerchantDocumentBusiness(pool,identity,req,source='query')
   return{me,businessId:Number(business.id)};
 }
 
-async function validatePurchaseLinks(db,businessId,links){
+// The first preflight may use the pool; the final pre-insert verification
+// holds share locks on the linked source rows through the receipt COMMIT.
+// A concurrent business reassignment or deletion cannot outrun that check.
+async function validatePurchaseLinks(db,businessId,links,{lockRows=false}={}){
   for(const link of links){
     const table=linkTables[link.kind];
     const extra=link.kind==='expense_transaction'?" AND type='business_expense'":'';
-    const result=await db.query('SELECT 1 FROM '+table+' WHERE id=$1 AND business_id=$2'+extra,[link.id,businessId]);
+    const result=await db.query('SELECT 1 FROM '+table+' WHERE id=$1 AND business_id=$2'+extra+(lockRows?' FOR SHARE':''),[link.id,businessId]);
     if(!result.rowCount)throw error(404,'Linked purchase record unavailable in this Merchant workspace');
   }
 }
@@ -224,7 +237,7 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
     client=await pool.connect();
     await client.query('BEGIN');
     await lockMerchantDocumentWriteAuthority(client,actorAccountId,record.businessId);
-    await validatePurchaseLinks(client,record.businessId,record.links);
+    await validatePurchaseLinks(client,record.businessId,record.links,{lockRows:true});
     const added=await client.query(`
       INSERT INTO merchant_purchase_documents(
         business_id,created_by_account_id,client_request_key,request_fingerprint,

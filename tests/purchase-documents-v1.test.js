@@ -246,3 +246,57 @@ test('malformed supplied purchase associations and evidence metadata fail closed
   assert.equal(normalizeMerchantPurchaseDocument({...base(),data_url:null,file_name:null}).dataUrl,'');
   assert.equal(normalizeMerchantPurchaseDocument({...base(),file_name:'invoice.pdf',data_url:'data:application/pdf;base64,JVBERi0xLjQK'}).fileName,'invoice.pdf');
 });
+
+
+test('immutable purchase evidence rejects coerced and silently truncated receipt metadata',()=>{
+  const original=base();
+  const valid=normalizeMerchantPurchaseDocument({...original,
+    document_kind:'invoice',issuer_name:'I'.repeat(180),
+    document_number:'N'.repeat(120),note:'M'.repeat(1000),
+    file_name:'r'.repeat(216)+'.pdf',data_url:'data:application/pdf;base64,JVBERi0xLjQK'
+  });
+  assert.equal(valid.kind,'invoice');
+  assert.equal(valid.issuer.length,180);
+  assert.equal(valid.documentNumber.length,120);
+  assert.equal(valid.note.length,1000);
+  assert.equal(valid.fileName.length,220);
+  for(const [field,max,label] of [
+    ['issuer_name',180,'Issuer name'],['document_number',120,'Document number'],
+    ['note',1000,'Document note'],['file_name',220,'File name']
+  ]){
+    for(const invalid of ['X'.repeat(max+1),[],['X'],false,42,{}]){
+      assert.throws(()=>normalizeMerchantPurchaseDocument({...original,[field]:invalid}),
+        e=>e.status===400&&e.message.includes(label),field+' must not silently alias source evidence');
+    }
+  }
+  for(const invalid of [['invoice'],true,123,{},'x'.repeat(41)]){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...original,document_kind:invalid}),
+      e=>e.status===400,'document class must be explicit, never coerced or truncated');
+  }
+  for(const kind of [['inventory_purchase'],{toString:()=> 'inventory_purchase'},'x'.repeat(33)]){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...original,
+      links:[{kind,id:101}]
+    }),e=>e.status===400,'typed link kinds must not alias other evidence');
+  }
+  assert.equal(normalizeMerchantPurchaseDocument({...original,
+    issuer_name:null,document_number:null,note:null,file_name:null
+  }).issuer,'','omitted optional metadata remains supported');
+});
+
+test('linked receipt sources receive transaction-held share locks on the final recheck',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const sql=[];
+  const db={query:async(query,params)=>{
+    sql.push({query,params});
+    return{rowCount:1,rows:[{id:101}]};
+  }};
+  const linked=[{kind:'inventory_purchase',id:101},{kind:'expense_transaction',id:202}];
+  await merchantPurchaseDocumentInternals.validatePurchaseLinks(db,14,linked);
+  assert.equal(sql.length,2);
+  assert.ok(sql.every(x=>!x.query.includes('FOR SHARE')),'initial preflight must not hold locks');
+  sql.length=0;
+  await merchantPurchaseDocumentInternals.validatePurchaseLinks(db,14,linked,{lockRows:true});
+  assert.ok(sql.every(x=>x.query.endsWith('FOR SHARE')),'commit-time association check must lock source rows');
+  assert.match(sql[1].query,/type='business_expense' FOR SHARE/);
+  assert.deepEqual(sql[0].params,[101,14]);
+});

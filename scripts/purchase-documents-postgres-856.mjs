@@ -107,3 +107,56 @@ test('revoked Merchant binding or membership cannot pass the post-upload receipt
     writer.release();revoker.release();observer.release();await pool.end();
   }
 });
+
+
+// Synthetic linked purchase rows in disposable CI only. Actual two-connection
+// PostgreSQL locks prove reassignments cannot slip past the receipt final check.
+test('receipt association recheck holds source business ownership stable until COMMIT',async()=>{
+  const pool=new pg.Pool({max:3});
+  const writer=await pool.connect(),changer=await pool.connect(),observer=await pool.connect();
+  const validate=merchantPurchaseDocumentInternals.validatePurchaseLinks;
+  const links=[{kind:'inventory_purchase',id:101}];
+  let pending=null;
+  try{
+    assert.equal((await observer.query('SELECT current_database() AS db')).rows[0].db,'abl_receipts_856_ci');
+    await observer.query('CREATE TABLE inventory_purchases(id BIGINT PRIMARY KEY,business_id BIGINT NOT NULL)');
+    await observer.query('INSERT INTO inventory_purchases VALUES(101,14)');
+    const writerPid=(await writer.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const changerPid=(await changer.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const blocked=async(target,blocker)=>{
+      for(let n=0;n<50;n++){
+        const ids=(await observer.query('SELECT pg_blocking_pids($1::int) AS ids',[target])).rows[0].ids;
+        if(ids.includes(blocker))return true;
+        await new Promise(done=>setTimeout(done,20));
+      }
+      return false;
+    };
+    await writer.query('BEGIN');
+    await validate(writer,14,links,{lockRows:true});
+    pending=changer.query('UPDATE inventory_purchases SET business_id=15 WHERE id=101');
+    assert.equal(await blocked(changerPid,writerPid),true,'business reassignment waits for receipt COMMIT');
+    await writer.query('COMMIT');
+    await pending;pending=null;
+    await assert.rejects(()=>validate(writer,14,links,{lockRows:true}),e=>e.status===404);
+
+    await observer.query('UPDATE inventory_purchases SET business_id=14 WHERE id=101');
+    await changer.query('BEGIN');
+    await changer.query('UPDATE inventory_purchases SET business_id=15 WHERE id=101');
+    pending=validate(writer,14,links,{lockRows:true});
+    assert.equal(await blocked(writerPid,changerPid),true,'receipt verification waits for a pending change');
+    await changer.query('COMMIT');
+    await assert.rejects(pending,e=>e.status===404);pending=null;
+    await observer.query('UPDATE inventory_purchases SET business_id=14 WHERE id=101');
+    await writer.query('BEGIN');
+    await validate(writer,14,links,{lockRows:true});
+    await writer.query('ROLLBACK');
+    console.log(JSON.stringify({status:'PASS',db:'isolated PostgreSQL 16',sourceRowShareLock:true,
+      businessReassignmentWaited:true,changedOwnershipDenied:true,persistedReceipts:false}));
+  }finally{
+    await changer.query('ROLLBACK').catch(()=>{});
+    await writer.query('ROLLBACK').catch(()=>{});
+    if(pending)await pending.catch(()=>{});
+    await observer.query('DROP TABLE IF EXISTS inventory_purchases').catch(()=>{});
+    writer.release();changer.release();observer.release();await pool.end();
+  }
+});
