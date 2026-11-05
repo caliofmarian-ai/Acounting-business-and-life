@@ -60,6 +60,13 @@ export function estimatedPreparedRemovalCost(components,quantity){
     const perPortion=scaled(component.recipe_quantity,4,'Recipe quantity');
     const unitCost=scaled(component.unit_cost,6,'Inventory unit cost');
     if(perPortion<=0n)throw new RangeError('Recipe quantity must be positive.');
+    // Canonical inventory.quantity is NUMERIC(12,3); PostgreSQL rounds
+    // sub-milli debits to zero, while removal evidence allows 6dp.
+    // 4dp recipe x 4dp portions = 8dp; 0.001 = 100000 at that scale.
+    if((perPortion*portions)%100000n!==0n){
+      throw Object.assign(new RangeError('Recipe ingredient quantity cannot be deducted exactly from Inventory stock. Adjust the recipe or portion quantity.'),
+        {status:409,code:'PREPARED_REMOVAL_STOCK_PRECISION'});
+    }
     exact+=perPortion*unitCost*portions;
   }
   // Exact amount is in 10^-14 PHP; positive half-cent rounds up once.

@@ -34,7 +34,7 @@ test('removal cost rounds exact half-cent boundaries without binary-float unders
   assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:1,unit_cost:2.135}],1),2.14);
   assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:1,unit_cost:4.015}],1),4.02);
   assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:1,unit_cost:0.005},{recipe_quantity:1,unit_cost:0.005}],1),0.01);
-  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:'0.3333',unit_cost:'1.000000'}],3),1);
+  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:'0.3330',unit_cost:'1.000000'}],3),1);
 });
 test('prepared removal cost refuses corrupt precision, non-decimal inputs and DB amount overflow',()=>{
   for(const [parts,amount] of [
@@ -71,4 +71,23 @@ test('non-sale stock write rejects coerced identity, reasons and fractional amou
   assert.equal(valid.quantity,0.0001);
   assert.equal(parsePreparedRemoval({...example,quantity:'2.0000'},12).quantity,2);
   assert.equal(parsePreparedRemoval(example,12).quantity,2);
+});
+
+test('ingredient consumption matches the canonical three-decimal physical stock scale',()=>{
+  for(const [recipeQuantity,portions] of [
+    ['0.0001',1], // A positive historic write rounded inventory stock back to zero.
+    ['0.3333',3], // Unrepresentable eight-decimal recipe product.
+    ['1.0000','0.0001'],
+    ['0.0005',1]
+  ])assert.throws(
+    ()=>estimatedPreparedRemovalCost([{recipe_quantity:recipeQuantity,unit_cost:'1.000000'}],portions),
+    error=>error?.status===409&&error?.code==='PREPARED_REMOVAL_STOCK_PRECISION'
+  );
+  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:'0.0005',unit_cost:'1.000000'}],2),0);
+  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:'0.3330',unit_cost:'1.000000'}],3),1);
+  assert.equal(estimatedPreparedRemovalCost([{recipe_quantity:1,unit_cost:68.42}],2),136.84);
+  assert.throws(()=>estimatedPreparedRemovalCost([
+    {recipe_quantity:'0.2500',unit_cost:'1.000000'},
+    {recipe_quantity:'0.0001',unit_cost:'2.000000'}
+  ],1),error=>error?.status===409);
 });
