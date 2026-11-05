@@ -310,3 +310,68 @@ test('no authority verifier fails closed without BEGIN; denied locked origin can
   e=>e.code==='INVENTORY_PURCHASE_INTENT_FORBIDDEN'&&e.status===403);
   assert.deepEqual(events,['BEGIN','claim','lock','deny','ROLLBACK']);
 });
+
+test('lost COMMIT acknowledgement is explicitly unknown; same-key reconciliation replays without a second purchase',async()=>{
+  const events=[];let staged=null,committed=null,creationCalls=0,loseAcknowledgement=true;
+  const lostAck=new Error('synthetic PostgreSQL transport loss after COMMIT');
+  const client={async query(sql,args){
+    if(sql==='BEGIN'){events.push('BEGIN');return{rowCount:0,rows:[]};}
+    if(sql==='ROLLBACK'){
+      events.push('ROLLBACK');
+      staged=null; // Cannot undo an earlier durable COMMIT.
+      return{rowCount:0,rows:[]};
+    }
+    if(sql==='COMMIT'){
+      events.push('COMMIT');
+      if(loseAcknowledgement){
+        committed=staged;staged=null;loseAcknowledgement=false;
+        throw lostAck; // Server committed, caller did not get acknowledgement.
+      }
+      return{rowCount:0,rows:[]};
+    }
+    if(sql.includes('INSERT INTO inventory_purchase_intents')){
+      events.push('claim');
+      if(committed)return{rowCount:0,rows:[]};
+      staged={payload_sha256:args[3],purchase_id:null,response_json:null};
+      return{rowCount:1,rows:[{intent_key:args[2]}]};
+    }
+    if(sql.includes('SELECT payload_sha256,purchase_id,response_json')){
+      events.push('replay');return{rowCount:1,rows:[committed]};
+    }
+    if(sql.includes('pg_advisory_xact_lock')){
+      events.push('lock');return{rowCount:1,rows:[]};
+    }
+    if(sql.includes('UPDATE inventory_purchase_intents')){
+      events.push('finish');
+      staged.purchase_id=args[3];staged.response_json=JSON.parse(args[4]);
+      return{rowCount:1,rows:[{purchase_id:args[3]}]};
+    }
+    throw Error('Unexpected SQL in uncertain-COMMIT regression');
+  }};
+  const opts={businessId:1,accountId:2,intentKey:key,payload,
+    verifyCurrentMerchantAuthority:async(_client,{stage})=>{
+      events.push('authorize:'+stage);return true;
+    }};
+  const createPurchase=async()=>{
+    creationCalls++;
+    return{purchaseId:73,response:{purchase:{id:73},lot:{id:85},expense:{total:'2.75'}}};
+  };
+  await assert.rejects(executeInventoryPurchaseIntent(client,opts,createPurchase),error=>{
+    assert.equal(error.code,'INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN');
+    assert.equal(error.status,503);
+    assert.equal(error.cause,lostAck);
+    assert.match(error.message,/outcome is unknown/i);
+    return true;
+  });
+  assert.equal(creationCalls,1);
+  assert.equal(committed.purchase_id,'73','COMMIT might have persisted economic effects');
+  assert.deepEqual(events.slice(-3),['authorize:before-commit','COMMIT','ROLLBACK']);
+  const replay=await executeInventoryPurchaseIntent(client,opts,async()=>{
+    throw Error('Reconciliation must not create a duplicate purchase');
+  });
+  assert.equal(replay.kind,'replay');
+  assert.equal(replay.purchaseId,'73');
+  assert.equal(replay.response.expense.total,'2.75');
+  assert.equal(creationCalls,1);
+  assert.deepEqual(events.slice(-5),['BEGIN','claim','replay','authorize:replay','COMMIT']);
+});

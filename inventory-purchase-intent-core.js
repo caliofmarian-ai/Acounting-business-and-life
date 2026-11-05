@@ -281,7 +281,7 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
 // stock/lot/purchase/expense/reconciliation query inside createPurchase.
 // Neither createPurchase nor its callees may issue BEGIN/COMMIT/ROLLBACK or use
 // pool.query: a purchase intent and its financial effects are one transaction.
-// On an uncertain COMMIT/network outcome, retry the SAME key; never auto-repost.
+// On an uncertain COMMIT/network outcome, the HTTP caller must reconcile the\n// SAME key; never treat the exception as proof of rollback or auto-repost.
 export async function executeInventoryPurchaseIntent(client,options,createPurchase){
   if(!client||typeof client.query!=='function')throw bad('A transactional database client is required');
   if(typeof createPurchase!=='function')throw bad('A transactional purchase callback is required');
@@ -309,6 +309,7 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
     }
   };
   let started=false;
+  let newPurchaseCommitAttempted=false;
   try{
     await client.query('BEGIN');
     started=true;
@@ -329,7 +330,11 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
       ...context,purchaseId:created.purchaseId,response:created.response
     });
     await assertAuthorized('before-commit');
+    // Once COMMIT is sent, an exception cannot prove whether stock, lots and
+    // expense were committed. Explicitly mark this outcome as indeterminate.
+    newPurchaseCommitAttempted=true;
     await client.query('COMMIT');
+    newPurchaseCommitAttempted=false;
     started=false;
     return {kind:'new',purchaseId:String(created.purchaseId),response};
   }catch(error){
@@ -337,6 +342,15 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
       // Preserve the original failure for the caller and avoid retrying effects.
       // If the connection is lost, the owning HTTP layer must discard it.
       await client.query('ROLLBACK').catch(()=>{});
+    }
+    if(newPurchaseCommitAttempted){
+      // ROLLBACK after a lost COMMIT acknowledgement may be a no-op: the
+      // original intent and financial effects might already be durable.
+      // Do not collapse this into an ordinary purchase failure or auto-retry.
+      const uncertain=bad('Purchase commit outcome is unknown; reconcile the original intent key before another attempt',
+        'INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN',503);
+      uncertain.cause=error;
+      throw uncertain;
     }
     throw error;
   }
