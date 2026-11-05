@@ -178,3 +178,21 @@ test('Philippines date fallback and explicit receipt date',()=>{
   assert.ok(d.issueDate===prior||d.issueDate===next,'fallback must be the current Philippines calendar day');
   assert.equal(normalizeMerchantPurchaseDocument(base()).issueDate,'2026-10-30');
 });
+
+test('malformed supplied purchase associations and evidence metadata fail closed',()=>{
+  const expected=normalizeMerchantPurchaseDocument(base());
+  assert.equal(expected.links.length,2);
+  assert.deepEqual(normalizeMerchantPurchaseDocument({...base(),links:null}).links,[]);
+  assert.deepEqual(normalizeMerchantPurchaseDocument({...base(),links:[]}).links,[]);
+  for(const links of [false,true,0,12,'inventory_purchase:101',{kind:'inventory_purchase',id:101}]){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),links}),/Purchase links must be an array/);
+  }
+  for(const data_url of [false,true,123,[],{}]){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),data_url}),/Evidence data must be a string/);
+  }
+  for(const file_name of [false,true,123,[],{}]){
+    assert.throws(()=>normalizeMerchantPurchaseDocument({...base(),file_name}),/File name must be a string/);
+  }
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),data_url:null,file_name:null}).dataUrl,'');
+  assert.equal(normalizeMerchantPurchaseDocument({...base(),file_name:'invoice.pdf',data_url:'data:application/pdf;base64,JVBERi0xLjQK'}).fileName,'invoice.pdf');
+});

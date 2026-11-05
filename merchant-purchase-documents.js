@@ -62,7 +62,9 @@ export function normalizeMerchantPurchaseDocument(input={}){
   if(amountText!==null&&!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(amountText))throw error(400,'Invalid document amount');
   const amount=amountText===null?null:Number(amountText);
   if(amount!==null&&(!Number.isFinite(amount)||amount>=1e12))throw error(400,'Invalid document amount');
-  const links=Array.isArray(input.links)?input.links:[];
+  // A malformed supplied association must not be silently dropped and then sealed by the intent key.
+  if(input.links!=null&&!Array.isArray(input.links))throw error(400,'Purchase links must be an array');
+  const links=input.links??[];
   if(links.length>100)throw error(400,'A document can link at most 100 purchase records');
   const unique=new Set();
   const normalizedLinks=links.map(item=>{
@@ -73,6 +75,9 @@ export function normalizeMerchantPurchaseDocument(input={}){
     unique.add(key);
     return{kind,id};
   });
+  // Do not coerce supplied evidence metadata (e.g. [] to '') into an apparently attachment-free receipt.
+  if(input.data_url!=null&&typeof input.data_url!=='string')throw error(400,'Evidence data must be a string');
+  if(input.file_name!=null&&typeof input.file_name!=='string')throw error(400,'File name must be a string');
   const dataUrl=clean(input.data_url,9*1024*1024);
   const fileName=clean(input.file_name,220);
   if(dataUrl&&!fileName)throw error(400,'File name is required for uploaded evidence');
