@@ -51,7 +51,10 @@ const CENTS=value=>Math.round((Number(value)+Number.EPSILON)*100)/100;
 // evidence must not silently round fractions of a peso or accept exponent/radix
 // shorthand. Null means invalid/unverified, never a confirmed zero.
 export function parsePhpMoney(value){
-  const raw=String(value??'').trim();
+  // Typed form/CSV decimal only: arrays and custom toString objects must not
+  // become approved money evidence through JavaScript implicit coercion.
+  if(typeof value!=='string'&&(typeof value!=='number'||!Number.isFinite(value)))return null;
+  const raw=String(value).trim();
   if(!/^(?:0|[1-9]\d{0,8})(?:\.\d{1,2})?$/.test(raw))return null;
   const [whole,fraction='']=raw.split('.');
   const centavos=BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0')||'0');
@@ -59,7 +62,8 @@ export function parsePhpMoney(value){
   return Number(centavos)/100;
 }
 export function parseStockQuantity(value){
-  const raw=String(value??'').trim();
+  if(typeof value!=='string'&&(typeof value!=='number'||!Number.isFinite(value)))return null;
+  const raw=String(value).trim();
   if(!/^(?:0|[1-9]\d{0,6})(?:\.\d{1,4})?$/.test(raw))return null;
   const [whole,fraction='']=raw.split('.');
   const tenThousandths=BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0')||'0');
@@ -207,10 +211,12 @@ export function parseStockIntakeCsv(text){
 export function validStockIntakeRow(row){
   return Boolean(row&&stockIntakeClassification(row.classificationCode)&&row.item&&row.item.length<=100&&
     Number.isFinite(row.quantity)&&row.quantity>0&&row.quantity<=1000000&&
-    Math.abs(row.quantity*10000-Math.round(row.quantity*10000))<1e-6&&
+    // A stale/mutated review object must never bypass the exact 4dp/cent
+    // parsers through an epsilon tolerance before a real stock+Money POST.
+    parseStockQuantity(String(row.quantity))===row.quantity&&
     SUPPORTED_UNITS.has(row.unit)&&Number.isFinite(row.total)&&
     row.total>0&&row.total<=100000000&&
-    Math.abs(row.total*100-Math.round(row.total*100))<1e-6&&
+    parsePhpMoney(String(row.total))===row.total&&
     (!row.requiresReview||row.reviewConfirmed)&&
     !row.exists&&row.result==='pending');
 }

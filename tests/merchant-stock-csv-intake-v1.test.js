@@ -563,3 +563,24 @@ test('actual CSV purchase includes reviewed origin and secure per-row intent but
   assert.match(handler,/row\.result='uncertain'/);
   assert.match(js,/delete row\.purchaseIntentKey/);
 });
+
+test('defensive paid stock row guard rejects sub-unit mutations and implicit object coercion',()=>{
+  // An imported CSV starts from strict decimals; a later review-object mutation
+  // must never be allowed to silently round stock or Money at posting time.
+  const row=parseStockIntakeCsv(example)[0];
+  row.classificationCode='food_ingredient';
+  row.reviewConfirmed=true;
+  assert.equal(validStockIntakeRow(row),true,'existing reviewed physical stock remains valid');
+  assert.equal(validStockIntakeRow({...row,quantity:3.0000000001}),false,
+    'sub-4dp quantities previously passed the epsilon validation');
+  assert.equal(validStockIntakeRow({...row,total:345.000000001}),false,
+    'sub-cent money amounts previously passed the epsilon validation');
+  for(const value of [[12.5],{toString:()=> '12.50'},true,false,new Number(12.5),null]){
+    assert.equal(parsePhpMoney(value),null,'non-scalar paid totals cannot be coerced');
+    assert.equal(parseStockQuantity(value),null,'non-scalar physical quantities cannot be coerced');
+  }
+  assert.equal(parsePhpMoney('12.50'),12.5);
+  assert.equal(parseStockQuantity('3.0000'),3);
+  assert.equal(parsePhpMoney(12.5),12.5);
+  assert.equal(parseStockQuantity(3),3);
+});
