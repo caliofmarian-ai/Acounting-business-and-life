@@ -321,8 +321,21 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
     intentKey:literalKey(options?.intentKey),
     payload:options?.payload
   };
-  // Reject malformed request context before BEGIN; no partial write is possible.
-  inventoryPurchaseFingerprint(context.payload);
+  // Hash the exact initiating instructions BEFORE the first asynchronous gap.
+  // A caller may otherwise mutate a shared request body while BEGIN, business
+  // locking, authorization or purchase writes are awaiting PostgreSQL. That
+  // would commit different stock/expense data under the original fingerprint.
+  const initiatingFingerprint=inventoryPurchaseFingerprint(context.payload);
+  const assertInstructionsUnchanged=()=>{
+    let current;
+    try{current=inventoryPurchaseFingerprint(context.payload)}
+    catch{throw bad('Purchase instructions changed during receiving',
+      'INVENTORY_PURCHASE_INTENT_CONFLICT',409)}
+    if(current!==initiatingFingerprint){
+      throw bad('Purchase instructions changed during receiving',
+        'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+    }
+  };
   const verifyCurrent=options?.verifyCurrentMerchantAuthority;
   if(typeof verifyCurrent!=='function'){
     throw bad('A current origin-bound Merchant authority verifier is required',
@@ -343,16 +356,21 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
   try{
     await client.query('BEGIN');
     started=true;
+    assertInstructionsUnchanged();
     const claim=await claimInventoryPurchaseIntent(client,context);
     if(claim.kind==='replay'){
       await assertAuthorized('replay');
+      assertInstructionsUnchanged();
       await client.query('COMMIT');
       started=false;
       return claim; // No purchase callback, inventory delta, lot or second expense.
     }
     await lockInventoryPurchaseBusiness(client,context.businessId);
+    assertInstructionsUnchanged();
     await assertAuthorized('before-write');
+    assertInstructionsUnchanged();
     const created=await createPurchase(client);
+    assertInstructionsUnchanged();
     if(!created||typeof created!=='object'||Array.isArray(created)){
       throw bad('The purchase callback must return a committed response and purchase ID');
     }
@@ -360,6 +378,7 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
       ...context,purchaseId:created.purchaseId,response:created.response
     });
     await assertAuthorized('before-commit');
+    assertInstructionsUnchanged();
     // Once COMMIT is sent, an exception cannot prove whether stock, lots and
     // expense were committed. Explicitly mark this outcome as indeterminate.
     newPurchaseCommitAttempted=true;

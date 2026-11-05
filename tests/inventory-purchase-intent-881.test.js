@@ -449,3 +449,75 @@ test('unverified or malformed inspection never begins a database transaction',as
   }),e=>e.status===400);
   assert.equal(queries,0);
 });
+
+test('transaction coordinator refuses in-flight purchase-body changes at every async boundary',async()=>{
+  // Deterministic simulated asynchronous mutation of a shared request body.
+  // The old coordinator permitted new work after a changed lock result and
+  // could COMMIT financial effects no longer matching its reserved fingerprint.
+  for(const phase of ['begin','lock','authorization','callback','before-commit','replay']){
+    const body={...payload};
+    const originalHash=inventoryPurchaseFingerprint(body);
+    const events=[];
+    let callbackRuns=0;
+    const change=()=>{body.total_cost='900.00'};
+    const replay=phase==='replay';
+    const db={async query(sql){
+      if(sql==='BEGIN'){
+        events.push('BEGIN');
+        if(phase==='begin')change();
+        return{rowCount:0,rows:[]};
+      }
+      if(sql==='ROLLBACK'||sql==='COMMIT'){
+        events.push(sql);return{rowCount:0,rows:[]};
+      }
+      if(sql.includes('INSERT INTO inventory_purchase_intents')){
+        events.push('claim');
+        return replay?{rowCount:0,rows:[]}:
+          {rowCount:1,rows:[{intent_key:key}]};
+      }
+      if(sql.includes('SELECT payload_sha256,purchase_id,response_json')){
+        events.push('replay-row');
+        return{rowCount:1,rows:[{
+          payload_sha256:originalHash,purchase_id:'42',response_json:{purchase:{id:42}}
+        }]};
+      }
+      if(sql.includes('pg_advisory_xact_lock')){
+        events.push('lock');
+        if(phase==='lock')change();
+        return{rowCount:1,rows:[]};
+      }
+      if(sql.includes('UPDATE inventory_purchase_intents')){
+        events.push('finish');
+        return{rowCount:1,rows:[{purchase_id:'42'}]};
+      }
+      throw new Error('Unexpected purchase SQL');
+    }};
+    const opts={
+      businessId:1,accountId:2,intentKey:key,payload:body,
+      verifyCurrentMerchantAuthority:async(_db,ctx)=>{
+        events.push('authorize:'+ctx.stage);
+        if((phase==='authorization'&&ctx.stage==='before-write')||
+           (phase==='before-commit'&&ctx.stage==='before-commit')||
+           (phase==='replay'&&ctx.stage==='replay'))change();
+        return true;
+      }
+    };
+    await assert.rejects(
+      executeInventoryPurchaseIntent(db,opts,async()=>{
+        callbackRuns++;events.push('purchase');
+        if(phase==='callback')change();
+        return{purchaseId:42,response:{purchase:{id:42},expense:{total:'12.50'}}};
+      }),
+      error=>error.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&error.status===409,
+      'changed instructions must fail closed: '+phase
+    );
+    assert.equal(events.at(-1),'ROLLBACK','transaction rolled back: '+phase);
+    assert.ok(!events.includes('COMMIT'),'never committed changed instructions: '+phase);
+    assert.equal(callbackRuns,['callback','before-commit'].includes(phase)?1:0,
+      'no unauthorized purchase callback: '+phase);
+    if(phase==='begin')assert.ok(!events.includes('claim'),
+      'mutated body cannot reserve a fingerprint after BEGIN');
+    if(phase==='callback')assert.ok(!events.includes('finish'),
+      'mutated post-write body cannot finalize reservation');
+  }
+});
