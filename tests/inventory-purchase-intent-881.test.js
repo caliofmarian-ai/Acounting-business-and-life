@@ -48,6 +48,29 @@ test('invalid key, identity or payload never reaches PostgreSQL',async()=>{
   for(const invalid of [0,-1,1.23,Number.MAX_SAFE_INTEGER+1,'0','1.2','9999999999999999999999']){
     await assert.rejects(claimInventoryPurchaseIntent(noDb,{businessId:invalid,accountId:2,intentKey:key,payload}),e=>e.status===400);
   }
+  // Economic identifiers are literal: no array/object/wrapper String coercion.
+  const coerced=[true,false,[1],{toString:()=> '1'},new Number(1),new String('1'),
+    {toString(){throw Error('Identity toString must not execute')}}];
+  for(const invalid of coerced){
+    await assert.rejects(claimInventoryPurchaseIntent(noDb,{
+      businessId:invalid,accountId:2,intentKey:key,payload
+    }),e=>e.status===400);
+    await assert.rejects(claimInventoryPurchaseIntent(noDb,{
+      businessId:1,accountId:invalid,intentKey:key,payload
+    }),e=>e.status===400);
+    await assert.rejects(lockInventoryPurchaseBusiness(noDb,invalid),e=>e.status===400);
+    await assert.rejects(executeInventoryPurchaseIntent(noDb,{
+      businessId:invalid,accountId:2,intentKey:key,payload,
+      verifyCurrentMerchantAuthority:async()=>true
+    },async()=>({purchaseId:1,response:{purchase:{id:1}}})),e=>e.status===400);
+  }
+  // Genuine PostgreSQL BIGINT identifiers remain accepted.
+  assert.equal((await claimInventoryPurchaseIntent({
+    async query(sql,args){
+      assert.equal(args[0],'1');assert.equal(args[1],'2');
+      return{rowCount:1,rows:[{intent_key:key}]};
+    }
+  },{businessId:1n,accountId:2n,intentKey:key,payload})).kind,'new');
   let deep={leaf:1};for(let i=0;i<18;i++)deep={a:deep};
   for(const invalid of [null,[],{item:Infinity},{item:undefined},{item:()=>1},deep]){
     assert.throws(()=>inventoryPurchaseFingerprint(invalid),e=>e.status===400);
@@ -111,7 +134,8 @@ test('finish binds the purchase row to the same authorized business',async()=>{
 test('a mismatched purchase response cannot be persisted or replayed',async()=>{
   const blockSql={query(){throw new Error('Unexpected SQL: invalid response must fail first')}};
   const ctx={businessId:1,accountId:2,intentKey:key,purchaseId:44};
-  for(const response of [{},{purchase:{}},{purchase:{id:45}},{purchase:{id:0}},{purchase:{id:44.5}},{purchase:[]}]){
+  for(const response of [{},{purchase:{}},{purchase:{id:45}},{purchase:{id:0}},{purchase:{id:44.5}},
+    {purchase:{id:[44]}},{purchase:{id:{toString:()=> '44'}}},{purchase:[]}]){
     await assert.rejects(finishInventoryPurchaseIntent(blockSql,{...ctx,response}),
       error=>error.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&error.status===409);
   }

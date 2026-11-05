@@ -65,6 +65,12 @@ const bad=(message,code='INVENTORY_PURCHASE_INTENT_INVALID',status=400)=>
   Object.assign(new Error(message),{code,status});
 const MAX_BIGINT=9223372036854775807n;
 function dbId(value,label){
+  // Reject arrays, wrappers, booleans and objects as Merchant/account/purchase
+  // identities rather than coercing them through String() (e.g. [1] => "1").
+  // Genuine bigint IDs are supported within PostgreSQL signed BIGINT bounds.
+  if(typeof value!=='string'&&typeof value!=='number'&&typeof value!=='bigint'){
+    throw bad(`${label} must be a literal database identifier`);
+  }
   if(typeof value==='number'&&!Number.isSafeInteger(value))throw bad(`${label} must be a safe database identifier`);
   const s=String(value);
   if(!/^[1-9][0-9]{0,18}$/.test(s)||BigInt(s)>MAX_BIGINT)throw bad(`${label} must be a positive database identifier`);
