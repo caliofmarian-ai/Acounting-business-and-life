@@ -184,8 +184,29 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
     [record.businessId,record.key]
   );
   if(existing.rowCount){
-    if(existing.rows[0].request_fingerprint!==fingerprint)throw error(409,'This request key already belongs to a different receipt');
-    return{document:shape(existing.rows[0]),already_saved:true};
+    // The initial HTTP Merchant check may have happened before a concurrent grant
+    // revocation. A replay also returns private document metadata: re-authorize
+    // under a transaction-held grant lock, not just the initial unlocked lookup.
+    let replayClient=null;
+    try{
+      replayClient=await pool.connect();
+      await replayClient.query('BEGIN');
+      await lockMerchantDocumentWriteAuthority(replayClient,actorAccountId,record.businessId);
+      const current=await replayClient.query(
+        'SELECT * FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',
+        [record.businessId,record.key]
+      );
+      if(current.rowCount){
+        if(current.rows[0].request_fingerprint!==fingerprint)throw error(409,'This request key already belongs to a different receipt');
+        await replayClient.query('COMMIT');
+        return{document:shape(current.rows[0]),already_saved:true};
+      }
+      // If the preliminary record disappeared, use the normal, guarded create path.
+      await replayClient.query('COMMIT');
+    }catch(e){
+      if(replayClient)await replayClient.query('ROLLBACK').catch(()=>{});
+      throw e;
+    }finally{replayClient?.release()}
   }
 
   await validatePurchaseLinks(pool,record.businessId,record.links);

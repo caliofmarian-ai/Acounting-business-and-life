@@ -155,17 +155,67 @@ test('replayed identical request returns existing evidence without adding stock,
     document_number:'',issue_date:'2026-10-30',currency_code:'PHP',
     gross_amount:'145.25',note:'',private_evidence_object_id:null
   };
-  let queries=0;
-  const pool={query:async(sql,params)=>{
-    queries++;
-    assert.match(sql,/SELECT \* FROM merchant_purchase_documents/);
-    assert.deepEqual(params,[14,record.key]);
-    return{rowCount:1,rows:[row]};
-  }};
+  const calls=[];
+  const pool={
+    query:async(sql,params)=>{
+      calls.push('precheck');
+      assert.match(sql,/SELECT \* FROM merchant_purchase_documents/);
+      assert.deepEqual(params,[14,record.key]);
+      return{rowCount:1,rows:[row]};
+    },
+    connect:async()=>({
+      query:async(sql,params)=>{
+        if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK'){
+          calls.push(sql);return{rowCount:0,rows:[]};
+        }
+        if(sql.includes('FROM profile_business_bindings')){
+          calls.push('grant');
+          assert.match(sql,/FOR SHARE OF pb,bm/);
+          assert.deepEqual(params,[9,14]);
+          return{rowCount:1,rows:[{business_id:14}]};
+        }
+        assert.match(sql,/SELECT \* FROM merchant_purchase_documents/);
+        calls.push('replay');
+        assert.deepEqual(params,[14,record.key]);
+        return{rowCount:1,rows:[row]};
+      },
+      release:()=>calls.push('release')
+    })
+  };
   const result=await merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{actorAccountId:9,record});
   assert.equal(result.already_saved,true);
   assert.equal(result.document.id,23);
-  assert.equal(queries,1);
+  assert.deepEqual(calls,['precheck','BEGIN','grant','replay','COMMIT','release']);
+});
+
+test('replayed purchase receipt fails closed when Merchant grant was revoked after HTTP authorization',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const record=normalizeMerchantPurchaseDocument({...base(),links:[]});
+  const calls=[];
+  const pool={
+    query:async(sql)=>{
+      assert.match(sql,/SELECT \* FROM merchant_purchase_documents/);
+      calls.push('precheck');
+      return{rowCount:1,rows:[{id:23}]};
+    },
+    connect:async()=>({
+      query:async(sql,params)=>{
+        if(sql==='BEGIN'||sql==='ROLLBACK'||sql==='COMMIT'){
+          calls.push(sql);return{rowCount:0,rows:[]};
+        }
+        assert.match(sql,/FOR SHARE OF pb,bm/);
+        assert.deepEqual(params,[9,14]);
+        calls.push('revoked-grant');
+        return{rowCount:0,rows:[]};
+      },
+      release:()=>calls.push('release')
+    })
+  };
+  await assert.rejects(
+    ()=>merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{actorAccountId:9,record}),
+    e=>e.status===403&&/access changed/.test(e.message)
+  );
+  assert.deepEqual(calls,['precheck','BEGIN','revoked-grant','ROLLBACK','release']);
 });
 
 test('Philippines date fallback and explicit receipt date',()=>{
