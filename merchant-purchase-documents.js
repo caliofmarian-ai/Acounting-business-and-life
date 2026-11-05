@@ -186,12 +186,19 @@ async function lockMerchantDocumentWriteAuthority(db,actorAccountId,businessId){
 }
 
 async function savePurchaseDocument(pool,{actorAccountId,record}){
-  const fingerprint=crypto.createHash('sha256').update(JSON.stringify({
+  const fingerprintForLinks=links=>crypto.createHash('sha256').update(JSON.stringify({
     kind:record.kind,issueDate:record.issueDate,currency:record.currency,amount:record.amount,
     issuer:record.issuer,number:record.documentNumber,note:record.note,
-    links:record.links,fileName:record.fileName,
+    links,fileName:record.fileName,
     fileDigest:record.dataUrl?crypto.createHash('sha256').update(record.dataUrl).digest('hex'):''
   })).digest('hex');
+  // Linked records are a set, not a display-ordered sequence. Preserve the
+  // original-order fingerprint for backwards-compatible exact replay of old rows.
+  const canonicalLinks=[...record.links].sort((a,b)=>
+    a.kind===b.kind?a.id-b.id:(a.kind<b.kind?-1:1));
+  const fingerprint=fingerprintForLinks(canonicalLinks);
+  const legacyFingerprint=fingerprintForLinks(record.links);
+  const sameReceiptFingerprint=saved=>saved===fingerprint||saved===legacyFingerprint;
   const existing=await pool.query(
     'SELECT * FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',
     [record.businessId,record.key]
@@ -210,7 +217,7 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
         [record.businessId,record.key]
       );
       if(current.rowCount){
-        if(current.rows[0].request_fingerprint!==fingerprint)throw error(409,'This request key already belongs to a different receipt');
+        if(!sameReceiptFingerprint(current.rows[0].request_fingerprint))throw error(409,'This request key already belongs to a different receipt');
         await replayClient.query('COMMIT');
         return{document:shape(current.rows[0]),already_saved:true};
       }
@@ -259,7 +266,7 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
         'SELECT * FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',
         [record.businessId,record.key]
       );
-      if(saved.rows[0]?.request_fingerprint!==fingerprint)throw error(409,'This request key already belongs to a different receipt');
+      if(!sameReceiptFingerprint(saved.rows[0]?.request_fingerprint))throw error(409,'This request key already belongs to a different receipt');
       await client.query('COMMIT');
       if(evidence)await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'duplicate_upload_cleanup'});
       return{document:shape(saved.rows[0]),already_saved:true};

@@ -188,6 +188,59 @@ test('replayed identical request returns existing evidence without adding stock,
   assert.deepEqual(calls,['precheck','BEGIN','grant','replay','COMMIT','release']);
 });
 
+
+test('purchase receipt link permutations replay once, but changed link sets fail closed; legacy key still replays',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const crypto=(await import('node:crypto')).default;
+  const reversed=normalizeMerchantPurchaseDocument({...base(),links:[...base().links].reverse()});
+  const sorted=normalizeMerchantPurchaseDocument(base());
+  let saved=null,insertions=0,linkWrites=0;
+  const query=async(sql,args=[])=>{
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0,rows:[]};
+    if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+    if(sql.includes('SELECT * FROM merchant_purchase_documents'))return{rowCount:saved?1:0,rows:saved?[saved]:[]};
+    if(sql.includes('SELECT 1 FROM inventory_purchases')){
+      assert.equal(args[1],14);
+      return{rowCount:1,rows:[{id:args[0]}]};
+    }
+    if(sql.includes('INSERT INTO merchant_purchase_documents(')){
+      insertions++;
+      saved={id:700,business_id:14,request_fingerprint:args[3],document_kind:args[4],
+        issuer_name:args[5],document_number:args[6],issue_date:args[7],
+        currency_code:args[8],gross_amount:args[9],note:args[10],private_evidence_object_id:null};
+      return{rowCount:1,rows:[saved]};
+    }
+    if(sql.includes('INSERT INTO merchant_purchase_document_links(')){
+      linkWrites++;return{rowCount:1,rows:[]};
+    }
+    throw new Error('Unexpected query: '+sql);
+  };
+  const pool={query,connect:async()=>({query,release(){}})};
+  const first=await merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{actorAccountId:9,record:reversed});
+  assert.equal(first.already_saved,false);
+  assert.equal(insertions,1);
+  assert.equal(linkWrites,2);
+  const replay=await merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{actorAccountId:9,record:sorted});
+  assert.equal(replay.already_saved,true);
+  assert.equal(replay.document.id,700);
+  assert.equal(insertions,1);
+  assert.equal(linkWrites,2);
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{
+    actorAccountId:9,record:normalizeMerchantPurchaseDocument({...base(),links:[base().links[0]]})
+  }),e=>e.status===409);
+  assert.equal(insertions,1);
+
+  // Rows written by the earlier algorithm hashed links in original input order.
+  saved.request_fingerprint=crypto.createHash('sha256').update(JSON.stringify({
+    kind:reversed.kind,issueDate:reversed.issueDate,currency:reversed.currency,amount:reversed.amount,
+    issuer:reversed.issuer,number:reversed.documentNumber,note:reversed.note,
+    links:reversed.links,fileName:reversed.fileName,fileDigest:''
+  })).digest('hex');
+  const legacy=await merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{actorAccountId:9,record:reversed});
+  assert.equal(legacy.already_saved,true);
+  assert.equal(insertions,1);
+});
+
 test('replayed purchase receipt fails closed when Merchant grant was revoked after HTTP authorization',async()=>{
   const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
   const record=normalizeMerchantPurchaseDocument({...base(),links:[]});
