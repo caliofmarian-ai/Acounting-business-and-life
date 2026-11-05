@@ -33,6 +33,33 @@ test('Merchant-recorded payment has separate commercial label, not automatic fis
   assert.match(msg.document_disclaimer,/not a BIR tax invoice/);
 });
 
+test('exact NUMERIC(12,2) cents survive high-value immutable order evidence',()=>{
+  const order=makeOrder();
+  const largeOrder=amount=>({
+    ...order,
+    subtotal:amount,delivery_fee:'0.00',total:amount,
+    paid_amount:amount,outstanding_amount:'0.00',
+    items:[{...order.items[0],quantity:'1',unit_price_snapshot:amount,line_total:amount}]
+  });
+  for(const amount of ['9900000003.03','9999999999.99',9900000003.03]){
+    const snapshot=commercialOrderDocument(largeOrder(amount));
+    assert.equal(snapshot.total,Number(amount));
+    assert.equal(snapshot.merchant_recorded_payment,Number(amount));
+    assert.equal(snapshot.items[0].line_total,Number(amount));
+    assert.match(salesDocumentPrintHtml(snapshot),/Total: PHP/);
+  }
+  const split=commercialOrderDocument({
+    ...largeOrder('9900000003.03'),
+    paid_amount:'9900000003.02',outstanding_amount:'0.01'
+  });
+  assert.equal(Math.round(split.merchant_recorded_payment*100)+Math.round(split.amount_due*100),
+    Math.round(split.total*100),'partial high-value payment stays balanced in integer cents');
+  for(const amount of ['10000000000.00','9900000003.031',[-1],true,'+9900000003.03']){
+    assert.throws(()=>commercialOrderDocument(largeOrder(amount)),
+      /monetary evidence is invalid/,'reject unrepresentable/invalid decimal '+String(amount));
+  }
+});
+
 test('Merchant completed an unpaid order: show order summary, never paid',()=>{
   const x=commercialOrderDocument({
     ...makeOrder(),payment_status:'unpaid',paid_amount:0,outstanding_amount:145

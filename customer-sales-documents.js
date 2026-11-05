@@ -18,8 +18,11 @@ const money=(value,label='Amount')=>{
   if(typeof value!=='number'&&typeof value!=='string')throw err(409,label+' monetary evidence is invalid');
   const raw=String(value);
   if(!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(raw))throw err(409,label+' monetary evidence is invalid');
-  const numeric=Number(raw),cents=Math.round(numeric*100);
-  if(!Number.isSafeInteger(cents)||cents<0||cents>999999999999||Math.abs(numeric*100-cents)>0.0001)
+  // NUMERIC(12,2) cents must be parsed as integers: multiplying a floating
+  // point amount by 100 can reject valid SQL decimal evidence near its limit.
+  const [whole,fraction='']=raw.split('.');
+  const cents=Number(whole)*100+Number(fraction.padEnd(2,'0'));
+  if(!Number.isSafeInteger(cents)||cents<0||cents>999999999999)
     throw err(409,label+' monetary evidence is invalid');
   return cents/100;
 };
