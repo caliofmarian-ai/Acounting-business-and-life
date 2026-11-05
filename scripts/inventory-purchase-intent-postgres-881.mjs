@@ -456,6 +456,41 @@ try{
     eq(Number(afterReplay[3].rows[0].quantity),lostAckBody.quantity,
       'recovery does not increment stock again');
 
+
+    // Negative control: the wrapper throws BEFORE it sends COMMIT to real PG.
+    // We know the disposable DB rolled back, but the HTTP caller must still
+    // fail closed as COMMIT_UNKNOWN because it cannot infer this over a wire.
+    const rejectedAckKey='91234567-0000-4000-9000-123456789012';
+    const rejectedAckBody={...payload,item:'Synthetic pre-commit fault 881'};
+    let refusedCommit=false,rejectedAckError=null;
+    const rejectedCommitClient={query:async(...args)=>{
+      if(args[0]==='COMMIT'){
+        refusedCommit=true;
+        throw Object.assign(new Error('Synthetic failure before COMMIT'),{code:'ECONNRESET'});
+      }
+      return a.query(...args);
+    }};
+    try{await post(rejectedCommitClient,101,rejectedAckKey,rejectedAckBody)}
+    catch(error){rejectedAckError=error}
+    eq(refusedCommit,true,'negative control intercepted COMMIT before PostgreSQL');
+    eq(rejectedAckError?.code,'INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN',
+      'unacknowledged pre-commit failure remains conservative');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+      [rejectedAckKey])).rows[0].n,0,
+      'actual PostgreSQL ROLLBACK erased uncommitted intent');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory WHERE business_id=$1 AND item=$2',
+      [101,rejectedAckBody.item])).rows[0].n,0,
+      'actual PostgreSQL ROLLBACK erased uncommitted stock');
+    const rejectedRecovered=await post(a,101,rejectedAckKey,rejectedAckBody);
+    eq(rejectedRecovered.kind,'new','rolled-back intent can safely post once with same key');
+    const rejectedReplay=await post(a,101,rejectedAckKey,rejectedAckBody);
+    eq(rejectedReplay.kind,'replay','second same-key call replays the newly durable purchase');
+    eq(String(rejectedReplay.response.purchase.id),
+      String(rejectedRecovered.response.purchase.id),
+      'rolled-back recovery and replay preserve one purchase ID');
+
     // Verify authorization at the actual lock boundary, not from a cached
     // HTTP session that may have been revoked while PostgreSQL was waiting.
     const revokedKey='61234567-0000-4000-9000-123456789012';
