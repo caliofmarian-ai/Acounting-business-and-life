@@ -41,6 +41,26 @@ test('fingerprint streams bounded canonical bytes without changing existing inte
     e=>e.status===400&&/data-only/.test(e.message));
 });
 
+test('fingerprint rejects non-enumerable economic instructions rather than silently omitting them',()=>{
+  const approved={...payload};
+  const baseline=inventoryPurchaseFingerprint(approved);
+  const hidden={...approved};
+  Object.defineProperty(hidden,'hidden_total_cost',{value:'300.00'});
+  assert.throws(()=>inventoryPurchaseFingerprint(hidden),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_INVALID'&&e.status===400);
+  const nested={...approved,lines:[{item:'Beans',cost:'12.50'}]};
+  const goodNested=inventoryPurchaseFingerprint(nested);
+  Object.defineProperty(nested.lines[0],'hidden_cost',{value:'900.00'});
+  assert.throws(()=>inventoryPurchaseFingerprint(nested),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_INVALID'&&e.status===400);
+  const decorated=[{item:'Beans'}];
+  Object.defineProperty(decorated,'hidden_account',{value:'gcash'});
+  assert.throws(()=>inventoryPurchaseFingerprint({...approved,lines:decorated}),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_INVALID'&&e.status===400);
+  assert.equal(inventoryPurchaseFingerprint(approved),baseline);
+  assert.equal(inventoryPurchaseFingerprint({...approved,lines:[{item:'Beans',cost:'12.50'}]}),goodNested);
+});
+
 test('invalid key, identity or payload never reaches PostgreSQL',async()=>{
   for(const invalid of [null,42,true,'','short',' padded-key-1234','padded-key-1234 ','has space 123456','a'.repeat(129),'a\u0000'.repeat(12)]){
     await assert.rejects(claimInventoryPurchaseIntent(noDb,{businessId:1,accountId:2,intentKey:invalid,payload}),e=>e.status===400);
@@ -195,6 +215,9 @@ test('response snapshot rejects silently dropped or nullified financial evidence
     {purchase:{id:44},expense:{total:undefined}},
     {purchase:{id:44},items:[1,,3]},
     {purchase:{id:44},expense:{total:1n}},
+    {purchase:{id:44},entries:Object.defineProperty([1],'hidden_total',{value:50})},
+    {purchase:{id:44},created_at:Object.assign(new Date('2026-11-05T00:00:00Z'),{hidden_total:99})},
+    {purchase:{id:44},created_at:Object.assign(new Date('2026-11-05T00:00:00Z'),{toJSON(){return 'tampered'}})},
     {purchase:{id:44},created_at:new Date(NaN)},
     {purchase:{id:44},expense:{toJSON(){return{total:1}}}},
     {purchase:{id:44},expense:Object.defineProperty({},'amount',{get(){throw Error('getter executed')},enumerable:true})}

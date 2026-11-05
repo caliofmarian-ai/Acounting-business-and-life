@@ -114,7 +114,12 @@ function requireLosslessPurchaseSnapshot(value,depth=0,ancestors=new WeakSet()){
   }
   if(typeof value!=='object')throw invalid();
   if(value instanceof Date){
-    if(!Number.isFinite(value.getTime()))throw invalid();
+    // Date.toJSON ignores own properties and may invoke a custom serializer:
+    // neither may silently change durable purchase evidence.
+    if(!Number.isFinite(value.getTime())||
+       Object.getPrototypeOf(value)!==Date.prototype||
+       Object.getOwnPropertyNames(value).length||
+       Object.getOwnPropertySymbols(value).length)throw invalid();
     return;
   }
   if(!Array.isArray(value)&&Object.getPrototypeOf(value)!==Object.prototype&&
@@ -122,7 +127,8 @@ function requireLosslessPurchaseSnapshot(value,depth=0,ancestors=new WeakSet()){
   if(ancestors.has(value)||Object.getOwnPropertySymbols(value).length||Object.hasOwn(value,'toJSON'))throw invalid();
   ancestors.add(value);
   if(Array.isArray(value)){
-    if(Object.keys(value).length!==value.length)throw invalid();
+    if(Object.keys(value).length!==value.length||
+       Object.getOwnPropertyNames(value).length!==value.length+1)throw invalid();
     for(let i=0;i<value.length;i++){
       const item=Object.getOwnPropertyDescriptor(value,String(i));
       if(!item||!Object.hasOwn(item,'value'))throw invalid();
@@ -163,7 +169,9 @@ function stableToHash(value,hash,budget,depth=0){
   if(Array.isArray(value)){
     // Sparse or decorated JS arrays are not JSON request arrays and could
     // otherwise omit an item or silently ignore a non-indexed instruction.
-    if(Object.keys(value).length!==value.length||Object.getOwnPropertySymbols(value).length){
+    if(Object.keys(value).length!==value.length||
+       Object.getOwnPropertyNames(value).length!==value.length+1||
+       Object.getOwnPropertySymbols(value).length){
       throw bad('Purchase payload arrays must contain JSON-only values');
     }
     write('[');
@@ -180,6 +188,11 @@ function stableToHash(value,hash,budget,depth=0){
     throw bad('Purchase payload must contain JSON-only values');
   }
   const keys=Object.keys(value).sort();
+  // Non-enumerable instructions vanish from JSON but must never vanish
+  // from an idempotency fingerprint while the caller still holds them.
+  if(Object.getOwnPropertyNames(value).length!==keys.length){
+    throw bad('Purchase payload must contain JSON-only data fields');
+  }
   write('{');
   for(let i=0;i<keys.length;i++){
     const key=keys[i],entry=Object.getOwnPropertyDescriptor(value,key);
