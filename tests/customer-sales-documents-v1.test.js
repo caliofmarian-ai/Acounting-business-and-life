@@ -3,8 +3,65 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
   commercialOrderDocument,orderDocumentDigest,salesDocumentMessage,salesDocumentPrintHtml,
-  privateCustomerSalesDocumentResponse,registerCustomerSalesDocumentRoutes,customerSalesDocumentInternals
+  privateCustomerSalesDocumentResponse,registerCustomerSalesDocumentRoutes,customerSalesDocumentInternals,
+  readConsistentOrderForDocument
 } from '../customer-sales-documents.js';
+
+
+test('immutable sales document reads one read-only repeatable-read PostgreSQL snapshot',async()=>{
+  const calls=[];
+  let released=0,poolReads=0,liveRevision='before';
+  const historicalOrder=makeOrder();
+  const client={
+    async query(sql){
+      calls.push(sql);
+      if(sql.startsWith('BEGIN TRANSACTION'))return{rowCount:0,rows:[]};
+      if(sql==='COMMIT')return{rowCount:0,rows:[]};
+      if(sql.includes('FROM orders o JOIN businesses')){
+        liveRevision='after';
+        return{rowCount:1,rows:[{...historicalOrder}]};
+      }
+      if(sql.includes('FROM order_items'))return{rowCount:1,rows:historicalOrder.items};
+      if(sql.includes('FROM order_payments'))return{rowCount:0,rows:[]};
+      if(sql.includes('FROM order_status_events'))return{rowCount:0,rows:[]};
+      throw Error('Unexpected SQL in immutable read: '+sql);
+    },
+    release(){released++}
+  };
+  const pool={
+    connect:async()=>client,
+    async query(){poolReads++;throw Error('Split pool query is forbidden for immutable evidence')}
+  };
+  const detail=await readConsistentOrderForDocument(pool,123);
+  assert.equal(liveRevision,'after','the fixture represents a concurrent newer revision');
+  assert.equal(detail.total,historicalOrder.total);
+  assert.equal(detail.items[0].name_snapshot,'Bread & eggs');
+  assert.equal(commercialOrderDocument(detail).total,145);
+  assert.equal(calls[0],'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  assert.equal(calls.at(-1),'COMMIT');
+  assert.equal(calls.filter(x=>x.startsWith('SELECT')).length,4);
+  assert.equal(poolReads,0,'all order/line/payment/status SELECTs use one transaction client');
+  assert.equal(released,1);
+});
+
+test('failed immutable order read rolls back and releases its dedicated client',async()=>{
+  const calls=[];let releases=0;
+  const client={
+    async query(sql){
+      calls.push(sql);
+      if(sql==='BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'||sql==='ROLLBACK')
+        return{rowCount:0,rows:[]};
+      throw new Error('order read failed');
+    },
+    release(){releases++}
+  };
+  await assert.rejects(()=>readConsistentOrderForDocument({connect:async()=>client},123),
+    /order read failed/);
+  assert.deepEqual(calls,['BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+    'SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1',
+    'ROLLBACK']);
+  assert.equal(releases,1);
+});
 
 const read=x=>readFileSync(new URL('../'+x,import.meta.url),'utf8');
 const makeOrder=()=>({

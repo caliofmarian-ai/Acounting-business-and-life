@@ -81,6 +81,28 @@ const clientKey=value=>{
   return key;
 };
 
+// Orders, line items and payment/status evidence are loaded by separate SQL
+// statements. A read-committed pool read could combine two committed revisions
+// when another operator updates an order between SELECTs; the immutable
+// document must instead come from one stable read-only PostgreSQL snapshot.
+export async function readConsistentOrderForDocument(pool,orderId){
+  const client=await pool.connect();
+  let transactionOpen=false;
+  try{
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    transactionOpen=true;
+    const order=await readOrderDetail(client,orderId);
+    await client.query('COMMIT');
+    transactionOpen=false;
+    return order;
+  }catch(e){
+    if(transactionOpen)await client.query('ROLLBACK').catch(()=>{});
+    throw e;
+  }finally{
+    client.release();
+  }
+}
+
 export function commercialOrderDocument(order,clock=new Date()){
   if(!order?.id||!order?.business_id)throw err(404,'Order not found');
   if(!id(order.customer_account_id,'Customer account'))throw err(422,'Only registered Customers may receive order documents');
@@ -421,7 +443,7 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
       const orderId=id(req.params.id,'Order');
       const ownOrder=await pool.query('SELECT id FROM orders WHERE id=$1 AND business_id=$2',[orderId,businessId]);
       if(!ownOrder.rowCount)throw err(404,'Order not found for this Merchant');
-      const order=await readOrderDetail(pool,orderId);
+      const order=await readConsistentOrderForDocument(pool,orderId);
       if(!order||Number(order.business_id)!==businessId)throw err(404,'Order not found for this Merchant');
       if(!order.customer_account_id)throw err(422,'Only registered Customers may receive an email document');
       const customer=await pool.query('SELECT email,email_verified_at FROM accounts WHERE id=$1',[order.customer_account_id]);
