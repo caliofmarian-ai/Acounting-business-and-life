@@ -395,6 +395,67 @@ try{
     eq(String(serialReplay.response.purchase.id),String(serialRetry.response.purchase.id),
       'serialized response retry and replay share the same purchase identity');
 
+
+    // Real disposable PostgreSQL COMMIT plus SYNTHETIC lost acknowledgement.
+    // This is not a physical TCP disconnect or an HTTP/Preview acceptance test.
+    const lostAckKey='81234567-0000-4000-9000-123456789012';
+    const lostAckBody={...payload,item:'Synthetic lost commit ACK 881'};
+    const beforeLostAck=await Promise.all([
+      pool.query('SELECT count(*)::int AS n FROM inventory_purchases'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_lots'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_expenses')
+    ]);
+    let ackFaultInjected=false,lostAckError=null;
+    const lostAckClient={query:async(...args)=>{
+      const result=await a.query(...args);
+      if(args[0]==='COMMIT'&&!ackFaultInjected){
+        ackFaultInjected=true;
+        throw Object.assign(new Error('Synthetic lost COMMIT acknowledgement'),{code:'ECONNRESET'});
+      }
+      return result;
+    }};
+    try{await post(lostAckClient,101,lostAckKey,lostAckBody)}
+    catch(error){lostAckError=error}
+    eq(ackFaultInjected,true,'acknowledgement fault occurs AFTER actual PostgreSQL COMMIT');
+    eq(lostAckError?.code,'INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN',
+      'durably committed purchase is classified as indeterminate');
+    eq(lostAckError?.cause?.code,'ECONNRESET','original injected cause is preserved');
+    const durable=await pool.query(
+      'SELECT i.id AS inventory_id,i.quantity,p.id AS purchase_id,'+
+      'l.id AS lot_id,e.id AS expense_id,t.response_json AS replay_response '+
+      'FROM inventory AS i JOIN inventory_purchases AS p ON p.inventory_id=i.id '+
+      'JOIN synthetic_lots AS l ON l.purchase_id=p.id '+
+      'JOIN synthetic_expenses AS e ON e.purchase_id=p.id '+
+      'JOIN inventory_purchase_intents AS t ON t.purchase_id=p.id '+
+      'WHERE i.business_id=$1 AND i.item=$2 AND t.intent_key=$3',
+      [101,lostAckBody.item,lostAckKey]);
+    eq(durable.rowCount,1,'real COMMIT stored one purchase, lot, expense and intent');
+    eq(Number(durable.rows[0].quantity),lostAckBody.quantity,
+      'real COMMIT stored original quantity once');
+    eq(String(durable.rows[0].replay_response.purchase.id),
+      String(durable.rows[0].purchase_id),'saved JSONB refers to original purchase');
+    const afterCommit=await Promise.all([
+      pool.query('SELECT count(*)::int AS n FROM inventory_purchases'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_lots'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_expenses')
+    ]);
+    for(let i=0;i<3;i++)eq(afterCommit[i].rows[0].n,beforeLostAck[i].rows[0].n+1,
+      'one real PostgreSQL purchase/lot/expense write '+i);
+    const replayAfterLostAck=await post(a,101,lostAckKey,lostAckBody);
+    eq(replayAfterLostAck.kind,'replay','recovery uses saved intent, not new purchase');
+    eq(String(replayAfterLostAck.response.purchase.id),String(durable.rows[0].purchase_id),
+      'recovery returns original durable purchase ID');
+    const afterReplay=await Promise.all([
+      pool.query('SELECT count(*)::int AS n FROM inventory_purchases'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_lots'),
+      pool.query('SELECT count(*)::int AS n FROM synthetic_expenses'),
+      pool.query('SELECT quantity FROM inventory WHERE id=$1',[durable.rows[0].inventory_id])
+    ]);
+    for(let i=0;i<3;i++)eq(afterReplay[i].rows[0].n,afterCommit[i].rows[0].n,
+      'recovery does not duplicate economic record '+i);
+    eq(Number(afterReplay[3].rows[0].quantity),lostAckBody.quantity,
+      'recovery does not increment stock again');
+
     // Verify authorization at the actual lock boundary, not from a cached
     // HTTP session that may have been revoked while PostgreSQL was waiting.
     const revokedKey='61234567-0000-4000-9000-123456789012';
