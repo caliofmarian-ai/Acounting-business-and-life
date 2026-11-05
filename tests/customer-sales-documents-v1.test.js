@@ -1294,3 +1294,54 @@ test('Archived purchase records show Philippine civil date and saved currency wi
     assert.ok(source.includes('peso(d.'+field+',d.currency_code)'),
       'archive must use own saved currency for '+field);
 });
+
+function customerDocumentAccountHarness(api){
+  // Execute the actual Customer UI loader with private, synthetic responses.
+  const source=read('public/order-sales-documents-ui.js');
+  const first=source.indexOf('  async function customer(){');
+  const last=source.indexOf('  async function merchant(){',first);
+  assert.ok(first>=0&&last>first,'execute actual Customer document loader');
+  const chunk=source.slice(first,last);
+  const box={innerHTML:'',textContent:'Loading…'};
+  const panel={querySelector:key=>key==='#osdContent'?box:null};
+  const customer=new Function('api','modal','documentItem',
+    "let documentLoadEpoch=0;const API='/api/notifications/order-sales-documents';"+
+    chunk+";return customer;")(api,panel,d=>'<span>'+d.order_number+'</span>');
+  return {customer,box};
+}
+test('Customer document loader rejects private account A data after silent session change to B',async()=>{
+  const delayed=deferredDocumentUiResponse();
+  let signedIn=41,reads=0,readStarted;
+  const started=new Promise(resolve=>{readStarted=resolve});
+  const api=async path=>{
+    if(path==='/api/me'){reads++;return{account:{id:signedIn}}}
+    if(path==='/api/notifications/order-sales-documents/my'){
+      readStarted();
+      return delayed.promise;
+    }
+    throw new Error('Unexpected Customer document API '+path);
+  };
+  const ui=customerDocumentAccountHarness(api);
+  const pending=ui.customer();
+  await started;
+  signedIn=42; // Authentication changes without the profile-state event.
+  delayed.resolve({documents:[{order_number:'PRIVATE ACCOUNT A ORDER'}]});
+  await pending;
+  assert.equal(reads,2,'recheck the active account after private read completes');
+  assert.match(ui.box.textContent,/Account changed/);
+  assert.doesNotMatch(ui.box.innerHTML,/PRIVATE ACCOUNT A ORDER/);
+});
+test('Customer document loader still displays own documents after unchanged account recheck',async()=>{
+  const paths=[];
+  const api=async path=>{
+    paths.push(path);
+    if(path==='/api/me')return{account:{id:'41'}};
+    if(path==='/api/notifications/order-sales-documents/my')
+      return{documents:[{order_number:'CURRENT CUSTOMER ORDER'}]};
+    throw new Error('Unexpected Customer document API '+path);
+  };
+  const ui=customerDocumentAccountHarness(api);
+  await ui.customer();
+  assert.match(ui.box.innerHTML,/CURRENT CUSTOMER ORDER/);
+  assert.deepEqual(paths,['/api/me','/api/notifications/order-sales-documents/my','/api/me']);
+});

@@ -76,8 +76,21 @@
     const epoch=++documentLoadEpoch;
     const box=modal?.querySelector('#osdContent');if(!box)return;
     const old=modal;
+    // A session can change without another documents loader or a profile-state
+    // event. Bind the private /my result to the account that initiated it.
+    const original=await api('/api/me');
+    if(old!==modal||epoch!==documentLoadEpoch)return;
+    const accountId=String(original?.account?.id??'');
+    if(!/^[1-9][0-9]*$/.test(accountId)||!Number.isSafeInteger(Number(accountId)))
+      throw new Error('Sign in again before viewing your purchase documents.');
     const result=await api(API+'/my');
     if(old!==modal||epoch!==documentLoadEpoch)return;
+    const current=await api('/api/me');
+    if(old!==modal||epoch!==documentLoadEpoch)return;
+    if(String(current?.account?.id??'')!==accountId){
+      box.textContent='Account changed. Reopen documents for the signed-in account.';
+      return;
+    }
     box.innerHTML='<section class="osdBox"><h3>Documents available in your account</h3>'+
       (result.documents?.length?result.documents.map(documentItem).join(''):'<p>No documents have been issued for your orders yet.</p>')+'</section>';
   }
