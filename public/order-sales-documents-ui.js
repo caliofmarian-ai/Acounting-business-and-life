@@ -93,6 +93,16 @@
       api(API+'/business?business_id='+businessId)
     ]);
     if(old!==modal||epoch!==documentLoadEpoch||activeBusiness!==businessId)return;
+    // A workspace switch may happen while the two private list requests are
+    // pending, without opening another document loader. Their old completion
+    // must not paint business A's records in B's still-open dialog.
+    const current=await api('/api/accounting/workspaces');
+    if(old!==modal||epoch!==documentLoadEpoch||activeBusiness!==businessId)return;
+    if(current.role!=='merchant'||Number(current.active_business_id)!==businessId){
+      activeBusiness=null;
+      box.innerHTML='<p>Merchant workspace changed. Reopen documents for the selected business.</p>';
+      return;
+    }
     const list=(orders.orders||[]).map(o=>{
       const canSend=Boolean(o.customer_email_verified);
       return '<div class="osdRow"><strong>'+esc(o.order_number||o.id)+' · '+esc(o.order_status)+'</strong>'+

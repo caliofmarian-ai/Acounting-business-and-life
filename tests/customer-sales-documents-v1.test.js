@@ -1165,6 +1165,52 @@ test('older same-business Merchant read cannot overwrite newer completed documen
   assert.doesNotMatch(ui.state().html,/STALE order view/);
 });
 
+test('Merchant documents do not render business A after switching to B during a pending list load',async()=>{
+  const delayed=deferredDocumentUiResponse();
+  let selected=44,readCount=0,notifyStarted;
+  const started=new Promise(resolve=>{notifyStarted=resolve});
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces'){
+      readCount++;
+      return {role:'merchant',active_business_id:selected};
+    }
+    if(path.includes('/merchant-orders?')){notifyStarted();return delayed.promise}
+    if(path.includes('/business?'))return {documents:[]};
+    throw Error('Unexpected UI API: '+path);
+  };
+  const ui=merchantDocumentEpochHarness(api);
+  const old=ui.merchant();
+  await started;
+  selected=45; // Business changes without another document loader or profile-state event.
+  delayed.resolve(documentOrdersForUi(44,'PRIVATE BUSINESS A RECORD'));
+  await old;
+  assert.equal(readCount,2,'private records must be checked against the live Merchant workspace');
+  assert.equal(ui.state().business,null,'stale send authority must be discarded');
+  assert.match(ui.state().html,/Merchant workspace changed/);
+  assert.doesNotMatch(ui.state().html,/PRIVATE BUSINESS A RECORD/);
+});
+
+test('Merchant documents also suppress a late list when Merchant role is no longer active',async()=>{
+  const delayed=deferredDocumentUiResponse();
+  let role='merchant',notifyStarted;
+  const started=new Promise(resolve=>{notifyStarted=resolve});
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces')return {role,active_business_id:44};
+    if(path.includes('/merchant-orders?')){notifyStarted();return delayed.promise}
+    if(path.includes('/business?'))return {documents:[]};
+    throw Error('Unexpected UI API: '+path);
+  };
+  const ui=merchantDocumentEpochHarness(api);
+  const old=ui.merchant();
+  await started;
+  role='customer';
+  delayed.resolve(documentOrdersForUi(44,'PRIVATE MERCHANT RECORD'));
+  await old;
+  assert.equal(ui.state().business,null);
+  assert.match(ui.state().html,/Merchant workspace changed/);
+  assert.doesNotMatch(ui.state().html,/PRIVATE MERCHANT RECORD/);
+});
+
 function documentOpenFailureHarness(requests){
   // Execute the actual UI open() function; dialog and requests are synthetic.
   const source=read('public/order-sales-documents-ui.js');
