@@ -224,6 +224,9 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
 
   await validatePurchaseLinks(pool,record.businessId,record.links);
   let evidence=null,client=null;
+  // An error from COMMIT can mean the database committed but its acknowledgement
+  // was lost. Never tombstone the only original of a possibly committed receipt.
+  let newReceiptInserted=false,commitAttempted=false;
   try{
     if(record.dataUrl){
       evidence=await storePrivateEvidence(pool,{
@@ -261,6 +264,7 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
       if(evidence)await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'duplicate_upload_cleanup'});
       return{document:shape(saved.rows[0]),already_saved:true};
     }
+    newReceiptInserted=true;
     const document=added.rows[0];
     for(const link of record.links){
       await client.query(
@@ -272,11 +276,16 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
       objectId:evidence.id,sourceType:'merchant_purchase_document',
       sourceId:String(document.id),actorAccountId,purpose:'purchase_accounting_bind'
     });
+    commitAttempted=true;
     await client.query('COMMIT');
     return{document:shape(document),already_saved:false};
   }catch(e){
     if(client)await client.query('ROLLBACK').catch(()=>{});
-    if(evidence)await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'failed_purchase_receipt_cleanup'}).catch(()=>{});
+    // COMMIT status is unknowable after a lost acknowledgement. Preserve scanned
+    // evidence for reconciliation/replay rather than deleting a committed original.
+    if(evidence&&!(newReceiptInserted&&commitAttempted)){
+      await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'failed_purchase_receipt_cleanup'}).catch(()=>{});
+    }
     throw e;
   }finally{client?.release()}
 }

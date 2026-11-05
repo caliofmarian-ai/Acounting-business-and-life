@@ -300,3 +300,78 @@ test('linked receipt sources receive transaction-held share locks on the final r
   assert.match(sql[1].query,/type='business_expense' FOR SHARE/);
   assert.deepEqual(sql[0].params,[101,14]);
 });
+
+test('uncertain purchase-receipt COMMIT preserves the original evidence; definite precommit failure cleans it',async()=>{
+  // Run the actual coordinator with synthetic private-object and database adapters.
+  // An ambiguous transport error is NOT proof of database rollback.
+  const nodeCrypto=(await import('node:crypto')).default;
+  const source=read('merchant-purchase-documents.js')
+    .replace(/^import[\s\S]*?;\n/gm,'')
+    .replace(/^export /gm,'');
+  const dependencies=[
+    'crypto','supplierDomainV2Internals','ensurePrivateEvidenceSchema',
+    'storePrivateEvidence','bindPrivateEvidenceSource','readPrivateEvidence',
+    'sendPrivateEvidence','deletePrivateEvidence'
+  ];
+  const makeCoordinator=new Function(...dependencies,source+'\nreturn savePurchaseDocument;');
+  const record=normalizeMerchantPurchaseDocument({
+    ...base(),links:[],file_name:'original.pdf',
+    data_url:'data:application/pdf;base64,JVBERi0xLjQK'
+  });
+  async function scenario(failure){
+    const calls=[];
+    const client={
+      query:async(sql)=>{
+        if(sql==='BEGIN'||sql==='ROLLBACK'){calls.push(sql);return{rowCount:0,rows:[]}}
+        if(sql==='COMMIT'){
+          calls.push('COMMIT');
+          if(failure==='commit')throw new Error('COMMIT acknowledgement lost');
+          return{rowCount:0,rows:[]};
+        }
+        if(sql.includes('FROM profile_business_bindings')){
+          calls.push('grant');return{rowCount:1,rows:[{business_id:14}]};
+        }
+        if(sql.includes('INSERT INTO merchant_purchase_documents(')){
+          calls.push('insert');
+          if(failure==='insert')throw new Error('definite insert failure');
+          return{rowCount:1,rows:[{
+            id:99,business_id:14,document_kind:'purchase_receipt',
+            issuer_name:'Local market',document_number:'',issue_date:'2026-10-30',
+            currency_code:'PHP',gross_amount:'145.25',note:'',
+            private_evidence_object_id:555
+          }]};
+        }
+        throw new Error('Unexpected SQL '+sql);
+      },
+      release:()=>calls.push('release')
+    };
+    const pool={
+      query:async()=>({rowCount:0,rows:[]}),
+      connect:async()=>client
+    };
+    const save=makeCoordinator(
+      nodeCrypto,{exactProfileBusiness:()=>{}},async()=>{},
+      async()=>{calls.push('store');return{id:555}},
+      async()=>{calls.push('bind')},async()=>{},()=>{},
+      async()=>{calls.push('delete')}
+    );
+    const operation=save(pool,{actorAccountId:9,record});
+    if(failure==='commit'||failure==='insert'){
+      await assert.rejects(operation,new RegExp(failure==='commit'?'acknowledgement lost':'insert failure'));
+    }else{
+      const result=await operation;
+      assert.equal(result.already_saved,false);
+      assert.equal(result.document.id,99);
+    }
+    return calls;
+  }
+  const ambiguous=await scenario('commit');
+  assert.ok(ambiguous.includes('bind')&&ambiguous.includes('COMMIT'));
+  assert.ok(ambiguous.includes('ROLLBACK'),'rollback may be attempted but does not prove commit was undone');
+  assert.ok(!ambiguous.includes('delete'),'original cannot be tombstoned after ambiguous COMMIT');
+  const definite=await scenario('insert');
+  assert.ok(definite.includes('ROLLBACK')&&definite.includes('delete'));
+  assert.ok(!definite.includes('COMMIT'));
+  const successful=await scenario('ok');
+  assert.ok(successful.includes('COMMIT')&&!successful.includes('delete'));
+});
