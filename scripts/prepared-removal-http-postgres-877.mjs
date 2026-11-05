@@ -73,7 +73,7 @@ async function main(){
   parsePreparedRemoval,estimatedPreparedRemovalCost,(v,n)=>String(v??'').trim().slice(0,n));
  app.use((err,_req,res,_next)=>res.status(err.status||500).json({error:err.message,code:err.code||null}));
  await new Promise((resolve,reject)=>{server=app.listen(0,'127.0.0.1',resolve);server.once('error',reject)});
- const url=`http://127.0.0.1:${{server.address().port}/api/prepared-product-removals`;
+ const url=`http://127.0.0.1:${server.address().port}/api/prepared-product-removals`;
  const send=async (body,identity='merchantA')=>{
   const headers={'content-type':'application/json'};
   if(identity)headers['x-ci-identity']=identity;
