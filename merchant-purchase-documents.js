@@ -157,6 +157,21 @@ async function scopedDocument(pool,id,businessId){
   return q.rows[0];
 }
 
+// Lock the *current* Merchant grant after scanning and before the final write.
+// FOR SHARE serializes a simultaneous binding/membership revocation with receipt commit.
+// The initial request authorization alone is not sufficient across a slow private upload.
+async function lockMerchantDocumentWriteAuthority(db,actorAccountId,businessId){
+  const allowed=await db.query(`
+    SELECT pb.business_id FROM profile_business_bindings pb
+      JOIN business_memberships bm
+        ON bm.business_id=pb.business_id AND bm.account_id=pb.account_id
+     WHERE pb.account_id=$1 AND pb.role='merchant' AND pb.business_id=$2
+       AND pb.status='active' AND bm.active=TRUE
+     FOR SHARE OF pb,bm
+  `,[actorAccountId,businessId]);
+  if(!allowed.rowCount)throw error(403,'Merchant purchase document access changed; retry after authorization');
+}
+
 async function savePurchaseDocument(pool,{actorAccountId,record}){
   const fingerprint=crypto.createHash('sha256').update(JSON.stringify({
     kind:record.kind,issueDate:record.issueDate,currency:record.currency,amount:record.amount,
@@ -187,6 +202,7 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
     }
     client=await pool.connect();
     await client.query('BEGIN');
+    await lockMerchantDocumentWriteAuthority(client,actorAccountId,record.businessId);
     await validatePurchaseLinks(client,record.businessId,record.links);
     const added=await client.query(`
       INSERT INTO merchant_purchase_documents(
@@ -293,4 +309,4 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
   });
 }
 
-export const merchantPurchaseDocumentInternals={validatePurchaseLinks,savePurchaseDocument};
+export const merchantPurchaseDocumentInternals={validatePurchaseLinks,savePurchaseDocument,lockMerchantDocumentWriteAuthority};

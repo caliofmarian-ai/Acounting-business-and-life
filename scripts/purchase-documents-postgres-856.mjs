@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { normalizeMerchantPurchaseDocument } from '../merchant-purchase-documents.js';
+import { normalizeMerchantPurchaseDocument, merchantPurchaseDocumentInternals } from '../merchant-purchase-documents.js';
 
 if (process.env.NODE_ENV !== 'test' || process.env.RECEIPTS_856_ISOLATED !== '1' ||
     process.env.PGHOST !== '127.0.0.1' || process.env.PGDATABASE !== 'abl_receipts_856_ci' ||
@@ -56,5 +56,54 @@ test('literal purchase document normalization preserves NUMERIC(14,2) values in 
   } finally {
     if(transactionStarted) await client.query('ROLLBACK').catch(()=>{});
     client.release(); await pool.end();
+  }
+});
+
+
+// Genuine PostgreSQL row-lock ordering. Only disposable CI tables and synthetic grants.
+test('revoked Merchant binding or membership cannot pass the post-upload receipt write lock', async () => {
+  const pool = new pg.Pool({max:3});
+  const writer=await pool.connect(),revoker=await pool.connect(),observer=await pool.connect();
+  const {lockMerchantDocumentWriteAuthority:lockGrant}=merchantPurchaseDocumentInternals;
+  let pending=null;
+  try {
+    assert.equal((await observer.query('SELECT current_database() AS db')).rows[0].db,'abl_receipts_856_ci');
+    await observer.query('CREATE TABLE profile_business_bindings(account_id BIGINT,role TEXT,business_id BIGINT,status TEXT)');
+    await observer.query('CREATE TABLE business_memberships(account_id BIGINT,business_id BIGINT,active BOOLEAN)');
+    await observer.query("INSERT INTO profile_business_bindings VALUES(9101,'merchant',201,'active')");
+    await observer.query('INSERT INTO business_memberships VALUES(9101,201,TRUE)');
+    const writerPid=(await writer.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const revokerPid=(await revoker.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const blocking=async(target,blocker)=>{
+      for(let i=0;i<35;i++){
+        const pids=(await observer.query('SELECT pg_blocking_pids($1::int) AS pids',[target])).rows[0].pids;
+        if(pids.includes(blocker))return true;
+        await new Promise(resolve=>setTimeout(resolve,25));
+      }
+      return false;
+    };
+    await writer.query('BEGIN');
+    await lockGrant(writer,9101,201);
+    pending=revoker.query("UPDATE profile_business_bindings SET status='revoked' WHERE account_id=9101 AND business_id=201");
+    assert.equal(await blocking(revokerPid,writerPid),true,'binding revocation must wait for receipt transaction');
+    await writer.query('COMMIT');
+    await pending;pending=null;
+    await assert.rejects(()=>lockGrant(writer,9101,201),e=>e.status===403);
+    await writer.query("UPDATE profile_business_bindings SET status='active' WHERE account_id=9101 AND business_id=201");
+    await revoker.query('BEGIN');
+    await revoker.query('UPDATE business_memberships SET active=FALSE WHERE account_id=9101 AND business_id=201');
+    pending=lockGrant(writer,9101,201);
+    assert.equal(await blocking(writerPid,revokerPid),true,'post-upload check must wait for membership revocation');
+    await revoker.query('COMMIT');
+    await assert.rejects(pending,e=>e.status===403);pending=null;
+    await assert.rejects(()=>lockGrant(writer,9101,202),e=>e.status===403);
+    console.log(JSON.stringify({status:'PASS',db:'isolated PostgreSQL 16',postUploadGrantLock:true,realBlockingObserved:true,revokeBeforeLockDenied:true,persistedReceipt:false}));
+  } finally {
+    await writer.query('ROLLBACK').catch(()=>{});
+    await revoker.query('ROLLBACK').catch(()=>{});
+    if(pending)await pending.catch(()=>{});
+    await observer.query('DROP TABLE IF EXISTS business_memberships').catch(()=>{});
+    await observer.query('DROP TABLE IF EXISTS profile_business_bindings').catch(()=>{});
+    writer.release();revoker.release();observer.release();await pool.end();
   }
 });
