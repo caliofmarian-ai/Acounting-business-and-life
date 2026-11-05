@@ -420,17 +420,29 @@ export async function inspectInventoryPurchaseIntent(client,options){
   const account=dbId(options?.accountId,'Account');
   const key=literalKey(options?.intentKey);
   const fingerprint=inventoryPurchaseFingerprint(options?.payload);
+  // The caller can replace/mutate an object while authorization and SQL
+  // await. An absent key is NOT exempt from the original-request invariant.
+  const assertOriginalInstructions=()=>{
+    let current;
+    try{current=inventoryPurchaseFingerprint(options?.payload)}
+    catch{throw bad('Purchase instructions changed during reconciliation',
+      'INVENTORY_PURCHASE_INTENT_CONFLICT',409)}
+    if(current!==fingerprint)throw bad('Purchase instructions changed during reconciliation',
+      'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+  };
   const verify=options?.verifyCurrentMerchantAuthority;
   if(typeof verify!=='function')throw bad('Current Merchant grant verifier required',
     'INVENTORY_PURCHASE_INTENT_AUTH_REQUIRED',403);
   let started=false;
   try{
     await client.query('BEGIN');started=true;
+    assertOriginalInstructions();
     const allowed=await verify(client,Object.freeze({
       businessId:business,accountId:account,intentKey:key,stage:'reconcile'
     }));
     if(allowed!==true)throw bad('Current Merchant authority revoked',
       'INVENTORY_PURCHASE_INTENT_FORBIDDEN',403);
+    assertOriginalInstructions();
     // No INSERT or business advisory lock here; neither missing nor pending
     // keys may be treated as permission to create a new purchase.
     const found=await client.query(`
@@ -439,6 +451,7 @@ export async function inspectInventoryPurchaseIntent(client,options){
        WHERE business_id=$1 AND account_id=$2 AND intent_key=$3
        FOR SHARE
     `,[business,account,key]);
+    assertOriginalInstructions();
     if(found.rowCount===0){
       await client.query('COMMIT');started=false;
       return{kind:'unconfirmed',safeToRetry:false};
@@ -459,6 +472,7 @@ export async function inspectInventoryPurchaseIntent(client,options){
     if(source.rowCount!==1)throw bad('Original purchase provenance has changed',
       'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
     const response=verifiedPurchaseResponse(row.response_json,purchase);
+    assertOriginalInstructions();
     await client.query('COMMIT');started=false;
     return{kind:'committed',purchaseId:purchase,response,safeToRetry:false};
   }catch(error){

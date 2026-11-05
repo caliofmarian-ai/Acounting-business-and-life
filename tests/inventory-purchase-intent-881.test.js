@@ -521,3 +521,54 @@ test('transaction coordinator refuses in-flight purchase-body changes at every a
       'mutated post-write body cannot finalize reservation');
   }
 });
+
+test('read-only inspection rejects mutated or replaced instructions at every async boundary',async()=>{
+  // Explicitly simulate shared request mutation during awaited grant/SQL.
+  for(const phase of ['begin','authority','replace','missing-row','committed-row','source-row']){
+    const body={...payload};
+    const options={businessId:1,accountId:2,intentKey:key,payload:body};
+    const fingerprint=inventoryPurchaseFingerprint(body);
+    const events=[];
+    const mutate=()=>{body.total_cost='400.00'};
+    const committed=phase!=='missing-row';
+    options.verifyCurrentMerchantAuthority=async(_db,grant)=>{
+      assert.equal(grant.stage,'reconcile');
+      events.push('authority');
+      if(phase==='authority')mutate();
+      if(phase==='replace')options.payload={...body,total_cost:'401.00'};
+      return true;
+    };
+    const db={async query(sql){
+      if(sql==='BEGIN'){
+        events.push(sql);
+        if(phase==='begin')mutate();
+        return{rowCount:0,rows:[]};
+      }
+      if(sql==='COMMIT'||sql==='ROLLBACK'){
+        events.push(sql);return{rowCount:0,rows:[]};
+      }
+      if(sql.includes('FROM inventory_purchase_intents')){
+        events.push('intent-read');
+        if(phase==='missing-row'||phase==='committed-row')mutate();
+        return committed?{rowCount:1,rows:[{
+          payload_sha256:fingerprint,purchase_id:'44',
+          response_json:{purchase:{id:44},expense:{total:'12.50'}}
+        }]}:{rowCount:0,rows:[]};
+      }
+      if(sql.includes('FROM inventory_purchases')){
+        events.push('purchase-read');
+        if(phase==='source-row')mutate();
+        return{rowCount:1,rows:[{id:'44'}]};
+      }
+      throw Error('Unexpected write or SQL in read-only inspection');
+    }};
+    await assert.rejects(inspectInventoryPurchaseIntent(db,options),
+      error=>error.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&error.status===409,
+      'changed instructions must be rejected: '+phase);
+    assert.equal(events.at(-1),'ROLLBACK','transaction rolled back: '+phase);
+    assert.ok(!events.includes('COMMIT'),'changed instructions never accepted: '+phase);
+    if(phase==='begin')assert.ok(!events.includes('authority'),'early rejection: '+phase);
+    if(phase==='missing-row')assert.ok(events.includes('intent-read'),
+      'even absent-key inspection checks original instructions');
+  }
+});
