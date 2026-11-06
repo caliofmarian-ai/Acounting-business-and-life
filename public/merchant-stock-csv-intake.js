@@ -43,6 +43,51 @@ export function stockIntakeScopedRows(rows,context,source){
   }
   return rows;
 }
+// An HTTP 201 is not enough to establish paid Stock/Money evidence. Check the
+// saved rows and their canonical links before marking the reviewed row SAVED.
+// A discrepancy after dispatch is UNCERTAIN, never a reason to POST again.
+export function verifyPaidStockIntakeReceipt(result,context,row,paidFrom){
+  const fail=()=>{throw new Error(
+    'Saved purchase evidence did not match the verified Merchant, stock item or paid expense. Reconcile Stock and Money; do not retry.'
+  )};
+  const id=value=>{
+    if(typeof value!=='string'&&typeof value!=='number')return null;
+    if(!/^[1-9][0-9]*$/.test(String(value)))return null;
+    const parsed=Number(value);
+    return Number.isSafeInteger(parsed)?parsed:null;
+  };
+  const cents=value=>{
+    const valid=parsePhpMoney(value);
+    return valid===null?null:Math.round(valid*100);
+  };
+  const inventory=result?.inventory,purchase=result?.purchase,
+    transaction=result?.transaction,lot=result?.lot;
+  const businessId=id(context?.businessId),inventoryId=id(inventory?.id),
+    purchaseId=id(purchase?.id),expenseId=id(transaction?.id);
+  const paidCents=cents(row?.total);
+  if(!Number.isSafeInteger(context?.accountId)||context.accountId<1||
+     !businessId||!inventoryId||!purchaseId||!expenseId||
+     [inventory,purchase,transaction].some(entry=>
+       !entry||typeof entry!=='object'||Array.isArray(entry)||id(entry.business_id)!==businessId)||
+     id(purchase.inventory_id)!==inventoryId||
+     id(transaction.source_id)!==purchaseId||
+     transaction.source!=='inventory_purchase'||
+     transaction.type!=='business_expense'||
+     typeof paidFrom!=='string'||!paidFrom||
+     purchase.account!==paidFrom||transaction.account!==paidFrom||
+     transaction.payment_method!==paidFrom||
+     typeof row?.item!=='string'||!row.item.trim()||
+     typeof inventory.item!=='string'||NORMALIZE(inventory.item)!==NORMALIZE(row.item)||
+     parseStockQuantity(row?.quantity)===null||
+     Number(purchase.purchase_quantity)!==Number(row.quantity)||
+     purchase.purchase_unit!==row.unit||
+     paidCents===null||cents(purchase.total_cost)!==paidCents||
+     cents(transaction.amount)!==paidCents||
+     (lot!=null&&(!lot||typeof lot!=='object'||Array.isArray(lot)||
+       !id(lot.id)||id(lot.business_id)!==businessId||id(lot.inventory_id)!==inventoryId))
+  )fail();
+  return result;
+}
 // Forward-compatible #881 purchase key: one secure, literal key per approved row.
 // #882 is NOT installed in HTTP yet; this header does not enable safe retry.
 export function stockIntakePurchaseIntentKey(row,randomUUID=()=>globalThis.crypto?.randomUUID?.()){
@@ -670,9 +715,7 @@ if(hasDocument){
           note:'Paid stock intake from reviewed Merchant CSV. Actual purchase date: '+originalDate+'. '+row.note
         })});
         if(!requireCurrent())break;
-        if(!result?.inventory?.id||!result?.purchase?.id||!result?.transaction?.id){
-          throw new Error('Purchase/payment response was incomplete; manually reconcile before retry.');
-        }
+        verifyPaidStockIntakeReceipt(result,originalContext,row,paidFrom);
         // At this point the stock and a linked expense exist even if the date correction fails.
         row.result='saved-date-pending';row.selected=false;saved++;
         state.inventory.push(result.inventory);

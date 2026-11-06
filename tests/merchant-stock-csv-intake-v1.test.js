@@ -7,7 +7,7 @@ import {
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
   STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes,
-  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows
+  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows,verifyPaidStockIntakeReceipt
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -126,6 +126,61 @@ test('Inventory/Money reads must prove original Merchant business before review 
   assert.match(js,/stockIntakeScopedRows\(transactions,verify,'Money'\)/);
   assert.match(js,/stockIntakeScopedRows\(inventory,after,'Inventory'\)/);
   assert.equal(stockIntakeOriginHeaders(origin)['x-abl-inventory-origin-business'],'123');
+});
+
+test('a saved purchase must prove exact Merchant, stock identity, paid expense and links',()=>{
+  const merchant={accountId:11,businessId:123,businessName:'Verified PH Merchant'};
+  const row={item:'Fresh rice',quantity:2,unit:'kg',total:120};
+  const good={
+    inventory:{id:201,business_id:123,item:'Fresh rice'},
+    purchase:{id:301,business_id:123,inventory_id:201,purchase_quantity:'2.0000',
+      purchase_unit:'kg',total_cost:'120.00',account:'cash'},
+    transaction:{id:401,business_id:123,source:'inventory_purchase',source_id:301,
+      type:'business_expense',amount:'120.00',payment_method:'cash',account:'cash'},
+    lot:{id:501,business_id:123,inventory_id:201}
+  };
+  assert.equal(verifyPaidStockIntakeReceipt(good,merchant,row,'cash'),good);
+  assert.ok(verifyPaidStockIntakeReceipt({...good,lot:null},merchant,row,'cash'),
+    'lot absence is allowed where optional lot tables are not enabled');
+  const mutations=[
+    x=>{x.inventory.business_id=999},
+    x=>{x.purchase.business_id=999},
+    x=>{x.transaction.business_id=999},
+    x=>{x.lot.business_id=999},
+    x=>{delete x.purchase.business_id},
+    x=>{x.purchase.inventory_id=202},
+    x=>{x.lot.inventory_id=202},
+    x=>{x.transaction.source_id=302},
+    x=>{x.transaction.source='other'},
+    x=>{x.transaction.type='sale'},
+    x=>{x.transaction.account='bank'},
+    x=>{x.transaction.payment_method='gcash'},
+    x=>{x.purchase.account='bank'},
+    x=>{x.inventory.item='Someone else\\'s beans'},
+    x=>{x.purchase.purchase_quantity='3.0000'},
+    x=>{x.purchase.purchase_unit='g'},
+    x=>{x.purchase.total_cost='119.99'},
+    x=>{x.transaction.amount='119.99'},
+    x=>{x.transaction.amount='120.001'},
+    x=>{x.purchase.id='0'},
+    x=>{x.transaction.id='1e2'},
+    x=>{x.lot.id=null}
+  ];
+  for(const mutate of mutations){
+    const altered=structuredClone(good);
+    mutate(altered);
+    assert.throws(()=>verifyPaidStockIntakeReceipt(altered,merchant,row,'cash'),
+      /Saved purchase evidence did not match/,String(mutate));
+  }
+  assert.throws(()=>verifyPaidStockIntakeReceipt(good,{...merchant,businessId:999},row,'cash'),
+    /Saved purchase evidence did not match/);
+  assert.throws(()=>verifyPaidStockIntakeReceipt(good,merchant,{...row,total:119.99},'cash'),
+    /Saved purchase evidence did not match/);
+  assert.match(js,/verifyPaidStockIntakeReceipt\\(result,originalContext,row,paidFrom\\)/,
+    'the actual purchase HTTP completion must validate durable Stock/Money evidence before SAVED');
+  const check=js.indexOf('verifyPaidStockIntakeReceipt(result,originalContext,row,paidFrom)');
+  const saved=js.indexOf("row.result='saved-date-pending'",check);
+  assert.ok(check>0&&saved>check,'never mark a paid batch saved before validating the returned ledger');
 });
 
 test('paid stock intake requires one Merchant, and records exactly a linked purchase expense without retry',()=>{
