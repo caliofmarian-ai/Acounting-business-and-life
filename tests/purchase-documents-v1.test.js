@@ -273,6 +273,70 @@ test('replayed purchase receipt fails closed when Merchant grant was revoked aft
   assert.deepEqual(calls,['precheck','BEGIN','revoked-grant','ROLLBACK','release']);
 });
 
+test('confirmed competing receipt replay stays successful when unused duplicate-upload cleanup fails',async()=>{
+  // Reproduce the actual post-commit path with disposable synthetic adapters:
+  // the unique intent already committed elsewhere while this request uploaded.
+  const crypto=(await import('node:crypto')).default;
+  const source=read('merchant-purchase-documents.js')
+    .replace(/^import[\\s\\S]*?;\\n/gm,'')
+    .replace(/^export /gm,'');
+  const dependencies=[
+    'crypto','supplierDomainV2Internals','ensurePrivateEvidenceSchema',
+    'storePrivateEvidence','bindPrivateEvidenceSource','readPrivateEvidence',
+    'sendPrivateEvidence','deletePrivateEvidence','console'
+  ];
+  const makeCoordinator=new Function(...dependencies,source+'\\nreturn savePurchaseDocument;');
+  const record=normalizeMerchantPurchaseDocument({
+    ...base(),links:[],file_name:'original.pdf',
+    data_url:'data:application/pdf;base64,JVBERi0xLjQK'
+  });
+  const events=[],warnings=[];
+  let fingerprint=null;
+  const receipt=()=>({
+    id:99,business_id:14,request_fingerprint:fingerprint,
+    document_kind:'purchase_receipt',issuer_name:'Local market',
+    document_number:'',issue_date:'2026-10-30',currency_code:'PHP',
+    gross_amount:'145.25',note:'',private_evidence_object_id:123
+  });
+  const client={
+    query:async(sql,args=[])=>{
+      if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK'){
+        events.push(sql);return{rowCount:0,rows:[]};
+      }
+      if(sql.includes('FROM profile_business_bindings')){
+        events.push('grant');return{rowCount:1,rows:[{business_id:14}]};
+      }
+      if(sql.includes('INSERT INTO merchant_purchase_documents(')){
+        events.push('insert-conflict');fingerprint=args[3];
+        return{rowCount:0,rows:[]};
+      }
+      if(sql.includes('SELECT * FROM merchant_purchase_documents')){
+        events.push('select-existing');return{rowCount:1,rows:[receipt()]};
+      }
+      throw new Error('Unexpected SQL '+sql);
+    },
+    release:()=>events.push('release')
+  };
+  const pool={
+    query:async()=>{events.push('precheck');return{rowCount:0,rows:[]}},
+    connect:async()=>client
+  };
+  const save=makeCoordinator(
+    crypto,{exactProfileBusiness:()=>{}},async()=>{},
+    async()=>{events.push('upload');return{id:555}},async()=>{},
+    async()=>{},()=>{},
+    async()=>{events.push('delete');throw new Error('private storage cleanup unavailable')},
+    {warn:warning=>warnings.push(warning)}
+  );
+  const result=await save(pool,{actorAccountId:9,record});
+  assert.equal(result.already_saved,true);
+  assert.equal(result.document.id,99);
+  assert.deepEqual(events,['precheck','upload','BEGIN','grant','insert-conflict',
+    'select-existing','COMMIT','delete','release']);
+  assert.deepEqual(warnings,['MERCHANT_PURCHASE_DUPLICATE_EVIDENCE_CLEANUP_FAILED']);
+  assert.ok(!events.includes('ROLLBACK'),'a committed replay cannot be misreported as rollback');
+});
+
 test('Philippines date fallback and explicit receipt date',()=>{
   assert.equal(philippinesPurchaseDocumentDate(new Date('2026-11-04T15:59:59.999Z')),'2026-11-04');
   assert.equal(philippinesPurchaseDocumentDate(new Date('2026-11-04T16:00:00Z')),'2026-11-05');
