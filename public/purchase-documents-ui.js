@@ -145,10 +145,28 @@
         currency_code:'PHP',note:String(data.get('note')||''),
         links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
       };
-      if(chosenFile){payload.file_name=chosenFile.name;payload.data_url=await readFile(chosenFile)}
+      const fileAtStart=chosenFile;
+      if(fileAtStart){payload.file_name=fileAtStart.name;payload.data_url=await readFile(fileAtStart)}
       if(panel!==overlay||biz!==businessId)return;
       const confirmed=await api('/api/accounting/workspaces');
       if(panel!==overlay||confirmed.role!=='merchant'||Number(confirmed.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
+      // Reading a camera file or rechecking the workspace is asynchronous. Other
+      // form controls remain editable during those awaits: never send an older
+      // document/file/link snapshot after the operator changed the visible draft.
+      const latest=new FormData(form);
+      const currentDraft={
+        document_kind:String(latest.get('document_kind')||'purchase_receipt'),
+        issuer_name:String(latest.get('issuer_name')||''),
+        issue_date:String(latest.get('issue_date')||today()),
+        document_number:String(latest.get('document_number')||''),
+        gross_amount:String(latest.get('gross_amount')||''),
+        note:String(latest.get('note')||''),
+        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
+      };
+      if(fileAtStart!==chosenFile||Object.entries(currentDraft).some(([name,value])=>
+        JSON.stringify(value)!==JSON.stringify(payload[name]))){
+        throw new Error('Receipt details changed while preparing. Review the current draft and submit again.');
+      }
       // A failed/lost POST acknowledgement is not proof of rollback. Keep the
       // same key for the exact same receipt, and never reuse it for edited data.
       // No key is reserved before workspace and file validation finish.

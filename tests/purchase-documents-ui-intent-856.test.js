@@ -16,13 +16,20 @@ function makeController(){
   const button={disabled:false};
   const form={elements:{issue_date:{value:''}},reset(){}};
   const receiptLabel={textContent:''};
-  const panel={querySelectorAll:()=>[]};
+  let selectedLinks=[];
+  const panel={querySelectorAll:()=>selectedLinks.map(value=>({value}))};
   const messages=[],posts=[];
   let keys=0,workspaceIsMerchant=true,failPostOnce=false,failFileOnce=false;
+  let workspaceChecks=0,changeDuringVerify=null,changeDuringRead=null;
   const api=async(path,options)=>{
-    if(path==='/api/accounting/workspaces')return{
-      role:workspaceIsMerchant?'merchant':'customer',active_business_id:14
-    };
+    if(path==='/api/accounting/workspaces'){
+      workspaceChecks++;
+      if(workspaceChecks%2===0&&changeDuringVerify){
+        const change=changeDuringVerify;changeDuringVerify=null;
+        await Promise.resolve();change();
+      }
+      return {role:workspaceIsMerchant?'merchant':'customer',active_business_id:14};
+    }
     assert.equal(path,'/api/procurement/purchase-documents');
     const payload=JSON.parse(options.body);
     posts.push(payload);
@@ -41,11 +48,16 @@ function makeController(){
       return {save,setFile:file=>{chosenFile=file},state:()=>({pendingKey,pendingPayload,pendingSubmitted})};`);
   const controller=fn(api,FakeFormData,()=>('purchase-intent-'+(++keys)),()=>fields.issue_date,
     (text,isError)=>messages.push({text,isError}),async()=>{},async()=>{},
-    async()=>{if(failFileOnce){failFileOnce=false;throw new Error('File read failed');}return 'data:application/pdf;base64,JVBERi0xLjQK'},
+    async()=>{if(failFileOnce){failFileOnce=false;throw new Error('File read failed');}
+      if(changeDuringRead){const change=changeDuringRead;changeDuringRead=null;await Promise.resolve();change();}
+      return 'data:application/pdf;base64,JVBERi0xLjQK'},
     form,button,receiptLabel,panel);
   return{...controller,fields,posts,messages,
     failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
     setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
+    setLinks:links=>{selectedLinks=links},
+    changeDuringConfirmation:change=>{changeDuringVerify=change},
+    changeDuringFileRead:change=>{changeDuringRead=change},
     submit:()=>controller.save({preventDefault(){}})};
 }
 
@@ -89,4 +101,41 @@ test('failed workspace and file preflight do not reserve or submit a request key
   assert.equal(c.posts.length,1);
   assert.equal(c.keyCount(),1);
   assert.equal(c.posts[0].note,'Confirmed file selection');
+});
+
+test('in-flight metadata edit during workspace recheck never posts an obsolete receipt',async()=>{
+  const c=makeController();
+  c.changeDuringConfirmation(()=>{c.fields.gross_amount='31.00'});
+  await c.submit();
+  assert.equal(c.posts.length,0);
+  assert.equal(c.keyCount(),0,'no intent key reserved before final draft check');
+  assert.match(c.messages.at(-1).text,/changed while preparing/);
+  await c.submit();
+  assert.equal(c.posts.length,1);
+  assert.equal(c.posts[0].gross_amount,'31.00');
+});
+
+test('in-flight linked purchase checkbox edit cannot post a stale receipt-to-purchase association',async()=>{
+  const c=makeController();
+  c.setLinks(['101']);
+  c.changeDuringConfirmation(()=>c.setLinks(['102']));
+  await c.submit();
+  assert.equal(c.posts.length,0);
+  assert.equal(c.keyCount(),0);
+  assert.match(c.messages.at(-1).text,/changed while preparing/);
+  await c.submit();
+  assert.deepEqual(c.posts[0].links,[{kind:'inventory_purchase',id:102}]);
+});
+
+test('camera file replacement while file read is pending never posts the old scan',async()=>{
+  const c=makeController();
+  c.setFile({name:'old.pdf'});
+  c.changeDuringFileRead(()=>c.setFile({name:'new.pdf'}));
+  await c.submit();
+  assert.equal(c.posts.length,0);
+  assert.equal(c.keyCount(),0);
+  assert.match(c.messages.at(-1).text,/changed while preparing/);
+  await c.submit();
+  assert.equal(c.posts.length,1);
+  assert.equal(c.posts[0].file_name,'new.pdf');
 });
