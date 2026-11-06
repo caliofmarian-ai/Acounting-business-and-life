@@ -1,0 +1,92 @@
+// #856/#883 — execute the literal Merchant purchase-document save controller with a
+// minimal browser-form harness. All API calls are synthetic and have no live side effects.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+
+const source=readFileSync(new URL('../public/purchase-documents-ui.js',import.meta.url),'utf8');
+const start=source.indexOf('  async function save(event){');
+const end=source.indexOf('\n  function close(){',start);
+assert.ok(start>=0&&end>start,'literal shipped save controller must be present');
+const saveSource=source.slice(start,end);
+
+function makeController(){
+  const fields={document_kind:'purchase_receipt',issuer_name:'Market',issue_date:'2026-11-06',
+    document_number:'',gross_amount:'30.00',note:''};
+  const button={disabled:false};
+  const form={elements:{issue_date:{value:''}},reset(){}};
+  const receiptLabel={textContent:''};
+  const panel={querySelectorAll:()=>[]};
+  const messages=[],posts=[];
+  let keys=0,workspaceIsMerchant=true,failPostOnce=false,failFileOnce=false;
+  const api=async(path,options)=>{
+    if(path==='/api/accounting/workspaces')return{
+      role:workspaceIsMerchant?'merchant':'customer',active_business_id:14
+    };
+    assert.equal(path,'/api/procurement/purchase-documents');
+    const payload=JSON.parse(options.body);
+    posts.push(payload);
+    if(failPostOnce){failPostOnce=false;throw new Error('Connection lost after submit');}
+    return {already_saved:posts.length>1};
+  };
+  const FakeFormData=function(){this.get=name=>fields[name]??null};
+  const fn=new Function('api','FormData','requestKey','today','message','archive','linkable','readFile',
+    'form','button','receiptLabel','panel',
+    `const ROOT='/api/procurement/purchase-documents';
+      let overlay=panel,businessId=14,pendingKey=null,pendingPayload=null,
+          pendingSubmitted=false,chosenFile=null;
+      const $=selector=>selector==='#mpdForm'?form:
+        selector==='#mpdSave'?button:receiptLabel;
+      ${saveSource}
+      return {save,setFile:file=>{chosenFile=file},state:()=>({pendingKey,pendingPayload,pendingSubmitted})};`);
+  const controller=fn(api,FakeFormData,()=>('purchase-intent-'+(++keys)),()=>fields.issue_date,
+    (text,isError)=>messages.push({text,isError}),async()=>{},async()=>{},
+    async()=>{if(failFileOnce){failFileOnce=false;throw new Error('File read failed');}return 'data:application/pdf;base64,JVBERi0xLjQK'},
+    form,button,receiptLabel,panel);
+  return{...controller,fields,posts,messages,
+    failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
+    setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
+    submit:()=>controller.save({preventDefault(){}})};
+}
+
+test('uncertain POST: same payload replays original key; edited payload cannot use that key',async()=>{
+  const c=makeController();
+  c.failNextPost();
+  await c.submit();
+  assert.equal(c.posts.length,1);
+  const originalKey=c.posts[0].client_request_key;
+  assert.equal(c.state().pendingSubmitted,true);
+  assert.equal(c.messages.at(-1).isError,true);
+  c.fields.gross_amount='31.00';
+  await c.submit();
+  assert.equal(c.posts.length,1,'edited request must not be sent under uncertain original key');
+  assert.match(c.messages.at(-1).text,/may already be saved/);
+  c.fields.gross_amount='30.00';
+  await c.submit();
+  assert.equal(c.posts.length,2);
+  assert.equal(c.posts[1].client_request_key,originalKey);
+  assert.equal(c.state().pendingKey,null,'confirmed replay releases pending intent');
+  c.fields.gross_amount='45.00';
+  await c.submit();
+  assert.equal(c.posts.length,3);
+  assert.notEqual(c.posts[2].client_request_key,originalKey,'new confirmed intent must use new key');
+});
+
+test('failed workspace and file preflight do not reserve or submit a request key',async()=>{
+  const c=makeController();
+  c.setWorkspaceRole(false);
+  await c.submit();
+  assert.equal(c.keyCount(),0);
+  assert.equal(c.posts.length,0);
+  c.setWorkspaceRole(true);
+  c.setFile({name:'receipt.pdf'});
+  c.failNextFile();
+  await c.submit();
+  assert.equal(c.keyCount(),0);
+  assert.equal(c.posts.length,0);
+  c.fields.note='Confirmed file selection';
+  await c.submit();
+  assert.equal(c.posts.length,1);
+  assert.equal(c.keyCount(),1);
+  assert.equal(c.posts[0].note,'Confirmed file selection');
+});
