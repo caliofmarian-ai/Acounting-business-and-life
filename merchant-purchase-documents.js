@@ -268,7 +268,17 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
       );
       if(!sameReceiptFingerprint(saved.rows[0]?.request_fingerprint))throw error(409,'This request key already belongs to a different receipt');
       await client.query('COMMIT');
-      if(evidence)await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'duplicate_upload_cleanup'});
+      if(evidence){
+        // ON CONFLICT resolved to a previously committed receipt. Failure to
+        // delete this separate, unused upload cannot undo that committed
+        // receipt or turn a confirmed replay into a failed save. The warning
+        // contains no filename, evidence ID or customer/business details.
+        try{
+          await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'duplicate_upload_cleanup'});
+        }catch{
+          console.warn('MERCHANT_PURCHASE_DUPLICATE_EVIDENCE_CLEANUP_FAILED');
+        }
+      }
       return{document:shape(saved.rows[0]),already_saved:true};
     }
     newReceiptInserted=true;
