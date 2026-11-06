@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 
 const source=readFileSync(new URL('../public/purchase-documents-ui.js',import.meta.url),'utf8');
 const start=source.indexOf('  async function save(event){');
-const end=source.indexOf('\n  function close(){',start);
+const end=source.indexOf('\n  function close(',start);
 assert.ok(start>=0&&end>start,'literal shipped save controller must be present');
 const saveSource=source.slice(start,end);
 const closeStart=source.indexOf('  function close(',end);
