@@ -57,13 +57,15 @@ function makeController(){
     'form','button','receiptLabel','panel',
     `const ROOT='/api/procurement/purchase-documents';
       let overlay=panel,businessId=14,pendingKey=null,pendingPayload=null,
-          pendingSubmitted=false,chosenFile=null,saveInProgress=false,openAttempt=0,opening=false;
+          pendingSubmitted=false,chosenFile=null,saveInProgress=false,openAttempt=0,opening=false,saveAttempt=0;
       const $=selector=>selector==='#mpdForm'?form:
         selector==='#mpdSave'?button:receiptLabel;
       let previousOverflow='';
       ${saveSource}
       ${closeSource}
-      return {save,close,setFile:file=>{chosenFile=file},state:()=>({pendingKey,pendingPayload,pendingSubmitted,overlayActive:!!overlay,saveInProgress})};`);
+      return {save,close,setFile:file=>{chosenFile=file},
+        mountReplacement:()=>{if(overlay)throw new Error('Close old receipt panel before replacing');overlay={remove(){},querySelectorAll:panel.querySelectorAll};businessId=14},
+        state:()=>({pendingKey,pendingPayload,pendingSubmitted,overlayActive:!!overlay,saveInProgress,buttonDisabled:button.disabled})};`);
   const controller=fn(api,FakeFormData,()=>('purchase-intent-'+(++keys)),()=>fields.issue_date,
     (text,isError)=>messages.push({text,isError}),
     async()=>{
@@ -395,4 +397,36 @@ test('late failed workspace request after profile revocation does not alert repl
   assert.equal(c.created(),0);
   assert.deepEqual(c.alerts,[]);
   assert.equal(c.state().opening,false);
+});
+
+// A previous Merchant dialog may finish an auxiliary archive request after a
+// forced profile switch and a different dialog has started saving. Its finally
+// must not unlock the new POST or permit a duplicate intent.
+test('late old archive completion cannot unlock the replacement Merchant receipt save',async()=>{
+  const c=makeController();
+  const oldArchive=c.holdNextArchive();
+  const oldSave=c.submit();
+  await oldArchive.whenHeld;
+  assert.equal(c.posts.length,1,'first POST was acknowledged before archive refresh');
+  assert.equal(c.close(true),true,'profile change revokes old visible dialog');
+  assert.equal(c.state().saveInProgress,false,'revoked dialog no longer holds global busy state');
+  c.mountReplacement();
+  c.fields.note='Fresh profile document';
+  const newPost=c.holdNextPost();
+  const newSave=c.submit();
+  await newPost.whenHeld;
+  assert.equal(c.posts.length,2);
+  assert.equal(c.state().saveInProgress,true);
+  assert.equal(c.state().buttonDisabled,true);
+  oldArchive.release();
+  await oldSave;
+  assert.equal(c.state().saveInProgress,true,'old finally cannot release new dialog ownership');
+  assert.equal(c.state().buttonDisabled,true,'old finally cannot enable replacement submit');
+  await c.submit();
+  assert.equal(c.posts.length,2,'second submit during replacement POST cannot allocate another intent');
+  newPost.release();
+  await newSave;
+  assert.equal(c.state().saveInProgress,false);
+  assert.equal(c.state().pendingSubmitted,false);
+  assert.notEqual(c.posts[0].client_request_key,c.posts[1].client_request_key);
 });

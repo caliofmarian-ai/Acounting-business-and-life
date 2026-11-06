@@ -3,7 +3,7 @@
   const ROOT='/api/procurement/purchase-documents';
   const MAX_FILE=6*1024*1024;
   let overlay=null,businessId=null,saveInProgress=false,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
-  let openAttempt=0,opening=false;
+  let openAttempt=0,opening=false,saveAttempt=0;
   const $=(selector,root=document)=>root.querySelector(selector);
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const currency=(value,code='PHP')=>value==null?'Amount not recorded':new Intl.NumberFormat('en-PH',{style:'currency',currency:code||'PHP'}).format(Number(value));
@@ -136,6 +136,8 @@
     const panel=overlay,biz=businessId;
     if(!panel||!biz)return;
     saveInProgress=true;
+    // Each save owns its loading state only for the dialog identity that started it.
+    const saveOwner=++saveAttempt;
     const btn=$('#mpdSave',panel);btn.disabled=true;
     try{
       const workspace=await api('/api/accounting/workspaces');
@@ -199,7 +201,11 @@
         message(savedNotice+' Archive or purchase links could not refresh. The save is confirmed; close and reopen to reload the list.',true);
       }
     }catch(error){if(panel===overlay)message(error.message,true)}
-    finally{saveInProgress=false;if(btn)btn.disabled=false}
+    finally{
+      // An obsolete preflight/POST/archive response must not unlock another
+      // Merchant's newly opened receipt dialog after a forced profile switch.
+      if(saveOwner===saveAttempt){saveInProgress=false;if(btn)btn.disabled=false}
+    }
   }
   function close(force=false){
     // A POST can commit even when its acknowledgement is lost. Ordinary X/Escape
@@ -218,6 +224,10 @@
     // A closed panel must not be revived by an older async workspace/list call.
     openAttempt++;
     opening=false;
+    // Forced identity revocation also releases the old dialog's busy state;
+    // a late finally from that dialog cannot clear a replacement save.
+    saveAttempt++;
+    saveInProgress=false;
     overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;
     document.body.style.overflow=previousOverflow;
     return true;
