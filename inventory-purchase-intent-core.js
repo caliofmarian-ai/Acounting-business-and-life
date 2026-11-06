@@ -106,6 +106,14 @@ $install_intent_immutable$;
 const bad=(message,code='INVENTORY_PURCHASE_INTENT_INVALID',status=400)=>
   Object.assign(new Error(message),{code,status});
 const MAX_BIGINT=9223372036854775807n;
+// An unsuccessful ROLLBACK is not proof that a PostgreSQL transaction ended.
+// Its client must be retired, never reused for another Merchant's work.
+const rollbackUnknown=cause=>{
+  const failure=bad('Purchase transaction rollback could not be confirmed; reconcile the original intent before another attempt',
+    'INVENTORY_PURCHASE_INTENT_ROLLBACK_UNKNOWN',503);
+  failure.cause=cause;
+  return failure;
+};
 function dbId(value,label){
   // Reject arrays, wrappers, booleans and objects as Merchant/account/purchase
   // identities rather than coercing them through String() (e.g. [1] => "1").
@@ -452,10 +460,12 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
     started=false;
     return {kind:'new',purchaseId:String(created.purchaseId),response};
   }catch(error){
+    let rollbackFailure=null;
     if(started){
-      // Preserve the original failure for the caller and avoid retrying effects.
-      // If the connection is lost, the owning HTTP layer must discard it.
-      await client.query('ROLLBACK').catch(()=>{});
+      // A failed ROLLBACK can leave the session inside a partially written
+      // transaction. Never return that session to pg's reusable connection pool.
+      try{await client.query('ROLLBACK')}
+      catch(failure){rollbackFailure=failure}
     }
     if(newPurchaseCommitAttempted){
       // ROLLBACK after a lost COMMIT acknowledgement may be a no-op: the
@@ -466,6 +476,7 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
       uncertain.cause=error;
       throw uncertain;
     }
+    if(rollbackFailure)throw rollbackUnknown(rollbackFailure);
     throw error;
   }
 }
@@ -548,7 +559,10 @@ export async function inspectInventoryPurchaseIntent(client,options){
     await client.query('COMMIT');started=false;
     return{kind:'committed',purchaseId:purchase,response,safeToRetry:false};
   }catch(error){
-    if(started)await client.query('ROLLBACK').catch(()=>{});
+    if(started){
+      try{await client.query('ROLLBACK')}
+      catch(failure){throw rollbackUnknown(failure)}
+    }
     throw error;
   }
 }

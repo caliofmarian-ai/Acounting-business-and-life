@@ -803,3 +803,65 @@ test('HTTP purchase adapter discards indeterminate COMMIT client, but returns he
     }
   }
 });
+
+
+test('HTTP purchase and inspection retire a client when PostgreSQL ROLLBACK itself fails',async()=>{
+  // This is a controlled transport-failure simulation, NOT a PostgreSQL
+  // integration result. A failed rollback cannot establish that the current
+  // transaction is closed; a later Merchant must not inherit the same session.
+  for(const route of ['purchase','inspect']){
+    for(const rollbackFails of [true,false]){
+      const lostRollback=new Error('synthetic ROLLBACK acknowledgement lost');
+      const statements=[],releases=[];let writes=0;
+      const client={
+        async query(sql){
+          statements.push(sql);
+          if(sql==='BEGIN')return{rowCount:0,rows:[]};
+          if(sql==='ROLLBACK'){
+            if(rollbackFails)throw lostRollback;
+            return{rowCount:0,rows:[]};
+          }
+          if(sql.includes('INSERT INTO inventory_purchase_intents'))
+            return{rowCount:1,rows:[{intent_key:key}]};
+          if(sql.includes('pg_advisory_xact_lock'))
+            return{rowCount:1,rows:[]};
+          throw Error('Denied authority must never reach purchase SQL: '+sql);
+        },
+        release(...args){releases.push(args)}
+      };
+      const handlers=createInventoryPurchaseIntentHttpHandlers({
+        pool:{async connect(){return client}},
+        authorizeOrigin:async()=>({role:'merchant',businessId:1,accountId:2}),
+        verifyCurrentMerchantAuthority:async()=>false,
+        createPurchase:async()=>{writes++;throw Error('Purchase must not post after revoked authority')}
+      });
+      const req={
+        body:{...payload,origin_business_id:1},
+        get(name){assert.equal(name,'Idempotency-Key');return key}
+      };
+      const result={status:null,body:null};
+      const res={status(code){result.status=code;return this},
+        json(body){result.body=body;return this}};
+      let middlewareError=null;
+      await handlers[route](req,res,error=>{middlewareError=error});
+      assert.equal(middlewareError,null);
+      assert.equal(writes,0);
+      assert.equal(releases.length,1,'one pool release for '+route);
+      assert.equal(statements[0],'BEGIN');
+      assert.equal(statements.at(-1),'ROLLBACK');
+      assert.ok(!statements.includes('COMMIT'),'revoked session cannot commit');
+      if(rollbackFails){
+        assert.equal(result.status,503);
+        assert.equal(result.body.code,'INVENTORY_PURCHASE_INTENT_ROLLBACK_UNKNOWN');
+        assert.equal(result.body.safe_to_retry,false);
+        assert.equal(releases[0][0],lostRollback,
+          'failed ROLLBACK retires the original PostgreSQL client');
+      }else{
+        assert.equal(result.status,403);
+        assert.equal(result.body.code,'INVENTORY_PURCHASE_INTENT_FORBIDDEN');
+        assert.equal(releases[0].length,0,
+          'confirmed ROLLBACK returns a reusable healthy client');
+      }
+    }
+  }
+});
