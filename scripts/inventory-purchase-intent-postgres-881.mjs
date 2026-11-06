@@ -73,7 +73,8 @@ try{
     'CREATE TABLE inventory_purchases(id BIGSERIAL PRIMARY KEY,'+
       'business_id BIGINT REFERENCES businesses(id),inventory_id BIGINT REFERENCES inventory(id));'+
     'CREATE TABLE synthetic_lots(id BIGSERIAL PRIMARY KEY,purchase_id BIGINT REFERENCES inventory_purchases(id));'+
-    'CREATE TABLE synthetic_expenses(id BIGSERIAL PRIMARY KEY,purchase_id BIGINT REFERENCES inventory_purchases(id));'+
+    'CREATE TABLE synthetic_expenses(id BIGSERIAL PRIMARY KEY,purchase_id BIGINT REFERENCES inventory_purchases(id),'+
+      "amount NUMERIC(14,2) NOT NULL DEFAULT 0, account TEXT NOT NULL DEFAULT 'cash');"+
     'CREATE TABLE synthetic_purchase_grants(business_id BIGINT REFERENCES businesses(id),'+
       'account_id BIGINT REFERENCES accounts(id),enabled BOOLEAN NOT NULL,'+
       'PRIMARY KEY(business_id,account_id));'+
@@ -687,6 +688,7 @@ try{
       'UPDATE synthetic_purchase_grants SET enabled=true WHERE business_id=101 AND account_id=501');
 
 
+    const beforeHttpChecks=checks;
     // HTTP->adapter->real PostgreSQL proof (synthetic Merchant grant, NO
     // production route/session). The same transaction creates stock, a
     // purchase, a lot and one expense; a duplicate POST cannot repost them.
@@ -724,7 +726,8 @@ try{
         const lot=(await tx.query(
           'INSERT INTO synthetic_lots(purchase_id) VALUES($1) RETURNING id',[purchase.id])).rows[0];
         const expense=(await tx.query(
-          'INSERT INTO synthetic_expenses(purchase_id) VALUES($1) RETURNING id',[purchase.id])).rows[0];
+          'INSERT INTO synthetic_expenses(purchase_id,amount,account) VALUES($1,$2,$3) RETURNING *',
+          [purchase.id,body.cost,body.account])).rows[0];
         return {purchaseId:purchase.id,
           response:{inventory:{id:inventoryId},purchase,lot,transaction:expense}};
       }
@@ -772,11 +775,27 @@ try{
       eq((await counts(body.item)).purchases,1,'HTTP duplicate only one purchase');
       eq((await counts(body.item)).lots,1,'HTTP duplicate only one lot');
       eq((await counts(body.item)).expenses,1,'HTTP duplicate only one expense');
+      const money=async item=>{
+        const r=await pool.query('SELECT COALESCE(SUM(e.amount),0)::text total,MIN(e.account) account '+
+          'FROM synthetic_expenses e JOIN inventory_purchases p ON p.id=e.purchase_id '+
+          'JOIN inventory i ON i.id=p.inventory_id WHERE i.business_id=101 AND i.item=$1',[item]);
+        return r.rows[0];
+      };
+      eq(Number((await money(body.item)).total),10.5,'same-key HTTP replay posts PHP cost once');
+      eq((await money(body.item)).account,'cash','HTTP cost remains bound to original account');
       eq(Number((await counts(body.item)).quantity),3,'HTTP duplicate only one stock increment');
       eq((await send('/qa/inventory/purchase',httpKey,
         {...body,cost:'90.00'})).status,409,'same-key changed paid instructions rejected');
       eq((await send('/qa/inventory/purchase',httpKey,
         {...body,origin_business_id:'102'})).status,409,'wrong active Merchant origin rejected');
+      eq((await send('/qa/inventory/purchase',httpKey,
+        {...body,origin_business_id:undefined})).status,409,
+        'missing origin cannot fall back to current Merchant business');
+      const missingKey=await fetch(url+'/qa/inventory/purchase',{method:'POST',
+        headers:{'content-type':'application/json','X-Test-Account':'501'},
+        body:JSON.stringify({...body,item:'HTTP missing key 881'})});
+      eq(missingKey.status,400,'missing stable header cannot receive new stock');
+      eq(await counts('HTTP missing key 881'),null,'missing stable header causes no stock write');
       eq((await send('/qa/inventory/purchase',httpKey,body,'502')).status,403,
         'unauthenticated synthetic account is rejected');
       const seen=await send('/qa/inventory/purchase/inspect',httpKey,body);
@@ -795,6 +814,8 @@ try{
       eq((await counts(body.item)).purchases,2,'two deliberate purchases leave two rows');
       eq((await counts(body.item)).lots,2,'two deliberate purchases leave two lots');
       eq((await counts(body.item)).expenses,2,'two deliberate purchases leave two expenses');
+      eq(Number((await money(body.item)).total),21,
+        'distinct accepted HTTP intents each preserve exact PHP cost once');
 
       // Forced error after stock and purchase insert: transaction rollback
       // must erase all stock, lot, expense and the reserved intent.
@@ -837,7 +858,7 @@ try{
       await pool.query(
         'UPDATE synthetic_purchase_grants SET enabled=true WHERE business_id=101 AND account_id=501');
       console.log(JSON.stringify({httpLoopback:true,syntheticMerchantAuthority:true,
-        syntheticHttpPostgresAssertions:25,productionRouteMounted:false}));
+        syntheticHttpPostgresAssertions:checks-beforeHttpChecks,productionRouteMounted:false}));
     }finally{
       await new Promise((resolve,reject)=>httpServer.close(error=>error?reject(error):resolve()));
     }
