@@ -2,7 +2,7 @@
 (()=>{
   const ROOT='/api/procurement/purchase-documents';
   const MAX_FILE=6*1024*1024;
-  let overlay=null,businessId=null,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
+  let overlay=null,businessId=null,saveInProgress=false,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
   const $=(selector,root=document)=>root.querySelector(selector);
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const currency=(value,code='PHP')=>value==null?'Amount not recorded':new Intl.NumberFormat('en-PH',{style:'currency',currency:code||'PHP'}).format(Number(value));
@@ -128,8 +128,13 @@
   }
   async function save(event){
     event.preventDefault();
+    // A disabled submit button does not cancel a second submit event already
+    // dispatched while workspace/file checks or POST acknowledgement await.
+    // Only one receipt save operation may own the dialog at a time.
+    if(saveInProgress)return;
     const panel=overlay,biz=businessId;
     if(!panel||!biz)return;
+    saveInProgress=true;
     const btn=$('#mpdSave',panel);btn.disabled=true;
     try{
       const workspace=await api('/api/accounting/workspaces');
@@ -186,7 +191,7 @@
       message(result.already_saved?'This document was already saved.':'Purchase document saved securely.');
       await archive();await linkable();
     }catch(error){if(panel===overlay)message(error.message,true)}
-    finally{if(btn)btn.disabled=false}
+    finally{saveInProgress=false;if(btn)btn.disabled=false}
   }
   function close(){
     if(!overlay)return;

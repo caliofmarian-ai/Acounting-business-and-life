@@ -21,9 +21,14 @@ function makeController(){
   const messages=[],posts=[];
   let keys=0,workspaceIsMerchant=true,failPostOnce=false,failFileOnce=false;
   let workspaceChecks=0,changeDuringVerify=null,changeDuringRead=null;
+  let holdWorkspace=false,releaseWorkspace=null,notifyWorkspaceHeld=null;
   const api=async(path,options)=>{
     if(path==='/api/accounting/workspaces'){
       workspaceChecks++;
+      if(holdWorkspace){
+        holdWorkspace=false;
+        await new Promise(resolve=>{releaseWorkspace=resolve;notifyWorkspaceHeld?.()});
+      }
       if(workspaceChecks%2===0&&changeDuringVerify){
         const change=changeDuringVerify;changeDuringVerify=null;
         await Promise.resolve();change();
@@ -41,7 +46,7 @@ function makeController(){
     'form','button','receiptLabel','panel',
     `const ROOT='/api/procurement/purchase-documents';
       let overlay=panel,businessId=14,pendingKey=null,pendingPayload=null,
-          pendingSubmitted=false,chosenFile=null;
+          pendingSubmitted=false,chosenFile=null,saveInProgress=false;
       const $=selector=>selector==='#mpdForm'?form:
         selector==='#mpdSave'?button:receiptLabel;
       ${saveSource}
@@ -56,6 +61,12 @@ function makeController(){
     failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
     setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
     setLinks:links=>{selectedLinks=links},
+    holdNextWorkspace:()=>{
+      let notify;
+      const whenHeld=new Promise(resolve=>{notify=resolve});
+      holdWorkspace=true;notifyWorkspaceHeld=notify;
+      return {whenHeld,release:()=>{assert.ok(releaseWorkspace,'workspace must be held');releaseWorkspace()}};
+    },
     changeDuringConfirmation:change=>{changeDuringVerify=change},
     changeDuringFileRead:change=>{changeDuringRead=change},
     submit:()=>controller.save({preventDefault(){}})};
@@ -138,4 +149,26 @@ test('camera file replacement while file read is pending never posts the old sca
   await c.submit();
   assert.equal(c.posts.length,1);
   assert.equal(c.posts[0].file_name,'new.pdf');
+});
+
+// A real browser can dispatch submit by Enter, keyboard or scripted event even
+// after the button becomes disabled. Preflight must be a single-flight operation:
+// without the guard, the second invocation posts and clears pendingKey before
+// the first resumes, producing two distinct receipt keys for one visible form.
+test('overlapping save events cannot create a second receipt intent while preflight awaits',async()=>{
+  const c=makeController();
+  const gate=c.holdNextWorkspace();
+  const first=c.submit();
+  await gate.whenHeld;
+  assert.equal(c.posts.length,0);
+  assert.equal(c.keyCount(),0);
+  await c.submit();
+  assert.equal(c.posts.length,0,'second submit must not reach POST while first preflight waits');
+  assert.equal(c.keyCount(),0,'second submit must not allocate a separate receipt key');
+  gate.release();
+  await first;
+  assert.equal(c.posts.length,1);
+  assert.equal(c.keyCount(),1);
+  assert.equal(c.state().pendingSubmitted,false);
+  assert.equal(c.state().pendingKey,null);
 });
