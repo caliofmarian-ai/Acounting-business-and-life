@@ -4,6 +4,9 @@
 // BEGIN, use one pg Client for the whole purchase+expense+lot transaction, and
 // create the schema at a controlled migration/startup boundary, never per GET.
 import {createHash} from 'node:crypto';
+// Native Date serialization is an intentional exception to plain JSON data.
+// A later monkey-patched serializer must not rewrite financial evidence.
+const NATIVE_DATE_TO_JSON=Date.prototype.toJSON;
 
 export const INVENTORY_PURCHASE_INTENT_SCHEMA = `
 CREATE TABLE IF NOT EXISTS inventory_purchase_intents (
@@ -158,12 +161,20 @@ function requireLosslessPurchaseSnapshot(value,depth=0,ancestors=new WeakSet()){
     if(!Number.isFinite(value.getTime())||
        Object.getPrototypeOf(value)!==Date.prototype||
        Object.getOwnPropertyNames(value).length||
-       Object.getOwnPropertySymbols(value).length)throw invalid();
+       Object.getOwnPropertySymbols(value).length||
+       Date.prototype.toJSON!==NATIVE_DATE_TO_JSON||
+       Object.hasOwn(Object.prototype,'toJSON'))throw invalid();
     return;
   }
   if(!Array.isArray(value)&&Object.getPrototypeOf(value)!==Object.prototype&&
      Object.getPrototypeOf(value)!==null)throw invalid();
-  if(ancestors.has(value)||Object.getOwnPropertySymbols(value).length||Object.hasOwn(value,'toJSON'))throw invalid();
+  // JSON.stringify invokes inherited toJSON as well as own serializers.
+  // Otherwise a prototype extension can silently strip a valid purchase's
+  // stock, lot or expense fields even though every own field passed validation.
+  if(Object.hasOwn(Object.prototype,'toJSON')||
+     (Array.isArray(value)&&Object.hasOwn(Array.prototype,'toJSON'))||
+     ancestors.has(value)||Object.getOwnPropertySymbols(value).length||
+     Object.hasOwn(value,'toJSON'))throw invalid();
   ancestors.add(value);
   if(Array.isArray(value)){
     if(Object.keys(value).length!==value.length||

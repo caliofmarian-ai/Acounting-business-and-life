@@ -240,6 +240,32 @@ test('response snapshot rejects silently dropped or nullified financial evidence
   assert.equal(stored.expense.total,0);
 });
 
+test('inherited JSON serializers cannot rewrite a committed purchase evidence snapshot',async()=>{
+  const context={businessId:1,accountId:2,intentKey:key,purchaseId:44};
+  let queries=0;
+  const noWrites={async query(){queries++;throw Error('A lossy response reached purchase SQL')}};
+  const restore=async (prototype,serializer,response)=>{
+    const before=Object.getOwnPropertyDescriptor(prototype,'toJSON');
+    try{
+      Object.defineProperty(prototype,'toJSON',{configurable:true,writable:true,value:serializer});
+      await assert.rejects(finishInventoryPurchaseIntent(noWrites,{...context,response}),
+        error=>error.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&error.status===409);
+    }finally{
+      if(before)Object.defineProperty(prototype,'toJSON',before);
+      else delete prototype.toJSON;
+    }
+  };
+  // In each case JSON.stringify would silently discard valid original fields
+  // without the new guard. A normal native Date already has a separate control.
+  await restore(Object.prototype,function(){return{purchase:{id:44}}},
+    {purchase:{id:44},expense:{total:'12.50'},stock:{quantity:'2.000'}});
+  await restore(Array.prototype,function(){return[]},
+    {purchase:{id:44},expense:{total:'12.50'},lot_allocations:[{lot_id:5,quantity:'2.000'}]});
+  await restore(Date.prototype,function(){return 'altered timestamp'},
+    {purchase:{id:44},received_at:new Date('2026-11-05T12:00:00.000Z')});
+  assert.equal(queries,0,'Inherited serializers must be rejected before any financial SQL');
+});
+
 test('transaction executor commits one purchase, then replays without touching inventory',async()=>{
   const events=[];let committed=null;let draft=null;
   const client={async query(sql,args){
