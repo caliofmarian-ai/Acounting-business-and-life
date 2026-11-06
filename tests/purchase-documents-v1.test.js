@@ -278,14 +278,14 @@ test('confirmed competing receipt replay stays successful when unused duplicate-
   // the unique intent already committed elsewhere while this request uploaded.
   const crypto=(await import('node:crypto')).default;
   const source=read('merchant-purchase-documents.js')
-    .replace(/^import[\\s\\S]*?;\\n/gm,'')
+    .replace(/^import[\s\S]*?;\n/gm,'')
     .replace(/^export /gm,'');
   const dependencies=[
     'crypto','supplierDomainV2Internals','ensurePrivateEvidenceSchema',
     'storePrivateEvidence','bindPrivateEvidenceSource','readPrivateEvidence',
     'sendPrivateEvidence','deletePrivateEvidence','console'
   ];
-  const makeCoordinator=new Function(...dependencies,source+'\\nreturn savePurchaseDocument;');
+  const makeCoordinator=new Function(...dependencies,source+'\nreturn savePurchaseDocument;');
   const record=normalizeMerchantPurchaseDocument({
     ...base(),links:[],file_name:'original.pdf',
     data_url:'data:application/pdf;base64,JVBERi0xLjQK'
