@@ -298,6 +298,18 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
 }
 
 export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity}){
+  // These routes expose account/business-private purchase evidence. Guard the
+  // complete route family before authentication, including errors and files.
+  app.use('/api/procurement/purchase-documents',(req,res,next)=>{
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.vary('Cookie');
+    res.vary('Authorization');
+    // Express may otherwise answer a repeated private JSON GET with 304 from
+    // a stale ETag even after an account/business switch.
+    delete req.headers['if-none-match'];
+    delete req.headers['if-modified-since'];
+    next();
+  });
   app.get('/api/procurement/purchase-documents/linkable-purchases',async(req,res,next)=>{
     try{
       const {businessId}=await requireMerchantDocumentBusiness(pool,identity,req);

@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import express from 'express';
 import {readFileSync} from 'node:fs';
 import {
-  normalizeMerchantPurchaseDocument,philippinesPurchaseDocumentDate,MERCHANT_PURCHASE_FILE_MAX_BYTES
+  normalizeMerchantPurchaseDocument,philippinesPurchaseDocumentDate,MERCHANT_PURCHASE_FILE_MAX_BYTES,
+  registerMerchantPurchaseDocumentRoutes
 } from '../merchant-purchase-documents.js';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
@@ -427,4 +429,54 @@ test('uncertain purchase-receipt COMMIT preserves the original evidence; definit
   assert.ok(!definite.includes('COMMIT'));
   const successful=await scenario('ok');
   assert.ok(successful.includes('COMMIT')&&!successful.includes('delete'));
+});
+
+test('private Merchant purchase-document HTTP routes refuse stale conditional 304 and forbid caching',async()=>{
+  // Real Express HTTP/ETag behavior over loopback; identities are denied synthetic
+  // sessions. This is a cache/auth negative, NOT Merchant Preview acceptance.
+  const app=express();
+  registerMerchantPurchaseDocumentRoutes({
+    app,pool:{},body:express.json(),
+    identity:async()=>{throw Object.assign(new Error('Unauthorized'),{status:401});}
+  });
+  app.use((err,req,res,next)=>res.status(err.status||500).json({error:err.message}));
+  const server=await new Promise(resolve=>{
+    const listening=app.listen(0,'127.0.0.1',()=>resolve(listening));
+  });
+  const baseUrl='http://127.0.0.1:'+server.address().port;
+  const assertPrivate=response=>{
+    const cache=response.headers.get('cache-control')||'';
+    const vary=response.headers.get('vary')||'';
+    assert.match(cache,/private/i);
+    assert.match(cache,/no-store/i);
+    assert.match(vary,/Cookie/i);
+    assert.match(vary,/Authorization/i);
+  };
+  try{
+    for(const path of [
+      '/api/procurement/purchase-documents?business_id=14',
+      '/api/procurement/purchase-documents/linkable-purchases?business_id=14',
+      '/api/procurement/purchase-documents/23?business_id=14',
+      '/api/procurement/purchase-documents/23/file?business_id=14'
+    ]){
+      const first=await fetch(baseUrl+path);
+      assert.equal(first.status,401,path);
+      assertPrivate(first);
+      const etag=first.headers.get('etag');
+      assert.ok(etag,'Express should generate a JSON ETag for the negative control');
+      const repeated=await fetch(baseUrl+path,{headers:{
+        'If-None-Match':etag,'If-Modified-Since':'Wed, 21 Oct 2099 07:28:00 GMT'
+      }});
+      assert.equal(repeated.status,401,'no conditional 304 from a private route: '+path);
+      assertPrivate(repeated);
+      assert.equal((await repeated.json()).error,'Unauthorized');
+    }
+    const submit=await fetch(baseUrl+'/api/procurement/purchase-documents',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:'{}'
+    });
+    assert.equal(submit.status,401);
+    assertPrivate(submit);
+  }finally{
+    await new Promise((resolve,reject)=>server.close(err=>err?reject(err):resolve()));
+  }
 });
