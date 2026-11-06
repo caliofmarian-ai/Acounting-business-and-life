@@ -217,6 +217,13 @@ function stableToHash(value,hash,budget,depth=0){
     write(JSON.stringify(value));return;
   }
   if(Array.isArray(value)){
+    // JSON.stringify honors inherited serializers. Prototype extensions (or
+    // Array subclasses) must not replace stock/expense lines after hashing.
+    if(Object.getPrototypeOf(value)!==Array.prototype||
+       Object.hasOwn(Object.prototype,'toJSON')||
+       Object.hasOwn(Array.prototype,'toJSON')){
+      throw bad('Purchase payload arrays must contain JSON-only values');
+    }
     // Sparse or decorated JS arrays are not JSON request arrays and could
     // otherwise omit an item or silently ignore a non-indexed instruction.
     if(Object.keys(value).length!==value.length||
@@ -234,6 +241,7 @@ function stableToHash(value,hash,budget,depth=0){
     write(']');return;
   }
   if(typeof value!=='object'||Object.getPrototypeOf(value)!==Object.prototype||
+     Object.hasOwn(Object.prototype,'toJSON')||
      Object.getOwnPropertySymbols(value).length){
     throw bad('Purchase payload must contain JSON-only values');
   }

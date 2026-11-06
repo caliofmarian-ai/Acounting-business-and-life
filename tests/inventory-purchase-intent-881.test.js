@@ -61,6 +61,46 @@ test('fingerprint rejects non-enumerable economic instructions rather than silen
   assert.equal(inventoryPurchaseFingerprint({...approved,lines:[{item:'Beans',cost:'12.50'}]}),goodNested);
 });
 
+test('fingerprint rejects inherited JSON serializers that silently omit purchase instructions',()=>{
+  const original=inventoryPurchaseFingerprint(payload);
+  const originalObjectSerializer=Object.getOwnPropertyDescriptor(Object.prototype,'toJSON');
+  const originalArraySerializer=Object.getOwnPropertyDescriptor(Array.prototype,'toJSON');
+  const restore=(prototype,name,descriptor)=>{
+    if(descriptor)Object.defineProperty(prototype,name,descriptor);
+    else delete prototype[name];
+  };
+  try{
+    Object.defineProperty(Object.prototype,'toJSON',{
+      configurable:true,value(){return{item:'Beans'}}
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(payload)),{item:'Beans'},
+      'an inherited serializer can erase the original cost and account');
+    assert.throws(()=>inventoryPurchaseFingerprint(payload),
+      e=>e.status===400&&e.code==='INVENTORY_PURCHASE_INTENT_INVALID');
+  }finally{
+    restore(Object.prototype,'toJSON',originalObjectSerializer);
+  }
+  try{
+    Object.defineProperty(Array.prototype,'toJSON',{
+      configurable:true,value(){return[]}
+    });
+    const withLines={...payload,lines:[{item:'Beans',total_cost:'12.50'}]};
+    assert.deepEqual(JSON.parse(JSON.stringify(withLines)).lines,[],
+      'an inherited array serializer can erase the receiving line');
+    assert.throws(()=>inventoryPurchaseFingerprint(withLines),
+      e=>e.status===400&&e.code==='INVENTORY_PURCHASE_INTENT_INVALID');
+  }finally{
+    restore(Array.prototype,'toJSON',originalArraySerializer);
+  }
+  const customArray=[{item:'Beans'}];
+  Object.setPrototypeOf(customArray,Object.create(Array.prototype));
+  assert.throws(()=>inventoryPurchaseFingerprint({...payload,lines:customArray}),
+    e=>e.status===400&&e.code==='INVENTORY_PURCHASE_INTENT_INVALID',
+    'an Array subclass can carry a separately inherited toJSON');
+  assert.equal(inventoryPurchaseFingerprint(payload),original,
+    'ordinary JSON request hashes stay byte-identical');
+});
+
 test('invalid key, identity or payload never reaches PostgreSQL',async()=>{
   for(const invalid of [null,42,true,'','short',' padded-key-1234','padded-key-1234 ','has space 123456','a'.repeat(129),'a\u0000'.repeat(12)]){
     await assert.rejects(claimInventoryPurchaseIntent(noDb,{businessId:1,accountId:2,intentKey:invalid,payload}),e=>e.status===400);
