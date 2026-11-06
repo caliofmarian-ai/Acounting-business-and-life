@@ -327,14 +327,21 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
   // would commit different stock/expense data under the original fingerprint.
   const initiatingFingerprint=inventoryPurchaseFingerprint(context.payload);
   const assertInstructionsUnchanged=()=>{
-    let current;
-    try{current=inventoryPurchaseFingerprint(context.payload)}
-    catch{throw bad('Purchase instructions changed during receiving',
+    let current,original;
+    try{
+      // Callers may replace options.payload or retarget an origin while SQL
+      // awaits. A callback closing over options must never post different
+      // economic instructions under the original intent reservation.
+      if(dbId(options?.businessId,'Business')!==context.businessId||
+         dbId(options?.accountId,'Account')!==context.accountId||
+         literalKey(options?.intentKey)!==context.intentKey)throw new Error('Origin changed');
+      current=inventoryPurchaseFingerprint(options?.payload);
+      original=inventoryPurchaseFingerprint(context.payload);
+    }catch{throw bad('Purchase instructions or origin changed during receiving',
       'INVENTORY_PURCHASE_INTENT_CONFLICT',409)}
-    if(current!==initiatingFingerprint){
-      throw bad('Purchase instructions changed during receiving',
-        'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
-    }
+    if(current!==initiatingFingerprint||original!==initiatingFingerprint)throw bad(
+      'Purchase instructions or origin changed during receiving',
+      'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
   };
   const verifyCurrent=options?.verifyCurrentMerchantAuthority;
   if(typeof verifyCurrent!=='function'){
@@ -419,15 +426,22 @@ export async function inspectInventoryPurchaseIntent(client,options){
   const business=dbId(options?.businessId,'Business');
   const account=dbId(options?.accountId,'Account');
   const key=literalKey(options?.intentKey);
-  const fingerprint=inventoryPurchaseFingerprint(options?.payload);
+  const originalPayload=options?.payload;
+  const fingerprint=inventoryPurchaseFingerprint(originalPayload);
   // The caller can replace/mutate an object while authorization and SQL
   // await. An absent key is NOT exempt from the original-request invariant.
   const assertOriginalInstructions=()=>{
-    let current;
-    try{current=inventoryPurchaseFingerprint(options?.payload)}
-    catch{throw bad('Purchase instructions changed during reconciliation',
+    let current,original;
+    try{
+      if(dbId(options?.businessId,'Business')!==business||
+         dbId(options?.accountId,'Account')!==account||
+         literalKey(options?.intentKey)!==key)throw new Error('Origin changed');
+      current=inventoryPurchaseFingerprint(options?.payload);
+      original=inventoryPurchaseFingerprint(originalPayload);
+    }catch{throw bad('Purchase instructions or origin changed during reconciliation',
       'INVENTORY_PURCHASE_INTENT_CONFLICT',409)}
-    if(current!==fingerprint)throw bad('Purchase instructions changed during reconciliation',
+    if(current!==fingerprint||original!==fingerprint)throw bad(
+      'Purchase instructions or origin changed during reconciliation',
       'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
   };
   const verify=options?.verifyCurrentMerchantAuthority;

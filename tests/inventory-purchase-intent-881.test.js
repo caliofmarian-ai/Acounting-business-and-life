@@ -572,3 +572,96 @@ test('read-only inspection rejects mutated or replaced instructions at every asy
       'even absent-key inspection checks original instructions');
   }
 });
+
+test('mutable origin or replaced body cannot change the purchase intent between SQL awaits',async()=>{
+  for(const mutation of ['body','business','account','key','invalid']){
+    for(const phase of ['begin','lock','authorize','callback','before-commit','replay']){
+      const opts={businessId:1,accountId:2,intentKey:key,payload:{...payload}};
+      const hash=inventoryPurchaseFingerprint(opts.payload);
+      const events=[];
+      let posted=0;
+      const change=()=>{
+        if(mutation==='body')opts.payload={...opts.payload,total_cost:'99.99'};
+        if(mutation==='business')opts.businessId=3;
+        if(mutation==='account')opts.accountId=4;
+        if(mutation==='key')opts.intentKey='b2345678-b123-4123-9abc-123456789012';
+        if(mutation==='invalid')opts.businessId={id:3};
+      };
+      const db={async query(sql){
+        if(sql==='BEGIN'){
+          events.push('BEGIN');if(phase==='begin')change();return{rowCount:0,rows:[]};
+        }
+        if(sql==='ROLLBACK'||sql==='COMMIT'){
+          events.push(sql);return{rowCount:0,rows:[]};
+        }
+        if(sql.includes('INSERT INTO inventory_purchase_intents')){
+          events.push('claim');return phase==='replay'?{rowCount:0,rows:[]}:
+            {rowCount:1,rows:[{intent_key:key}]};
+        }
+        if(sql.includes('SELECT payload_sha256,purchase_id,response_json'))return{
+          rowCount:1,rows:[{payload_sha256:hash,purchase_id:42,response_json:{purchase:{id:42}}}]
+        };
+        if(sql.includes('pg_advisory_xact_lock')){
+          if(phase==='lock')change();return{rowCount:1,rows:[]};
+        }
+        if(sql.includes('UPDATE inventory_purchase_intents'))return{rowCount:1,rows:[{purchase_id:42}]};
+        throw Error('Unexpected SQL in intent mutation test');
+      }};
+      opts.verifyCurrentMerchantAuthority=async(_db,{stage})=>{
+        if((phase==='authorize'&&stage==='before-write')||
+           (phase==='before-commit'&&stage==='before-commit')||
+           (phase==='replay'&&stage==='replay'))change();
+        return true;
+      };
+      await assert.rejects(executeInventoryPurchaseIntent(db,opts,async()=>{
+        posted++;if(phase==='callback')change();
+        return{purchaseId:42,response:{purchase:{id:42}}};
+      }),e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&e.status===409,
+      mutation+'/'+phase);
+      assert.equal(events.at(-1),'ROLLBACK');
+      assert.ok(!events.includes('COMMIT'));
+      assert.equal(posted,['callback','before-commit'].includes(phase)?1:0);
+    }
+  }
+});
+
+test('read-only purchase reconciliation rejects option/origin replacement and old body mutation',async()=>{
+  for(const mutation of ['body','old-body','business','account','key']){
+    for(const phase of ['begin','authorize','intent','purchase']){
+      const oldBody={...payload};
+      const opts={businessId:1,accountId:2,intentKey:key,payload:oldBody};
+      const hash=inventoryPurchaseFingerprint(oldBody),events=[];
+      const change=()=>{
+        if(mutation==='body')opts.payload={...payload,total_cost:'99.99'};
+        if(mutation==='old-body'){opts.payload={...payload};oldBody.total_cost='99.99';}
+        if(mutation==='business')opts.businessId=3;
+        if(mutation==='account')opts.accountId=4;
+        if(mutation==='key')opts.intentKey='b2345678-b123-4123-9abc-123456789012';
+      };
+      opts.verifyCurrentMerchantAuthority=async()=>{
+        if(phase==='authorize')change();return true;
+      };
+      const db={async query(sql){
+        if(sql==='BEGIN'){
+          events.push(sql);if(phase==='begin')change();return{rowCount:0,rows:[]};
+        }
+        if(sql==='COMMIT'||sql==='ROLLBACK'){
+          events.push(sql);return{rowCount:0,rows:[]};
+        }
+        if(sql.includes('FROM inventory_purchase_intents')){
+          if(phase==='intent')change();
+          return{rowCount:1,rows:[{payload_sha256:hash,purchase_id:42,response_json:{purchase:{id:42}}}]};
+        }
+        if(sql.includes('FROM inventory_purchases')){
+          if(phase==='purchase')change();return{rowCount:1,rows:[{id:42}]};
+        }
+        throw Error('Read-only inspection attempted unexpected SQL');
+      }};
+      await assert.rejects(inspectInventoryPurchaseIntent(db,opts),
+        e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&e.status===409,
+        mutation+'/'+phase);
+      assert.equal(events.at(-1),'ROLLBACK');
+      assert.ok(!events.includes('COMMIT'));
+    }
+  }
+});
