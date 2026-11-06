@@ -136,6 +136,8 @@ test('schema includes scoped unique reservation, FK and private committed respon
   assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/response_json JSONB/);
   assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/CREATE CONSTRAINT TRIGGER inventory_purchase_intents_complete_commit/);
   assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/DEFERRABLE INITIALLY DEFERRED/);
+  assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/CREATE TRIGGER inventory_purchase_intent_immutable/);
+  assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/OLD\.committed_at IS NOT NULL/);
 });
 
 test('finish binds the purchase row to the same authorized business',async()=>{

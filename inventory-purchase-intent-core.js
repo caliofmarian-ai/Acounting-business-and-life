@@ -59,6 +59,45 @@ BEGIN
   END IF;
 END;
 $install_intent_complete$;
+
+-- Once a receiving intent has been completed, its original economic
+-- fingerprint, purchase provenance and replay evidence are immutable. The
+-- first incomplete→complete UPDATE in the *same* receiving transaction remains
+-- valid; subsequent updates cannot silently rewrite the committed answer.
+-- This protects future refactors and operator SQL from corrupting the evidence,
+-- without preventing separate, authorized retention/deletion procedures.
+CREATE OR REPLACE FUNCTION inventory_purchase_intents_assert_immutable()
+RETURNS trigger LANGUAGE plpgsql AS $intent_immutable$
+BEGIN
+  IF OLD.committed_at IS NOT NULL AND (
+    NEW.business_id IS DISTINCT FROM OLD.business_id
+    OR NEW.account_id IS DISTINCT FROM OLD.account_id
+    OR NEW.intent_key IS DISTINCT FROM OLD.intent_key
+    OR NEW.payload_sha256 IS DISTINCT FROM OLD.payload_sha256
+    OR NEW.purchase_id IS DISTINCT FROM OLD.purchase_id
+    OR NEW.response_json IS DISTINCT FROM OLD.response_json
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at
+    OR NEW.committed_at IS DISTINCT FROM OLD.committed_at
+  ) THEN
+    RAISE EXCEPTION 'Committed inventory purchase intent is immutable'
+      USING ERRCODE='23514', CONSTRAINT='inventory_purchase_intent_immutable';
+  END IF;
+  RETURN NEW;
+END;
+$intent_immutable$;
+DO $install_intent_immutable$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgrelid='inventory_purchase_intents'::regclass
+       AND tgname='inventory_purchase_intent_immutable'
+  ) THEN
+    CREATE TRIGGER inventory_purchase_intent_immutable
+      BEFORE UPDATE ON inventory_purchase_intents
+      FOR EACH ROW EXECUTE FUNCTION inventory_purchase_intents_assert_immutable();
+  END IF;
+END;
+$install_intent_immutable$;
 `;
 
 const bad=(message,code='INVENTORY_PURCHASE_INTENT_INVALID',status=400)=>

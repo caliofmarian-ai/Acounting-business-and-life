@@ -116,6 +116,48 @@ try{
     eq((await pool.query('SELECT count(*)::int AS n FROM synthetic_expenses')).rows[0].n,
       1,'one expense');
 
+    // A completed intent is permanent private economic evidence. Rewriting the
+    // fingerprint, purchase link or replay JSON after COMMIT would silently
+    // change the meaning of a later same-key retry. Exercise real PG triggers.
+    const savedIntent=await pool.query(
+      'SELECT payload_sha256,purchase_id,response_json::text AS response_text,committed_at FROM inventory_purchase_intents WHERE business_id=101 AND account_id=501 AND intent_key=$1',
+      [key]);
+    eq(savedIntent.rowCount,1,'original completed intent is present for tamper check');
+    const immutableChanges=[
+      ['payload fingerprint',"payload_sha256=repeat('0',64)"],
+      ['source purchase','purchase_id=NULL'],
+      ['replay snapshot',"response_json='{}'::jsonb"],
+      ['commit timestamp','committed_at=NULL'],
+      ['idempotency key',"intent_key='different-committed-key-881'"]
+    ];
+    for(const [label,change] of immutableChanges){
+      let denied=null;
+      try{
+        await pool.query(
+          'UPDATE inventory_purchase_intents SET '+change+
+          ' WHERE business_id=101 AND account_id=501 AND intent_key=$1',[key]);
+      }catch(error){denied=error}
+      eq(denied?.code,'23514',label+' cannot rewrite completed intent');
+      eq(denied?.constraint,'inventory_purchase_intent_immutable',
+        label+' rejected by the immutable committed-evidence trigger');
+    }
+    const afterTamper=await pool.query(
+      'SELECT payload_sha256,purchase_id,response_json::text AS response_text,committed_at FROM inventory_purchase_intents WHERE business_id=101 AND account_id=501 AND intent_key=$1',
+      [key]);
+    eq(afterTamper.rowCount,1,'original intent key remains present');
+    eq(afterTamper.rows[0].payload_sha256,savedIntent.rows[0].payload_sha256,
+      'original payload fingerprint remains intact');
+    eq(String(afterTamper.rows[0].purchase_id),String(savedIntent.rows[0].purchase_id),
+      'original purchase provenance remains intact');
+    eq(afterTamper.rows[0].response_text,savedIntent.rows[0].response_text,
+      'original response JSON remains intact');
+    eq(afterTamper.rows[0].committed_at.getTime(),savedIntent.rows[0].committed_at.getTime(),
+      'original completed timestamp remains intact');
+    const immutableReplay=await post(a,101,key);
+    eq(immutableReplay.kind,'replay','immutable committed evidence still replays');
+    eq(String(immutableReplay.purchaseId),String(p.id),
+      'post-tamper replay preserves original purchase identifier');
+
     await b.query('BEGIN');
     let conflicting=false;
     try{
