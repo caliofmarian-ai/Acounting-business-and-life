@@ -1,0 +1,90 @@
+// #881: reusable HTTP adapter for the receiving-intent coordinator.
+// NOT mounted by the application until #841/#821 origin binding is released.
+// The integrator must provide current session + Merchant authorization and
+// one transaction-scoped PostgreSQL grant checker (never a cached role flag).
+import {
+  executeInventoryPurchaseIntent,
+  inspectInventoryPurchaseIntent,
+  inventoryPurchaseFingerprint
+} from './inventory-purchase-intent-core.js';
+
+const httpError=(message,code,status)=>
+  Object.assign(new Error(message),{code,status});
+const identifier=value=>{
+  if(typeof value==='number'&&(!Number.isSafeInteger(value)||value<=0))return null;
+  if(typeof value!=='number'&&typeof value!=='string'&&typeof value!=='bigint')return null;
+  const raw=String(value);
+  if(!/^[1-9][0-9]{0,18}$/.test(raw)||BigInt(raw)>9223372036854775807n)return null;
+  return raw;
+};
+
+export function createInventoryPurchaseIntentHttpHandlers({
+  pool,authorizeOrigin,verifyCurrentMerchantAuthority,createPurchase
+}){
+  if(typeof pool?.connect!=='function'||typeof authorizeOrigin!=='function'||
+     typeof verifyCurrentMerchantAuthority!=='function'||typeof createPurchase!=='function'){
+    throw new Error('HTTP purchase intent requires transactional pool, bound session authority, live DB grant and writer');
+  }
+  async function handle(req,res,next,readOnly){
+    let client;
+    try{
+      if(!req.body||typeof req.body!=='object'||Array.isArray(req.body)){
+        throw httpError('Purchase instructions must be a JSON object',
+          'INVENTORY_PURCHASE_INTENT_INVALID',400);
+      }
+      const origin=await authorizeOrigin(req);
+      const businessId=identifier(origin?.businessId);
+      const accountId=identifier(origin?.accountId);
+      if(origin?.role!=='merchant'||!businessId||!accountId){
+        throw httpError('Current Merchant session required',
+          'INVENTORY_PURCHASE_INTENT_FORBIDDEN',403);
+      }
+      // Never infer the intended business from a new/current preference after
+      // transport. The originating business is explicit and must still match
+      // the authenticated, currently bound Merchant business.
+      if(!identifier(req.body.origin_business_id)||
+         identifier(req.body.origin_business_id)!==businessId){
+        throw httpError('Purchase originated in a different Merchant business',
+          'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+      }
+      const intentKey=req.get('Idempotency-Key');
+      // Validate before obtaining a database connection. Core repeats this
+      // check after every asynchronous transaction boundary.
+      inventoryPurchaseFingerprint(req.body);
+      const guardedContext={
+        businessId,accountId,intentKey,payload:req.body,
+        verifyCurrentMerchantAuthority:async(tx,claim)=>
+          (await verifyCurrentMerchantAuthority(tx,claim,req))===true
+      };
+      client=await pool.connect();
+      if(readOnly){
+        const result=await inspectInventoryPurchaseIntent(client,guardedContext);
+        if(result.kind==='unconfirmed'){
+          return res.status(202).json({status:'unconfirmed',safe_to_retry:false,
+            message:'No committed record confirmed. Do not post again without reconciliation.'});
+        }
+        return res.status(200).json({status:'committed',safe_to_retry:false,
+          purchase_id:result.purchaseId,original_response:result.response});
+      }
+      const result=await executeInventoryPurchaseIntent(client,guardedContext,
+        tx=>createPurchase(tx,Object.freeze({businessId,accountId,intentKey}),req.body));
+      return res.status(result.kind==='new'?201:200).json(result.response);
+    }catch(error){
+      if(error?.code==='INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN'){
+        return res.status(503).json({code:error.code,safe_to_retry:false,
+          message:'Outcome unknown. Inspect this original intent key before any further purchase.'});
+      }
+      if(Number.isInteger(error?.status)&&error.status>=400&&error.status<500){
+        return res.status(error.status).json({code:error.code||'INVENTORY_PURCHASE_INTENT_INVALID',
+          error:error.message});
+      }
+      return next(error);
+    }finally{
+      if(client)client.release();
+    }
+  }
+  return Object.freeze({
+    purchase:(req,res,next)=>handle(req,res,next,false),
+    inspect:(req,res,next)=>handle(req,res,next,true)
+  });
+}

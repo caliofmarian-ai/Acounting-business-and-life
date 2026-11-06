@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'inventory-purchase-intent-core.js'
+      - 'inventory-purchase-intent-http-881.js'
       - 'tests/inventory-purchase-intent-881.test.js'
       - 'scripts/inventory-purchase-intent-postgres-881.mjs'
       - '.github/workflows/inventory-purchase-intent-postgres-881.yml'
@@ -11,6 +12,7 @@ on:
     branches: [main]
     paths:
       - 'inventory-purchase-intent-core.js'
+      - 'inventory-purchase-intent-http-881.js'
       - 'tests/inventory-purchase-intent-881.test.js'
       - 'scripts/inventory-purchase-intent-postgres-881.mjs'
       - '.github/workflows/inventory-purchase-intent-postgres-881.yml'

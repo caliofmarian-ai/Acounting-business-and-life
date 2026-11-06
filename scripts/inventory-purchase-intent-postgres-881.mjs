@@ -2,6 +2,8 @@
 // is mounted; this contract is intentionally not a Production fix on its own.
 import assert from 'node:assert/strict';
 import pg from 'pg';
+import express from 'express';
+import {createInventoryPurchaseIntentHttpHandlers} from '../inventory-purchase-intent-http-881.js';
 import {
   INVENTORY_PURCHASE_INTENT_SCHEMA,
   claimInventoryPurchaseIntent,
@@ -683,6 +685,162 @@ try{
       'revoked Merchant cannot inspect private purchase');
     await pool.query(
       'UPDATE synthetic_purchase_grants SET enabled=true WHERE business_id=101 AND account_id=501');
+
+
+    // HTTP->adapter->real PostgreSQL proof (synthetic Merchant grant, NO
+    // production route/session). The same transaction creates stock, a
+    // purchase, a lot and one expense; a duplicate POST cannot repost them.
+    const app=express();
+    app.use(express.json({limit:'32kb'}));
+    const handlers=createInventoryPurchaseIntentHttpHandlers({
+      pool,
+      authorizeOrigin:async req=>{
+        if(req.get('X-Test-Account')!=='501')return null;
+        return {role:'merchant',businessId:101,accountId:501};
+      },
+      verifyCurrentMerchantAuthority:async(tx,origin)=>{
+        const grant=await tx.query(
+          'SELECT enabled FROM synthetic_purchase_grants WHERE business_id=$1 AND account_id=$2 FOR SHARE',
+          [origin.businessId,origin.accountId]);
+        return grant.rowCount===1&&grant.rows[0].enabled===true;
+      },
+      createPurchase:async(tx,origin,body)=>{
+        const old=await tx.query(
+          'SELECT id FROM inventory WHERE business_id=$1 AND lower(item)=lower($2) FOR UPDATE',
+          [origin.businessId,body.item]);
+        let inventoryId;
+        if(old.rowCount){
+          inventoryId=old.rows[0].id;
+          await tx.query('UPDATE inventory SET quantity=quantity+$1 WHERE id=$2',
+            [body.quantity,inventoryId]);
+        }else{
+          inventoryId=(await tx.query(
+            'INSERT INTO inventory(business_id,item,quantity) VALUES($1,$2,$3) RETURNING id',
+            [origin.businessId,body.item,body.quantity])).rows[0].id;
+        }
+        const purchase=(await tx.query(
+          'INSERT INTO inventory_purchases(business_id,inventory_id) VALUES($1,$2) RETURNING id',
+          [origin.businessId,inventoryId])).rows[0];
+        const lot=(await tx.query(
+          'INSERT INTO synthetic_lots(purchase_id) VALUES($1) RETURNING id',[purchase.id])).rows[0];
+        const expense=(await tx.query(
+          'INSERT INTO synthetic_expenses(purchase_id) VALUES($1) RETURNING id',[purchase.id])).rows[0];
+        return {purchaseId:purchase.id,
+          response:{inventory:{id:inventoryId},purchase,lot,transaction:expense}};
+      }
+    });
+    app.post('/qa/inventory/purchase',handlers.purchase);
+    app.post('/qa/inventory/purchase/inspect',handlers.inspect);
+    app.use((error,_req,res,_next)=>{
+      res.status(500).json({error:'Synthetic database transaction rejected',code:'INTERNAL'});
+    });
+    const httpServer=await new Promise((resolve,reject)=>{
+      const server=app.listen(0,'127.0.0.1',()=>resolve(server));
+      server.once('error',reject);
+    });
+    try{
+      const url='http://127.0.0.1:'+httpServer.address().port;
+      const httpKey='h1234567-0000-4000-9000-123456789012';
+      const body={origin_business_id:'101',item:'HTTP stock 881',
+        quantity:3,cost:'10.50',account:'cash'};
+      const send=async(path,key,data,actor='501')=>{
+        const result=await fetch(url+path,{method:'POST',
+          headers:{'content-type':'application/json','Idempotency-Key':key,
+            'X-Test-Account':actor},
+          body:JSON.stringify(data)});
+        return {status:result.status,body:await result.json()};
+      };
+      const [first,duplicate]=await Promise.all([
+        send('/qa/inventory/purchase',httpKey,body),
+        send('/qa/inventory/purchase',httpKey,body)
+      ]);
+      eq([first.status,duplicate.status].sort().join(','),'200,201',
+        'concurrent same-key HTTP posts return first 201 and replay 200');
+      eq(String(first.body.purchase.id),String(duplicate.body.purchase.id),
+        'HTTP replay returns original purchase identity');
+      const counts=async item=>{
+        const q=await pool.query(
+          'SELECT i.quantity,count(p.id)::int purchases,'+
+          'count(l.id)::int lots,count(e.id)::int expenses '+
+          'FROM inventory i LEFT JOIN inventory_purchases p ON p.inventory_id=i.id '+
+          'LEFT JOIN synthetic_lots l ON l.purchase_id=p.id '+
+          'LEFT JOIN synthetic_expenses e ON e.purchase_id=p.id '+
+          'WHERE i.business_id=101 AND i.item=$1 GROUP BY i.id',
+          [item]);
+        return q.rows[0]||null;
+      };
+      eq((await counts(body.item)).purchases,1,'HTTP duplicate only one purchase');
+      eq((await counts(body.item)).lots,1,'HTTP duplicate only one lot');
+      eq((await counts(body.item)).expenses,1,'HTTP duplicate only one expense');
+      eq(Number((await counts(body.item)).quantity),3,'HTTP duplicate only one stock increment');
+      eq((await send('/qa/inventory/purchase',httpKey,
+        {...body,cost:'90.00'})).status,409,'same-key changed paid instructions rejected');
+      eq((await send('/qa/inventory/purchase',httpKey,
+        {...body,origin_business_id:'102'})).status,409,'wrong active Merchant origin rejected');
+      eq((await send('/qa/inventory/purchase',httpKey,body,'502')).status,403,
+        'unauthenticated synthetic account is rejected');
+      const seen=await send('/qa/inventory/purchase/inspect',httpKey,body);
+      eq(seen.status,200,'read-only HTTP inspection confirms original');
+      eq(String(seen.body.original_response.purchase.id),String(first.body.purchase.id),
+        'read-only HTTP inspection preserves original identity');
+      const missing=await send('/qa/inventory/purchase/inspect',
+        'h1234567-0000-4000-9000-123456789013',body);
+      eq(missing.status,202,'absent HTTP intent is not a failed purchase');
+      eq(missing.body.safe_to_retry,false,'unconfirmed HTTP intent never authorizes repost');
+      const other=await send('/qa/inventory/purchase',
+        'h1234567-0000-4000-9000-123456789014',{...body,quantity:1});
+      eq(other.status,201,'distinct intended purchase is separately accepted');
+      eq(Number((await counts(body.item)).quantity),4,
+        'different intent increments existing stock exactly once');
+      eq((await counts(body.item)).purchases,2,'two deliberate purchases leave two rows');
+      eq((await counts(body.item)).lots,2,'two deliberate purchases leave two lots');
+      eq((await counts(body.item)).expenses,2,'two deliberate purchases leave two expenses');
+
+      // Forced error after stock and purchase insert: transaction rollback
+      // must erase all stock, lot, expense and the reserved intent.
+      await pool.query(
+        'CREATE OR REPLACE FUNCTION synthetic_http_expense_guard() RETURNS trigger AS $g$ '+
+        "BEGIN IF EXISTS (SELECT 1 FROM inventory_purchases p JOIN inventory i ON i.id=p.inventory_id "+
+        "WHERE p.id=NEW.purchase_id AND i.item='HTTP rollback 881') THEN "+
+        "RAISE EXCEPTION 'forced synthetic expense rejection'; END IF; RETURN NEW; "+
+        'END; $g$ LANGUAGE plpgsql');
+      await pool.query(
+        'CREATE TRIGGER synthetic_http_expense_reject BEFORE INSERT ON synthetic_expenses '+
+        'FOR EACH ROW EXECUTE FUNCTION synthetic_http_expense_guard()');
+      const rollbackKey='h1234567-0000-4000-9000-123456789015';
+      const badPurchase={...body,item:'HTTP rollback 881'};
+      eq((await send('/qa/inventory/purchase',rollbackKey,badPurchase)).status,500,
+        'real synthetic SQL error reaches HTTP failure without successful response');
+      eq(await counts(badPurchase.item),null,'forced SQL error rolls back newly inserted stock');
+      eq((await pool.query(
+        'SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+        [rollbackKey])).rows[0].n,0,'forced SQL error rolls back idempotency reservation');
+      eq((await pool.query(
+        'SELECT count(*)::int AS n FROM inventory_purchases WHERE business_id=101 AND '+
+        'inventory_id IN (SELECT id FROM inventory WHERE item=$1)',
+        [badPurchase.item])).rows[0].n,0,'forced SQL error leaves no purchase');
+      eq((await pool.query(
+        'SELECT count(*)::int AS n FROM synthetic_lots WHERE purchase_id NOT IN '+
+        '(SELECT id FROM inventory_purchases)')).rows[0].n,0,
+        'forced SQL error leaves no orphan lot');
+      await pool.query('DROP TRIGGER synthetic_http_expense_reject ON synthetic_expenses');
+      await pool.query('DROP FUNCTION synthetic_http_expense_guard()');
+      await pool.query(
+        'UPDATE synthetic_purchase_grants SET enabled=false WHERE business_id=101 AND account_id=501');
+      eq((await send('/qa/inventory/purchase/inspect',httpKey,body)).status,403,
+        'revoked Merchant cannot inspect a previously committed purchase');
+      eq((await send('/qa/inventory/purchase',
+        'h1234567-0000-4000-9000-123456789016',
+        {...body,item:'HTTP forbidden 881'})).status,403,
+        'revoked Merchant cannot post another purchase');
+      eq(await counts('HTTP forbidden 881'),null,'rejected HTTP grant creates no stock');
+      await pool.query(
+        'UPDATE synthetic_purchase_grants SET enabled=true WHERE business_id=101 AND account_id=501');
+      console.log(JSON.stringify({httpLoopback:true,syntheticMerchantAuthority:true,
+        syntheticHttpPostgresAssertions:25,productionRouteMounted:false}));
+    }finally{
+      await new Promise((resolve,reject)=>httpServer.close(error=>error?reject(error):resolve()));
+    }
 
     console.log(JSON.stringify({ok:true,realPostgresAssertions:checks,
       isolatedDb:'abl_purchase_intent_ci',liveRouteIntegrated:false}));
