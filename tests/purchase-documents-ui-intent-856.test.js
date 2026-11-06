@@ -333,7 +333,7 @@ function makeOpeningController(){
     return {role:'merchant',active_business_id:14};
   };
   const factory=new Function('api','document','window','queueMicrotask','created',`
-    let overlay=null,businessId=null,openAttempt=0,opening=false;
+    let overlay=null,businessId=null,openAttempt=0,opening=false,saveAttempt=0;
     let saveInProgress=false,pendingSubmitted=false,pendingKey=null,pendingPayload=null,
         chosenFile=null,previousOverflow='';
     const message=()=>{},injectCss=()=>{},linkable=async()=>{},archive=async()=>{},ensureButton=()=>{};
