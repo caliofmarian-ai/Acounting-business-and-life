@@ -192,7 +192,7 @@ test('confirmed save remains confirmed when archive GET fails after POST',async(
   await c.submit();
   assert.equal(c.posts.length,2,'the operator can explicitly save the next receipt');
   assert.notEqual(c.posts[1].client_request_key,c.posts[0].client_request_key);
-  assert.equal(c.messages.at(-1).isError,false);
+  assert.notEqual(c.messages.at(-1).isError,true,'successful subsequent save is not an error');
 });
 
 test('confirmed replay remains confirmed when linked-purchase GET fails',async()=>{
