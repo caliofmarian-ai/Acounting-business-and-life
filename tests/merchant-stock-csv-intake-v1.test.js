@@ -156,7 +156,7 @@ test('a saved purchase must prove exact Merchant, stock identity, paid expense a
     x=>{x.transaction.account='bank'},
     x=>{x.transaction.payment_method='gcash'},
     x=>{x.purchase.account='bank'},
-    x=>{x.inventory.item='Someone else\\'s beans'},
+    x=>{x.inventory.item='Other Merchant beans'},
     x=>{x.purchase.purchase_quantity='3.0000'},
     x=>{x.purchase.purchase_unit='g'},
     x=>{x.purchase.total_cost='119.99'},
@@ -176,7 +176,7 @@ test('a saved purchase must prove exact Merchant, stock identity, paid expense a
     /Saved purchase evidence did not match/);
   assert.throws(()=>verifyPaidStockIntakeReceipt(good,merchant,{...row,total:119.99},'cash'),
     /Saved purchase evidence did not match/);
-  assert.match(js,/verifyPaidStockIntakeReceipt\\(result,originalContext,row,paidFrom\\)/,
+  assert.ok(js.includes('verifyPaidStockIntakeReceipt(result,originalContext,row,paidFrom)'),
     'the actual purchase HTTP completion must validate durable Stock/Money evidence before SAVED');
   const check=js.indexOf('verifyPaidStockIntakeReceipt(result,originalContext,row,paidFrom)');
   const saved=js.indexOf("row.result='saved-date-pending'",check);
@@ -192,7 +192,7 @@ test('paid stock intake requires one Merchant, and records exactly a linked purc
   assert.match(js,/findExistingInventory\(row,state\.inventory\)/);
   assert.match(js,/record_expense:true/);
   assert.match(js,/account:paidFrom/);
-  assert.match(js,/result\?\.transaction\?\.id/);
+  assert.ok(js.includes('verifyPaidStockIntakeReceipt(result,originalContext,row,paidFrom)'));
   assert.match(js,/method:'PATCH'/);
   assert.match(js,/originalDate!==localDatePH\(\)/);
   assert.match(js,/originalDate\+'T12:00:00\+08:00'/);
