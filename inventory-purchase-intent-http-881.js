@@ -27,6 +27,10 @@ export function createInventoryPurchaseIntentHttpHandlers({
   }
   async function handle(req,res,next,readOnly){
     let client;
+    // A lost COMMIT acknowledgement leaves transaction state indeterminate.
+    // node-postgres removes a connection from the pool when release(err) is used;
+    // never lend that potentially broken session to another Merchant request.
+    let discardConnectionError=null;
     try{
       if(!req.body||typeof req.body!=='object'||Array.isArray(req.body)){
         throw httpError('Purchase instructions must be a JSON object',
@@ -71,6 +75,7 @@ export function createInventoryPurchaseIntentHttpHandlers({
       return res.status(result.kind==='new'?201:200).json(result.response);
     }catch(error){
       if(error?.code==='INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN'){
+        discardConnectionError=error.cause instanceof Error?error.cause:error;
         return res.status(503).json({code:error.code,safe_to_retry:false,
           message:'Outcome unknown. Inspect this original intent key before any further purchase.'});
       }
@@ -80,7 +85,10 @@ export function createInventoryPurchaseIntentHttpHandlers({
       }
       return next(error);
     }finally{
-      if(client)client.release();
+      if(client){
+        if(discardConnectionError)client.release(discardConnectionError);
+        else client.release();
+      }
     }
   }
   return Object.freeze({

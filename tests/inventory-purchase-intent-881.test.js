@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createInventoryPurchaseIntentHttpHandlers} from '../inventory-purchase-intent-http-881.js';
 import {
   inventoryPurchaseFingerprint,claimInventoryPurchaseIntent,
   lockInventoryPurchaseBusiness,finishInventoryPurchaseIntent,
@@ -730,6 +731,75 @@ test('read-only purchase reconciliation rejects option/origin replacement and ol
         mutation+'/'+phase);
       assert.equal(events.at(-1),'ROLLBACK');
       assert.ok(!events.includes('COMMIT'));
+    }
+  }
+});
+
+test('HTTP purchase adapter discards indeterminate COMMIT client, but returns healthy committed client to pool',async()=>{
+  // A transport failure after a possible durable COMMIT is NOT a rollback
+  // guarantee. A released broken session must not be reused for a later
+  // Merchant receiving operation.
+  for(const loseCommitAck of [true,false]){
+    const transportError=new Error('synthetic lost PostgreSQL COMMIT acknowledgement');
+    const queries=[],releases=[];let created=0;
+    const client={
+      async query(sql){
+        if(sql==='BEGIN'||sql==='ROLLBACK'){
+          queries.push(sql);return {rowCount:0,rows:[]};
+        }
+        if(sql==='COMMIT'){
+          queries.push(sql);
+          if(loseCommitAck)throw transportError;
+          return {rowCount:0,rows:[]};
+        }
+        if(sql.includes('INSERT INTO inventory_purchase_intents')){
+          queries.push('claim');return {rowCount:1,rows:[{intent_key:key}]};
+        }
+        if(sql.includes('pg_advisory_xact_lock')){
+          queries.push('lock');return {rowCount:1,rows:[]};
+        }
+        if(sql.includes('UPDATE inventory_purchase_intents')){
+          queries.push('finish');return {rowCount:1,rows:[{purchase_id:'42'}]};
+        }
+        throw Error('Unexpected SQL in HTTP connection release regression');
+      },
+      release(...args){releases.push(args)}
+    };
+    const handlers=createInventoryPurchaseIntentHttpHandlers({
+      pool:{async connect(){return client}},
+      authorizeOrigin:async()=>({role:'merchant',businessId:1,accountId:2}),
+      verifyCurrentMerchantAuthority:async()=>true,
+      createPurchase:async()=>{created++;return {
+        purchaseId:42,response:{purchase:{id:42},inventory:{id:12},expense:{total:'12.50'}}
+      }}
+    });
+    const request={
+      body:{...payload,origin_business_id:1},
+      get(name){assert.equal(name,'Idempotency-Key');return key}
+    };
+    const result={status:null,body:null};
+    const response={
+      status(value){result.status=value;return this},
+      json(value){result.body=value;return this}
+    };
+    let middlewareError=null;
+    await handlers.purchase(request,response,error=>{middlewareError=error});
+    assert.equal(middlewareError,null);
+    assert.equal(created,1);
+    assert.equal(releases.length,1,'connection released exactly once');
+    if(loseCommitAck){
+      assert.equal(result.status,503);
+      assert.equal(result.body.code,'INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN');
+      assert.equal(result.body.safe_to_retry,false);
+      assert.equal(releases[0][0],transportError,
+        'original transport error discards uncertain pg client from the pool');
+      assert.deepEqual(queries.slice(-2),['COMMIT','ROLLBACK']);
+    }else{
+      assert.equal(result.status,201);
+      assert.equal(result.body.purchase.id,42);
+      assert.equal(releases[0].length,0,
+        'healthy committed client is returned to pool without an error');
+      assert.equal(queries.at(-1),'COMMIT');
     }
   }
 });
