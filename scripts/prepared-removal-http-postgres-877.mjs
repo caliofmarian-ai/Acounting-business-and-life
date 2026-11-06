@@ -117,6 +117,33 @@ async function main(){
  r=await send(failed);assert.equal(r.status,201,JSON.stringify(r));
  assert.equal(Number(r.data.removal.estimated_cost),4.02);
  const retried=await snapshot();r=await send(failed);assert.equal(r.status,200);assert.equal(await snapshot(),retried);
+ // Same-key race: two *simultaneous* real HTTP requests must serialize at
+ // the PostgreSQL business+key barrier, not deduct stock/lots twice.
+ // At this point ingredient 101 and lot 501 each have exactly 1.000 left.
+ const concurrent={...base,quantity:1,idempotency_key:'prepared-ci-concurrent-0006'};
+ const beforeConcurrent=JSON.parse(await snapshot());
+ const attempts=await Promise.all([send(concurrent),send(concurrent)]);
+ assert.deepEqual(attempts.map(v=>v.status).sort((a,b)=>a-b),[200,201],
+  'Concurrent requests with same key must be one create and one replay');
+ assert.equal(attempts[0].data.removal.id,attempts[1].data.removal.id,
+  'Both responses must refer to one exact saved removal');
+ assert.equal(attempts.find(v=>v.status===200).data.already_recorded,true);
+ assert.equal(attempts.find(v=>v.status===201).data.already_recorded,false);
+ assert.equal(Number(attempts[0].data.removal.estimated_cost),68.42);
+ const afterConcurrent=JSON.parse(await snapshot());
+ assert.equal(afterConcurrent[0].find(v=>Number(v.id)===101).quantity,'0.000');
+ assert.equal(afterConcurrent[1].find(v=>Number(v.id)===501).quantity,'0.000000');
+ for(let i=2;i<5;i++)assert.equal(afterConcurrent[i].length,beforeConcurrent[i].length+1,
+  'Concurrent replay must produce exactly one removal, ingredient and lot row');
+ const concurrentSaved=await snapshot();
+ r=await send(concurrent);assert.equal(r.status,200);assert.equal(r.data.already_recorded,true);
+ assert.equal(await snapshot(),concurrentSaved,'Late replay must not change physical stock');
+ r=await send({...concurrent,quantity:2});assert.equal(r.status,409);
+ assert.equal(await snapshot(),concurrentSaved,'Same key with different payload cannot post');
+ r=await send({...concurrent,idempotency_key:'prepared-ci-shortage-0007'});
+ assert.equal(r.status,409,'New intent cannot spend stock already consumed');
+ assert.equal(await snapshot(),concurrentSaved,'Shortage rollback must not create records');
+
  console.log('PREPARED_REMOVAL_HTTP_POSTGRES_877_PASS literalExpress=true realFEFO=true syntheticIdentity=true realRollback=true replay=true');
 }
 try{await main()}
