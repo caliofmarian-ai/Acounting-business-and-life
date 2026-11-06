@@ -202,9 +202,10 @@
   }
   function close(force=false){
     // A POST can commit even when its acknowledgement is lost. Ordinary X/Escape
-    // dismissal must not silently discard the only stable retry key.
+    // dismissal during an in-flight POST must not discard the only stable retry key.
+    // Completed POSTs may dismiss while unrelated archive GET refreshes finish.
     // A real profile switch must still close immediately to hide private data.
-    if(force!==true&&saveInProgress){
+    if(force!==true&&saveInProgress&&pendingSubmitted){
       message('Receipt save is processing. Keep this dialog open until the request finishes.',true);
       return false;
     }

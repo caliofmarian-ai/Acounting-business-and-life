@@ -27,6 +27,7 @@ function makeController(){
   let workspaceChecks=0,changeDuringVerify=null,changeDuringRead=null;
   let failArchiveOnce=false,failLinkableOnce=false,confirmResult=false,confirmationCount=0;
   let holdPost=false,releasePost=null,notifyPostHeld=null;
+  let holdArchive=false,releaseArchive=null,notifyArchiveHeld=null;
   let holdWorkspace=false,releaseWorkspace=null,notifyWorkspaceHeld=null;
   const api=async(path,options)=>{
     if(path==='/api/accounting/workspaces'){
@@ -65,7 +66,10 @@ function makeController(){
       return {save,close,setFile:file=>{chosenFile=file},state:()=>({pendingKey,pendingPayload,pendingSubmitted,overlayActive:!!overlay,saveInProgress})};`);
   const controller=fn(api,FakeFormData,()=>('purchase-intent-'+(++keys)),()=>fields.issue_date,
     (text,isError)=>messages.push({text,isError}),
-    async()=>{if(failArchiveOnce){failArchiveOnce=false;throw new Error('Archive GET unavailable');}},
+    async()=>{
+      if(holdArchive){holdArchive=false;await new Promise(resolve=>{releaseArchive=resolve;notifyArchiveHeld?.()})}
+      if(failArchiveOnce){failArchiveOnce=false;throw new Error('Archive GET unavailable');}
+    },
     async()=>{if(failLinkableOnce){failLinkableOnce=false;throw new Error('Purchase-link GET unavailable');}},
     async()=>{if(failFileOnce){failFileOnce=false;throw new Error('File read failed');}
       if(changeDuringRead){const change=changeDuringRead;changeDuringRead=null;await Promise.resolve();change();}
@@ -77,6 +81,12 @@ function makeController(){
     failNextArchive:()=>{failArchiveOnce=true},failNextLinkable:()=>{failLinkableOnce=true},
     setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
     setConfirm:value=>{confirmResult=value},confirmations:()=>confirmationCount,
+    holdNextArchive:()=>{
+      let notify;
+      const whenHeld=new Promise(resolve=>{notify=resolve});
+      holdArchive=true;notifyArchiveHeld=notify;
+      return {whenHeld,release:()=>{assert.ok(releaseArchive,'archive must be held');releaseArchive()}};
+    },
     holdNextPost:()=>{
       let notify;
       const whenHeld=new Promise(resolve=>{notify=resolve});
@@ -277,4 +287,19 @@ test('explicit uncertain-save dismissal is possible but only after duplicate-war
   assert.equal(c.state().pendingKey,null);
   assert.equal(c.state().pendingSubmitted,false);
   assert.equal(c.posts.length,1,'close never retries or creates receipts');
+});
+
+test('confirmed POST can close while auxiliary archive GET is slow; no second receipt is sent',async()=>{
+  const c=makeController();
+  const gate=c.holdNextArchive();
+  const saving=c.submit();
+  await gate.whenHeld;
+  assert.equal(c.posts.length,1,'only the already-confirmed receipt was sent');
+  assert.equal(c.state().pendingSubmitted,false,'POST acknowledgement has cleared uncertain state');
+  assert.equal(c.state().saveInProgress,true,'archive refresh remains pending');
+  assert.equal(c.close(),true,'archive latency must not trap operator after confirmed save');
+  assert.equal(c.confirmations(),0);
+  gate.release();
+  await saving;
+  assert.equal(c.posts.length,1);
 });
