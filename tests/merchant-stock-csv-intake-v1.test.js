@@ -592,7 +592,9 @@ test('paid CSV receiving refuses stock amounts PostgreSQL physical NUMERIC(12,3)
     ['0.0001','g',false],['0.0005','ml',false],['1.2345','unit',false],
     ['0.0001','kg',true],['0.0001','L',true],['0.001','g',true],
     ['1.234','ml',true],['1.2340','unit',true],['0.0009','unit',false],
-    ['1.00001','kg',false],['1.0001','not-unit',false]
+    ['1.00001','kg',false],['1.0001','not-unit',false],
+    ['999999.9999','kg',true],['999999.9999','L',true],
+    ['1000000','kg',false],['1000000','L',false],['1000000','unit',true]
   ])assert.equal(stockIntakeBaseQuantityExact(quantity,unit),expected,quantity+' '+unit);
 
   const row=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\nRice,0.0001,g,120')[0];
@@ -604,6 +606,11 @@ test('paid CSV receiving refuses stock amounts PostgreSQL physical NUMERIC(12,3)
   reviseStockIntakeRow(row,'unit','unit');
   row.reviewConfirmed=true;
   assert.equal(validStockIntakeRow(row),false,'no silent rounding on count inventory');
+  const tooLarge=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\nRice,1000000,kg,120')[0];
+  tooLarge.classificationCode='food_ingredient';
+  assert.equal(validStockIntakeRow(tooLarge),false,'one million kg exceeds the physical base NUMERIC(12,3) bound');
+  tooLarge.quantity=999999.9999;
+  assert.equal(validStockIntakeRow(tooLarge),true,'max valid 4dp kg quantity fits nine base-unit whole digits');
   assert.match(js,/stockIntakeBaseQuantityExact\(row\.quantity,row\.unit\)/);
-  assert.match(js,/Physical stock rounds base g\/ml\/unit to 3 decimal places/);
+  assert.match(js,/Physical stock supports at most 999,999,999\.999 base g\/ml\/unit/);
 });

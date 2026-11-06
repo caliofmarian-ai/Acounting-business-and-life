@@ -74,9 +74,11 @@ export function parseStockQuantity(value){
 // purchase source/lot can hold 4dp. Never record a paid receipt for a
 // positive amount that PostgreSQL would round to a different physical stock.
 // 0.0001 kg/L is valid (0.1 g/ml); 0.0001 g/ml/unit is not.
+// NUMERIC(12,3) has at most nine whole digits: 1,000,000 kg/L would
+// overflow physical Inventory after conversion to 1,000,000,000 g/ml.
 export function stockIntakeBaseQuantityExact(quantity,unit){
   if(!SUPPORTED_UNITS.has(unit)||parseStockQuantity(quantity)===null)return false;
-  if(unit==='kg'||unit==='L')return true;
+  if(unit==='kg'||unit==='L')return quantity<1000000;
   const fractional=(String(quantity).trim().split('.')[1]||'').padEnd(4,'0');
   return fractional[3]==='0';
 }
@@ -465,7 +467,7 @@ if(hasDocument){
       if(Number.isFinite(row.quantity)&&row.quantity>0&&SUPPORTED_UNITS.has(row.unit)&&
          !stockIntakeBaseQuantityExact(row.quantity,row.unit))
         item.appendChild(element('p','error',
-          'Physical stock rounds base g/ml/unit to 3 decimal places. Correct the verified quantity before recording paid Stock and Money; a rounded receipt is not permitted.'));
+          'Physical stock supports at most 999,999,999.999 base g/ml/unit at 3 decimal places. Correct the verified quantity before recording paid Stock and Money; rounding or overflow is not permitted.'));
 
       if(row.exists)item.appendChild(element('p','error',
         'An Inventory item already exists with this name (on hand: '+String(row.exists.quantity??row.exists.on_hand_quantity??'unknown')+
