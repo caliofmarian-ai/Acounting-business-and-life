@@ -2,7 +2,7 @@
 (()=>{
   const ROOT='/api/procurement/purchase-documents';
   const MAX_FILE=6*1024*1024;
-  let overlay=null,businessId=null,pendingKey=null,chosenFile=null,previousOverflow='';
+  let overlay=null,businessId=null,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
   const $=(selector,root=document)=>root.querySelector(selector);
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const currency=(value,code='PHP')=>value==null?'Amount not recorded':new Intl.NumberFormat('en-PH',{style:'currency',currency:code||'PHP'}).format(Number(value));
@@ -135,9 +135,8 @@
       const workspace=await api('/api/accounting/workspaces');
       if(panel!==overlay||workspace.role!=='merchant'||Number(workspace.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
       const form=$('#mpdForm',panel),data=new FormData(form);
-      if(!pendingKey)pendingKey=requestKey();
       const payload={
-        business_id:biz,client_request_key:pendingKey,
+        business_id:biz,
         document_kind:String(data.get('document_kind')||'purchase_receipt'),
         issuer_name:String(data.get('issuer_name')||''),
         issue_date:String(data.get('issue_date')||today()),
@@ -150,9 +149,20 @@
       if(panel!==overlay||biz!==businessId)return;
       const confirmed=await api('/api/accounting/workspaces');
       if(panel!==overlay||confirmed.role!=='merchant'||Number(confirmed.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
+      // A failed/lost POST acknowledgement is not proof of rollback. Keep the
+      // same key for the exact same receipt, and never reuse it for edited data.
+      // No key is reserved before workspace and file validation finish.
+      const intent=JSON.stringify(payload);
+      if(pendingSubmitted&&pendingPayload!==intent){
+        throw new Error('The earlier receipt submission may already be saved. Check Saved documents before changing it; close and reopen for a different receipt.');
+      }
+      if(!pendingKey||pendingPayload!==intent)pendingKey=requestKey();
+      pendingPayload=intent;
+      payload.client_request_key=pendingKey;
+      pendingSubmitted=true;
       const result=await api(ROOT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(panel!==overlay||biz!==businessId)return;
-      pendingKey=null;chosenFile=null;
+      pendingKey=null;pendingPayload=null;pendingSubmitted=false;chosenFile=null;
       form.reset();form.elements.issue_date.value=today();
       $('#mpdChosenFile',overlay).textContent='No file selected.';
       message(result.already_saved?'This document was already saved.':'Purchase document saved securely.');
@@ -162,7 +172,7 @@
   }
   function close(){
     if(!overlay)return;
-    overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;
+    overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;
     document.body.style.overflow=previousOverflow;
   }
   async function open(){
