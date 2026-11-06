@@ -200,10 +200,22 @@
     }catch(error){if(panel===overlay)message(error.message,true)}
     finally{saveInProgress=false;if(btn)btn.disabled=false}
   }
-  function close(){
+  function close(force=false){
+    // A POST can commit even when its acknowledgement is lost. Ordinary X/Escape
+    // dismissal must not silently discard the only stable retry key.
+    // A real profile switch must still close immediately to hide private data.
+    if(force!==true&&saveInProgress){
+      message('Receipt save is processing. Keep this dialog open until the request finishes.',true);
+      return false;
+    }
+    if(force!==true&&pendingSubmitted){
+      const acknowledged=window.confirm('This receipt may already be saved. Closing loses its original retry key. Check Saved documents before making another receipt. Close anyway?');
+      if(!acknowledged)return false;
+    }
     if(!overlay)return;
     overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;
     document.body.style.overflow=previousOverflow;
+    return true;
   }
   async function open(){
     if(overlay)return;
@@ -223,7 +235,7 @@
     const heading=$('#viewStock h1');
     if(!heading)return;
     const old=$('#merchantPurchaseDocumentsButton');
-    if(role!=='merchant'){if(old)old.remove();if(overlay)close();return}
+    if(role!=='merchant'){if(old)old.remove();if(overlay)close(true);return}
     if(old)return;
     const btn=document.createElement('button');
     btn.id='merchantPurchaseDocumentsButton';btn.type='button';
@@ -232,7 +244,7 @@
     heading.insertAdjacentElement('afterend',btn);
   }
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&overlay)close()});
-  document.addEventListener('abl:profile-state',()=>{if(overlay)close();queueMicrotask(ensureButton)});
+  document.addEventListener('abl:profile-state',()=>{if(overlay)close(true);queueMicrotask(ensureButton)});
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ensureButton,{once:true});
   else ensureButton();
   new MutationObserver(ensureButton).observe(document.body,{attributes:true,attributeFilter:['data-business-finance-role']});

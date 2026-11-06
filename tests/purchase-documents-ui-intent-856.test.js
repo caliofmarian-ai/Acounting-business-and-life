@@ -9,6 +9,10 @@ const start=source.indexOf('  async function save(event){');
 const end=source.indexOf('\n  function close(){',start);
 assert.ok(start>=0&&end>start,'literal shipped save controller must be present');
 const saveSource=source.slice(start,end);
+const closeStart=source.indexOf('  function close(',end);
+const closeEnd=source.indexOf('\n  async function open(){',closeStart);
+assert.ok(closeStart>=0&&closeEnd>closeStart,'literal shipped close controller must be present');
+const closeSource=source.slice(closeStart,closeEnd);
 
 function makeController(){
   const fields={document_kind:'purchase_receipt',issuer_name:'Market',issue_date:'2026-11-06',
@@ -17,11 +21,12 @@ function makeController(){
   const form={elements:{issue_date:{value:''}},reset(){}};
   const receiptLabel={textContent:''};
   let selectedLinks=[];
-  const panel={querySelectorAll:()=>selectedLinks.map(value=>({value}))};
+  const panel={removed:false,remove(){this.removed=true},querySelectorAll:()=>selectedLinks.map(value=>({value}))};
   const messages=[],posts=[];
   let keys=0,workspaceIsMerchant=true,failPostOnce=false,failFileOnce=false;
   let workspaceChecks=0,changeDuringVerify=null,changeDuringRead=null;
-  let failArchiveOnce=false,failLinkableOnce=false;
+  let failArchiveOnce=false,failLinkableOnce=false,confirmResult=false,confirmationCount=0;
+  let holdPost=false,releasePost=null,notifyPostHeld=null;
   let holdWorkspace=false,releaseWorkspace=null,notifyWorkspaceHeld=null;
   const api=async(path,options)=>{
     if(path==='/api/accounting/workspaces'){
@@ -39,19 +44,25 @@ function makeController(){
     assert.equal(path,'/api/procurement/purchase-documents');
     const payload=JSON.parse(options.body);
     posts.push(payload);
+    if(holdPost){
+      holdPost=false;
+      await new Promise(resolve=>{releasePost=resolve;notifyPostHeld?.()});
+    }
     if(failPostOnce){failPostOnce=false;throw new Error('Connection lost after submit');}
     return {already_saved:posts.length>1};
   };
   const FakeFormData=function(){this.get=name=>fields[name]??null};
-  const fn=new Function('api','FormData','requestKey','today','message','archive','linkable','readFile',
+  const fn=new Function('api','FormData','requestKey','today','message','archive','linkable','readFile','window','document',
     'form','button','receiptLabel','panel',
     `const ROOT='/api/procurement/purchase-documents';
       let overlay=panel,businessId=14,pendingKey=null,pendingPayload=null,
           pendingSubmitted=false,chosenFile=null,saveInProgress=false;
       const $=selector=>selector==='#mpdForm'?form:
         selector==='#mpdSave'?button:receiptLabel;
+      let previousOverflow='';
       ${saveSource}
-      return {save,setFile:file=>{chosenFile=file},state:()=>({pendingKey,pendingPayload,pendingSubmitted})};`);
+      ${closeSource}
+      return {save,close,setFile:file=>{chosenFile=file},state:()=>({pendingKey,pendingPayload,pendingSubmitted,overlayActive:!!overlay,saveInProgress})};`);
   const controller=fn(api,FakeFormData,()=>('purchase-intent-'+(++keys)),()=>fields.issue_date,
     (text,isError)=>messages.push({text,isError}),
     async()=>{if(failArchiveOnce){failArchiveOnce=false;throw new Error('Archive GET unavailable');}},
@@ -59,11 +70,19 @@ function makeController(){
     async()=>{if(failFileOnce){failFileOnce=false;throw new Error('File read failed');}
       if(changeDuringRead){const change=changeDuringRead;changeDuringRead=null;await Promise.resolve();change();}
       return 'data:application/pdf;base64,JVBERi0xLjQK'},
-    form,button,receiptLabel,panel);
+    {confirm:()=>{confirmationCount++;return confirmResult}},
+    {body:{style:{overflow:'hidden'}}},form,button,receiptLabel,panel);
   return{...controller,fields,posts,messages,
     failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
     failNextArchive:()=>{failArchiveOnce=true},failNextLinkable:()=>{failLinkableOnce=true},
     setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
+    setConfirm:value=>{confirmResult=value},confirmations:()=>confirmationCount,
+    holdNextPost:()=>{
+      let notify;
+      const whenHeld=new Promise(resolve=>{notify=resolve});
+      holdPost=true;notifyPostHeld=notify;
+      return {whenHeld,release:()=>{assert.ok(releasePost,'POST must be held');releasePost()}};
+    },
     setLinks:links=>{selectedLinks=links},
     holdNextWorkspace:()=>{
       let notify;
@@ -209,4 +228,53 @@ test('confirmed replay remains confirmed when linked-purchase GET fails',async()
   assert.match(c.messages.at(-1).text,/This document was already saved/);
   assert.match(c.messages.at(-1).text,/save is confirmed/);
   assert.match(c.messages.at(-1).text,/could not refresh/);
+});
+
+test('closing while the real save controller has an in-flight POST cannot drop its intent key',async()=>{
+  const c=makeController();
+  const gate=c.holdNextPost();
+  const saving=c.submit();
+  await gate.whenHeld;
+  assert.equal(c.posts.length,1);
+  const key=c.posts[0].client_request_key;
+  assert.equal(c.state().saveInProgress,true);
+  assert.equal(c.close(),false,'X/Escape close must be rejected during an unacknowledged POST');
+  assert.equal(c.state().overlayActive,true);
+  assert.equal(c.state().pendingKey,key);
+  assert.equal(c.confirmations(),0,'do not offer a dismiss option while HTTP is pending');
+  gate.release();
+  await saving;
+  assert.equal(c.state().pendingSubmitted,false);
+  assert.equal(c.close(),true,'confirmed save may dismiss safely');
+  assert.equal(c.state().overlayActive,false);
+});
+
+test('uncertain save dismissal requires explicit warning; cancel keeps identical-key replay available',async()=>{
+  const c=makeController();
+  c.failNextPost();
+  await c.submit();
+  assert.equal(c.state().pendingSubmitted,true);
+  const originalKey=c.posts[0].client_request_key;
+  c.setConfirm(false);
+  assert.equal(c.close(),false);
+  assert.equal(c.confirmations(),1);
+  assert.equal(c.state().pendingKey,originalKey);
+  assert.equal(c.state().overlayActive,true);
+  await c.submit();
+  assert.equal(c.posts[1].client_request_key,originalKey);
+  assert.equal(c.state().pendingSubmitted,false);
+  assert.equal(c.close(),true);
+});
+
+test('explicit uncertain-save dismissal is possible but only after duplicate-warning confirmation',async()=>{
+  const c=makeController();
+  c.failNextPost();
+  await c.submit();
+  c.setConfirm(true);
+  assert.equal(c.close(),true);
+  assert.equal(c.confirmations(),1);
+  assert.equal(c.state().overlayActive,false);
+  assert.equal(c.state().pendingKey,null);
+  assert.equal(c.state().pendingSubmitted,false);
+  assert.equal(c.posts.length,1,'close never retries or creates receipts');
 });
