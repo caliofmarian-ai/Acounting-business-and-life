@@ -7,7 +7,7 @@ import {
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
   STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes,
-  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey
+  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -583,4 +583,27 @@ test('defensive paid stock row guard rejects sub-unit mutations and implicit obj
   assert.equal(parseStockQuantity('3.0000'),3);
   assert.equal(parsePhpMoney(12.5),12.5);
   assert.equal(parseStockQuantity(3),3);
+});
+
+
+test('paid CSV receiving refuses stock amounts PostgreSQL physical NUMERIC(12,3) would round',()=>{
+  // Canonical stock is in base g/ml/unit, while purchased quantity/lot retains 4dp.
+  for(const [quantity,unit,expected] of [
+    ['0.0001','g',false],['0.0005','ml',false],['1.2345','unit',false],
+    ['0.0001','kg',true],['0.0001','L',true],['0.001','g',true],
+    ['1.234','ml',true],['1.2340','unit',true],['0.0009','unit',false],
+    ['1.00001','kg',false],['1.0001','not-unit',false]
+  ])assert.equal(stockIntakeBaseQuantityExact(quantity,unit),expected,quantity+' '+unit);
+
+  const row=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\\nRice,0.0001,g,120')[0];
+  reviseStockIntakeRow(row,'classificationCode','food_ingredient');
+  assert.equal(validStockIntakeRow(row),false,'positive 4dp gram quantity must not create a paid receipt with zero physical stock');
+  reviseStockIntakeRow(row,'unit','kg');
+  row.reviewConfirmed=true;
+  assert.equal(validStockIntakeRow(row),true,'0.0001 kg converts to exactly 0.1 base g');
+  reviseStockIntakeRow(row,'unit','unit');
+  row.reviewConfirmed=true;
+  assert.equal(validStockIntakeRow(row),false,'no silent rounding on count inventory');
+  assert.match(js,/stockIntakeBaseQuantityExact\\(row\\.quantity,row\\.unit\\)/);
+  assert.match(js,/Physical stock rounds base g\\/ml\\/unit to 3 decimal places/);
 });

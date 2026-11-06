@@ -70,6 +70,17 @@ export function parseStockQuantity(value){
   if(tenThousandths<1n||tenThousandths>10000000000n)return null;
   return Number(tenThousandths)/10000;
 }
+// Inventory physical on-hand is NUMERIC(12,3) in base g/ml/unit; the
+// purchase source/lot can hold 4dp. Never record a paid receipt for a
+// positive amount that PostgreSQL would round to a different physical stock.
+// 0.0001 kg/L is valid (0.1 g/ml); 0.0001 g/ml/unit is not.
+export function stockIntakeBaseQuantityExact(quantity,unit){
+  if(!SUPPORTED_UNITS.has(unit)||parseStockQuantity(quantity)===null)return false;
+  if(unit==='kg'||unit==='L')return true;
+  const fractional=(String(quantity).trim().split('.')[1]||'').padEnd(4,'0');
+  return fractional[3]==='0';
+}
+
 export function validPhilippinePurchaseDate(value,today){
   const date=String(value||''),parts=/^([1-9]\d{3})-(\d{2})-(\d{2})$/.exec(date);
   if(!parts||typeof today!=='string'||date>today)return false;
@@ -214,7 +225,7 @@ export function validStockIntakeRow(row){
     // A stale/mutated review object must never bypass the exact 4dp/cent
     // parsers through an epsilon tolerance before a real stock+Money POST.
     parseStockQuantity(String(row.quantity))===row.quantity&&
-    SUPPORTED_UNITS.has(row.unit)&&Number.isFinite(row.total)&&
+    SUPPORTED_UNITS.has(row.unit)&&stockIntakeBaseQuantityExact(row.quantity,row.unit)&&Number.isFinite(row.total)&&
     row.total>0&&row.total<=100000000&&
     parsePhpMoney(String(row.total))===row.total&&
     (!row.requiresReview||row.reviewConfirmed)&&
@@ -451,6 +462,11 @@ if(hasDocument){
         (row.flag?' · '+row.flag:''));
       item.appendChild(detail);
       if(row.note)item.appendChild(element('p','muted',row.note));
+      if(Number.isFinite(row.quantity)&&row.quantity>0&&SUPPORTED_UNITS.has(row.unit)&&
+         !stockIntakeBaseQuantityExact(row.quantity,row.unit))
+        item.appendChild(element('p','error',
+          'Physical stock rounds base g/ml/unit to 3 decimal places. Correct the verified quantity before recording paid Stock and Money; a rounded receipt is not permitted.'));
+
       if(row.exists)item.appendChild(element('p','error',
         'An Inventory item already exists with this name (on hand: '+String(row.exists.quantity??row.exists.on_hand_quantity??'unknown')+
         ' '+String(row.exists.unit||'')+'). This tool will NOT add it again. Use ordinary Stock receiving if this is a distinct new purchase.'));
