@@ -3,6 +3,7 @@
   const ROOT='/api/procurement/purchase-documents';
   const MAX_FILE=6*1024*1024;
   let overlay=null,businessId=null,saveInProgress=false,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
+  let openAttempt=0,opening=false;
   const $=(selector,root=document)=>root.querySelector(selector);
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const currency=(value,code='PHP')=>value==null?'Amount not recorded':new Intl.NumberFormat('en-PH',{style:'currency',currency:code||'PHP'}).format(Number(value));
@@ -214,21 +215,33 @@
       if(!acknowledged)return false;
     }
     if(!overlay)return;
+    // A closed panel must not be revived by an older async workspace/list call.
+    openAttempt++;
+    opening=false;
     overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;
     document.body.style.overflow=previousOverflow;
     return true;
   }
   async function open(){
-    if(overlay)return;
+    // The workspace GET can resolve after a profile switch; coalesce fast clicks
+    // until the first response has been checked against the current identity epoch.
+    if(overlay||opening)return;
+    opening=true;
+    const attempt=++openAttempt;
     try{
       const current=await api('/api/accounting/workspaces');
+      if(attempt!==openAttempt)return;
       if(current.role!=='merchant'||!Number(current.active_business_id))throw new Error('Switch to your Merchant business to save purchase receipts.');
       businessId=Number(current.active_business_id);
       injectCss();render();previousOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
+      opening=false;
       await Promise.all([linkable(),archive()]);
     }catch(error){
+      if(attempt!==openAttempt)return;
       if(overlay)message(error.message,true);
       else window.alert(error.message);
+    }finally{
+      if(attempt===openAttempt)opening=false;
     }
   }
   function ensureButton(){
@@ -236,7 +249,13 @@
     const heading=$('#viewStock h1');
     if(!heading)return;
     const old=$('#merchantPurchaseDocumentsButton');
-    if(role!=='merchant'){if(old)old.remove();if(overlay)close(true);return}
+    if(role!=='merchant'){
+      if(old)old.remove();
+      // A role change can arrive while initial workspace discovery is pending.
+      if(opening){openAttempt++;opening=false}
+      if(overlay)close(true);
+      return;
+    }
     if(old)return;
     const btn=document.createElement('button');
     btn.id='merchantPurchaseDocumentsButton';btn.type='button';
@@ -245,7 +264,15 @@
     heading.insertAdjacentElement('afterend',btn);
   }
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&overlay)close()});
-  document.addEventListener('abl:profile-state',()=>{if(overlay)close(true);queueMicrotask(ensureButton)});
+  function invalidatePurchaseDocumentContext(){
+    // Invalidate even without a visible overlay: open() might still be awaiting
+    // an older account's response. Never show its private document panel.
+    openAttempt++;
+    opening=false;
+    if(overlay)close(true);
+    queueMicrotask(ensureButton);
+  }
+  document.addEventListener('abl:profile-state',invalidatePurchaseDocumentContext);
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ensureButton,{once:true});
   else ensureButton();
   new MutationObserver(ensureButton).observe(document.body,{attributes:true,attributeFilter:['data-business-finance-role']});

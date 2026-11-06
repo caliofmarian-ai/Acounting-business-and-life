@@ -57,7 +57,7 @@ function makeController(){
     'form','button','receiptLabel','panel',
     `const ROOT='/api/procurement/purchase-documents';
       let overlay=panel,businessId=14,pendingKey=null,pendingPayload=null,
-          pendingSubmitted=false,chosenFile=null,saveInProgress=false;
+          pendingSubmitted=false,chosenFile=null,saveInProgress=false,openAttempt=0,opening=false;
       const $=selector=>selector==='#mpdForm'?form:
         selector==='#mpdSave'?button:receiptLabel;
       let previousOverflow='';
@@ -302,4 +302,97 @@ test('confirmed POST can close while auxiliary archive GET is slow; no second re
   gate.release();
   await saving;
   assert.equal(c.posts.length,1);
+});
+
+
+// #856 — execute the literal asynchronous open and profile-change handlers.
+// A changed account may not inherit a previously pending Merchant receipt panel.
+const openStart=source.indexOf('  async function open(){');
+const openEnd=source.indexOf('\n  function ensureButton(){',openStart);
+assert.ok(openStart>=0&&openEnd>openStart,'literal shipped open controller must be present');
+const openSource=source.slice(openStart,openEnd);
+const invalidateStart=source.indexOf('  function invalidatePurchaseDocumentContext(){');
+const invalidateEnd=source.indexOf("\n  document.addEventListener('abl:profile-state'",invalidateStart);
+assert.ok(invalidateStart>=0&&invalidateEnd>invalidateStart,'profile invalidation must be defined');
+assert.match(source,/document\.addEventListener\('abl:profile-state',invalidatePurchaseDocumentContext\)/);
+const invalidateSource=source.slice(invalidateStart,invalidateEnd);
+
+function makeOpeningController(){
+  let calls=0,createCount=0,hold=false,release=null,notify=null,fail=false;
+  const alerts=[];
+  const api=async path=>{
+    assert.equal(path,'/api/accounting/workspaces');
+    calls++;
+    if(hold){
+      hold=false;
+      await new Promise(resolve=>{release=resolve;notify?.()});
+    }
+    if(fail){fail=false;throw new Error('Old workspace error')}
+    return {role:'merchant',active_business_id:14};
+  };
+  const factory=new Function('api','document','window','queueMicrotask','created',`
+    let overlay=null,businessId=null,openAttempt=0,opening=false;
+    let saveInProgress=false,pendingSubmitted=false,pendingKey=null,pendingPayload=null,
+        chosenFile=null,previousOverflow='';
+    const message=()=>{},injectCss=()=>{},linkable=async()=>{},archive=async()=>{},ensureButton=()=>{};
+    const render=()=>{overlay={remove(){this.removed=true}};created()};
+    ${closeSource}
+    ${openSource}
+    ${invalidateSource}
+    return {open,close,invalidatePurchaseDocumentContext,
+      state:()=>({overlay:!!overlay,businessId,openAttempt,opening})};
+  `);
+  const controller=factory(api,{body:{style:{overflow:''}}},{alert:v=>alerts.push(v)},
+    callback=>callback(),()=>{createCount++});
+  return {...controller,alerts,calls:()=>calls,created:()=>createCount,
+    failNext:()=>{fail=true},
+    holdNext:()=>{
+      let started;
+      const whenHeld=new Promise(resolve=>{started=resolve});
+      hold=true;notify=started;
+      return {whenHeld,release:()=>{assert.ok(release,'initial workspace GET must be held');release()}};
+    }};
+}
+
+test('profile switch during initial workspace GET never resurrects stale private receipts',async()=>{
+  const c=makeOpeningController(),gate=c.holdNext();
+  const first=c.open();
+  await gate.whenHeld;
+  assert.equal(c.state().overlay,false);
+  c.invalidatePurchaseDocumentContext();
+  gate.release();
+  await first;
+  assert.equal(c.created(),0,'previous identity cannot reopen its private panel');
+  assert.equal(c.state().overlay,false);
+  assert.equal(c.alerts.length,0,'stale responses are ignored rather than shown to new identity');
+  await c.open();
+  assert.equal(c.created(),1,'fresh authorized open remains functional');
+  assert.equal(c.state().businessId,14);
+  assert.equal(c.close(),true);
+});
+
+test('double-click before workspace GET resolves is single-flight, not two dialogs',async()=>{
+  const c=makeOpeningController(),gate=c.holdNext();
+  const first=c.open();
+  await gate.whenHeld;
+  await c.open();
+  assert.equal(c.calls(),1);
+  assert.equal(c.created(),0);
+  gate.release();
+  await first;
+  assert.equal(c.created(),1);
+  assert.equal(c.state().overlay,true);
+});
+
+test('late failed workspace request after profile revocation does not alert replacement user',async()=>{
+  const c=makeOpeningController(),gate=c.holdNext();
+  c.failNext();
+  const first=c.open();
+  await gate.whenHeld;
+  c.invalidatePurchaseDocumentContext();
+  gate.release();
+  await first;
+  assert.equal(c.created(),0);
+  assert.deepEqual(c.alerts,[]);
+  assert.equal(c.state().opening,false);
 });
