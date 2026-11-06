@@ -21,6 +21,7 @@ function makeController(){
   const messages=[],posts=[];
   let keys=0,workspaceIsMerchant=true,failPostOnce=false,failFileOnce=false;
   let workspaceChecks=0,changeDuringVerify=null,changeDuringRead=null;
+  let failArchiveOnce=false,failLinkableOnce=false;
   let holdWorkspace=false,releaseWorkspace=null,notifyWorkspaceHeld=null;
   const api=async(path,options)=>{
     if(path==='/api/accounting/workspaces'){
@@ -52,13 +53,16 @@ function makeController(){
       ${saveSource}
       return {save,setFile:file=>{chosenFile=file},state:()=>({pendingKey,pendingPayload,pendingSubmitted})};`);
   const controller=fn(api,FakeFormData,()=>('purchase-intent-'+(++keys)),()=>fields.issue_date,
-    (text,isError)=>messages.push({text,isError}),async()=>{},async()=>{},
+    (text,isError)=>messages.push({text,isError}),
+    async()=>{if(failArchiveOnce){failArchiveOnce=false;throw new Error('Archive GET unavailable');}},
+    async()=>{if(failLinkableOnce){failLinkableOnce=false;throw new Error('Purchase-link GET unavailable');}},
     async()=>{if(failFileOnce){failFileOnce=false;throw new Error('File read failed');}
       if(changeDuringRead){const change=changeDuringRead;changeDuringRead=null;await Promise.resolve();change();}
       return 'data:application/pdf;base64,JVBERi0xLjQK'},
     form,button,receiptLabel,panel);
   return{...controller,fields,posts,messages,
     failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
+    failNextArchive:()=>{failArchiveOnce=true},failNextLinkable:()=>{failLinkableOnce=true},
     setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
     setLinks:links=>{selectedLinks=links},
     holdNextWorkspace:()=>{
@@ -171,4 +175,38 @@ test('overlapping save events cannot create a second receipt intent while prefli
   assert.equal(c.keyCount(),1);
   assert.equal(c.state().pendingSubmitted,false);
   assert.equal(c.state().pendingKey,null);
+});
+
+test('confirmed save remains confirmed when archive GET fails after POST',async()=>{
+  const c=makeController();
+  c.failNextArchive();
+  await c.submit();
+  assert.equal(c.posts.length,1,'save was committed by the POST mock');
+  assert.equal(c.keyCount(),1);
+  assert.equal(c.state().pendingKey,null,'confirmed save releases the key even when archive GET fails');
+  assert.equal(c.state().pendingSubmitted,false);
+  assert.match(c.messages.at(-1).text,/Purchase document saved securely/);
+  assert.match(c.messages.at(-1).text,/Archive or purchase links could not refresh/);
+  assert.match(c.messages.at(-1).text,/save is confirmed/);
+  c.fields.note='New independently confirmed receipt';
+  await c.submit();
+  assert.equal(c.posts.length,2,'the operator can explicitly save the next receipt');
+  assert.notEqual(c.posts[1].client_request_key,c.posts[0].client_request_key);
+  assert.equal(c.messages.at(-1).isError,false);
+});
+
+test('confirmed replay remains confirmed when linked-purchase GET fails',async()=>{
+  const c=makeController();
+  c.failNextPost();
+  await c.submit();
+  assert.equal(c.posts.length,1);
+  const originalKey=c.posts[0].client_request_key;
+  c.failNextLinkable();
+  await c.submit();
+  assert.equal(c.posts.length,2,'same-key replay reaches the server only once more');
+  assert.equal(c.posts[1].client_request_key,originalKey);
+  assert.equal(c.state().pendingKey,null);
+  assert.match(c.messages.at(-1).text,/This document was already saved/);
+  assert.match(c.messages.at(-1).text,/save is confirmed/);
+  assert.match(c.messages.at(-1).text,/could not refresh/);
 });

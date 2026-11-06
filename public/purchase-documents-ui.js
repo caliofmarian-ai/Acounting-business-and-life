@@ -188,8 +188,15 @@
       pendingKey=null;pendingPayload=null;pendingSubmitted=false;chosenFile=null;
       form.reset();form.elements.issue_date.value=today();
       $('#mpdChosenFile',overlay).textContent='No file selected.';
-      message(result.already_saved?'This document was already saved.':'Purchase document saved securely.');
-      await archive();await linkable();
+      // The POST result is definitive before the two auxiliary GET refreshes.
+      // A failed archive/list refresh must never be presented as a failed save:
+      // that would encourage creating a second receipt with a new intent key.
+      const savedNotice=result.already_saved?'This document was already saved.':'Purchase document saved securely.';
+      message(savedNotice);
+      const refreshes=await Promise.allSettled([archive(),linkable()]);
+      if(panel===overlay&&biz===businessId&&refreshes.some(item=>item.status==='rejected')){
+        message(savedNotice+' Archive or purchase links could not refresh. The save is confirmed; close and reopen to reload the list.',true);
+      }
     }catch(error){if(panel===overlay)message(error.message,true)}
     finally{saveInProgress=false;if(btn)btn.disabled=false}
   }
