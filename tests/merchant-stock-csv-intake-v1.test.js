@@ -595,7 +595,7 @@ test('paid CSV receiving refuses stock amounts PostgreSQL physical NUMERIC(12,3)
     ['1.00001','kg',false],['1.0001','not-unit',false]
   ])assert.equal(stockIntakeBaseQuantityExact(quantity,unit),expected,quantity+' '+unit);
 
-  const row=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\\nRice,0.0001,g,120')[0];
+  const row=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\nRice,0.0001,g,120')[0];
   reviseStockIntakeRow(row,'classificationCode','food_ingredient');
   assert.equal(validStockIntakeRow(row),false,'positive 4dp gram quantity must not create a paid receipt with zero physical stock');
   reviseStockIntakeRow(row,'unit','kg');
@@ -604,6 +604,6 @@ test('paid CSV receiving refuses stock amounts PostgreSQL physical NUMERIC(12,3)
   reviseStockIntakeRow(row,'unit','unit');
   row.reviewConfirmed=true;
   assert.equal(validStockIntakeRow(row),false,'no silent rounding on count inventory');
-  assert.match(js,/stockIntakeBaseQuantityExact\\(row\\.quantity,row\\.unit\\)/);
-  assert.match(js,/Physical stock rounds base g\\/ml\\/unit to 3 decimal places/);
+  assert.match(js,/stockIntakeBaseQuantityExact\(row\.quantity,row\.unit\)/);
+  assert.match(js,/Physical stock rounds base g\/ml\/unit to 3 decimal places/);
 });
