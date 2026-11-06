@@ -6,16 +6,32 @@ export const PREPARED_REMOVAL_REASONS=Object.freeze({
   quality_rejected:'Rejected at quality control'
 });
 export const preparedRemovalTreatment=reason=>reason==='owner_consumption'?'noncash_owner_draw':'noncash_product_loss';
+const preparedPositiveId=value=>{
+  // JSON identity must not be implicitly coerced from booleans, arrays or objects.
+  if((typeof value!=='number'&&typeof value!=='string')||
+     (typeof value==='string'&&!/^\d+$/.test(value)))return null;
+  const n=Number(value);
+  return Number.isSafeInteger(n)&&n>0?n:null;
+};
+const preparedPortions=value=>{
+  if((typeof value!=='number'&&typeof value!=='string')||
+     (typeof value==='number'&&!Number.isFinite(value)))return null;
+  // Match the 4-decimal recipe/stock contract exactly: no exponent, coercion
+  // or epsilon tolerance that could post different quantities to DB and ledger.
+  const text=String(value);
+  if(!/^(?:0|[1-9]\d{0,3})(?:\.\d{1,4})?$/.test(text))return null;
+  const n=Number(text);
+  return n>0&&n<=9999?n:null;
+};
 export function parsePreparedRemoval(body,expectedBusinessId){
-  const businessId=Number(body?.business_id);
-  if(!Number.isSafeInteger(businessId)||businessId!==Number(expectedBusinessId)){
+  const businessId=preparedPositiveId(body?.business_id);
+  if(businessId===null||businessId!==Number(expectedBusinessId)){
     throw Object.assign(new Error('Merchant business changed. Reopen Quick Sale and try again.'),{status:409});
   }
-  const productId=Number(body?.product_id),quantity=Number(body?.quantity);
-  const reason=String(body?.reason||'').trim();
-  const idempotencyKey=String(body?.idempotency_key||'').trim();
-  if(!Number.isSafeInteger(productId)||productId<1||!Number.isFinite(quantity)||quantity<=0||quantity>9999||
-     Math.abs(quantity*10000-Math.round(quantity*10000))>1e-7||
+  const productId=preparedPositiveId(body?.product_id),quantity=preparedPortions(body?.quantity);
+  const reason=typeof body?.reason==='string'?body.reason.trim():'';
+  const idempotencyKey=typeof body?.idempotency_key==='string'?body.idempotency_key.trim():'';
+  if(productId===null||quantity===null||
      !Object.hasOwn(PREPARED_REMOVAL_REASONS,reason)){
     throw Object.assign(new Error('Choose a prepared product, a valid portion quantity and a removal reason.'),{status:400});
   }
@@ -25,13 +41,36 @@ export function parsePreparedRemoval(body,expectedBusinessId){
   return{businessId,productId,quantity,reason,idempotencyKey,treatment:preparedRemovalTreatment(reason)};
 }
 export function estimatedPreparedRemovalCost(components,quantity){
-  if(!Number.isFinite(quantity)||quantity<=0)throw new RangeError('Quantity must be positive.');
-  const unrounded=components.reduce((sum,c)=>{
-    const perPortion=Number(c.recipe_quantity),unitCost=Number(c.unit_cost);
-    if(!Number.isFinite(perPortion)||perPortion<=0||!Number.isFinite(unitCost)||unitCost<0){
-      throw new RangeError('Recipe quantity and inventory unit cost must be valid.');
+  // Decimal scales match PostgreSQL recipe/quantity (4dp) and unit cost (6dp).
+  // Multiply and aggregate exactly before rounding once to PHP cents.
+  const scaled=(value,decimals,label)=>{
+    if((typeof value!=='number'&&typeof value!=='string')||
+       (typeof value==='number'&&!Number.isFinite(value))){
+      throw new RangeError(label+' must be a finite decimal.');
     }
-    return sum+perPortion*unitCost*quantity;
-  },0);
-  return Math.round((unrounded+Number.EPSILON)*100)/100;
+    const match=/^(\d+)(?:\.(\d+))?$/.exec(String(value).trim());
+    if(!match||match[2]?.length>decimals)throw new RangeError(label+' has invalid precision.');
+    return BigInt(match[1])*10n**BigInt(decimals)+BigInt((match[2]||'').padEnd(decimals,'0')||'0');
+  };
+  const portions=scaled(quantity,4,'Quantity');
+  if(portions<=0n)throw new RangeError('Quantity must be positive.');
+  if(!Array.isArray(components)||!components.length)throw new RangeError('Recipe ingredients are required.');
+  let exact=0n;
+  for(const component of components){
+    const perPortion=scaled(component.recipe_quantity,4,'Recipe quantity');
+    const unitCost=scaled(component.unit_cost,6,'Inventory unit cost');
+    if(perPortion<=0n)throw new RangeError('Recipe quantity must be positive.');
+    // Canonical inventory.quantity is NUMERIC(12,3); PostgreSQL rounds
+    // sub-milli debits to zero, while removal evidence allows 6dp.
+    // 4dp recipe x 4dp portions = 8dp; 0.001 = 100000 at that scale.
+    if((perPortion*portions)%100000n!==0n){
+      throw Object.assign(new RangeError('Recipe ingredient quantity cannot be deducted exactly from Inventory stock. Adjust the recipe or portion quantity.'),
+        {status:409,code:'PREPARED_REMOVAL_STOCK_PRECISION'});
+    }
+    exact+=perPortion*unitCost*portions;
+  }
+  // Exact amount is in 10^-14 PHP; positive half-cent rounds up once.
+  const cents=(exact*100n+50000000000000n)/100000000000000n;
+  if(cents>99999999999999n)throw new RangeError('Estimated removal cost exceeds NUMERIC(14,2).');
+  return Number(cents)/100;
 }
