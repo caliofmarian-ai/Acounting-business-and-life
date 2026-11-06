@@ -28,6 +28,21 @@ export function stockIntakeOriginHeaders(context){
   }
   return Object.freeze({'x-abl-inventory-origin-business':String(context.businessId)});
 }
+// A transient A→B→A workspace preference change may occur while two identity
+// snapshots match. Never show another business' Inventory/Money rows as A or
+// use them to approve a paid-stock duplicate/expense decision. Empty result
+// sets carry no provenance, so the originating Inventory GET is also pinned.
+export function stockIntakeScopedRows(rows,context,source){
+  if(!Array.isArray(rows)||!Number.isSafeInteger(context?.businessId)||context.businessId<1||
+     rows.some(row=>{
+       const id=Number(row?.business_id);
+       return !row||typeof row!=='object'||!Number.isSafeInteger(id)||id!==context.businessId;
+     })){
+    throw new Error((source||'Merchant')+
+      ' records are not tied to the verified Merchant business. Stop and refresh before approving paid Stock and Money.');
+  }
+  return rows;
+}
 // Forward-compatible #881 purchase key: one secure, literal key per approved row.
 // #882 is NOT installed in HTTP yet; this header does not enable safe retry.
 export function stockIntakePurchaseIntentKey(row,randomUUID=()=>globalThis.crypto?.randomUUID?.()){
@@ -398,15 +413,15 @@ if(hasDocument){
     try{
       const next=await snapshot();
       const [inventory,transactions]=await Promise.all([
-        api('/api/inventory'),api('/api/transactions')
+        api('/api/inventory',{headers:stockIntakeOriginHeaders(next)}),api('/api/transactions')
       ]);
       const verify=await snapshot();
       if(revision!==state.contextReadRevision)return;
       if(!sameContext(next,verify))throw new Error('Merchant business changed during Inventory/Money read.');
       if(!preserveIntakeReviewForMerchant(state,previous,verify))resetIntakeReviewFields();
       state.context=verify;state.accountId=verify.accountId;
-      state.inventory=Array.isArray(inventory)?inventory:[];
-      state.transactions=Array.isArray(transactions)?transactions:[];
+      state.inventory=stockIntakeScopedRows(inventory,verify,'Inventory');
+      state.transactions=stockIntakeScopedRows(transactions,verify,'Money');
       const expenses=state.transactions.filter(tx=>tx.type==='business_expense');
       const total=expenses.reduce((sum,tx)=>sum+Number(tx.amount||0),0);
       message('ledgerStatus','This business already has '+expenses.length+' recent expense entries in Money, totaling ₱'+
@@ -593,10 +608,10 @@ if(hasDocument){
     const before=await snapshot();
     if(!sameContext(before,state.context)||state.accountId!==before.accountId)
       throw new Error('Active Merchant account or business changed. Import stopped.');
-    const inventory=await api('/api/inventory');
+    const inventory=await api('/api/inventory',{headers:stockIntakeOriginHeaders(before)});
     const after=await snapshot();
     if(!sameContext(after,state.context))throw new Error('Merchant business changed during stock preflight.');
-    state.inventory=Array.isArray(inventory)?inventory:[];
+    state.inventory=stockIntakeScopedRows(inventory,after,'Inventory');
   }
   async function saveSelected(){
     if($('post').disabled||state.busy)return;

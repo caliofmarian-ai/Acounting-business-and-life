@@ -7,7 +7,7 @@ import {
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
   STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes,
-  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact
+  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -100,6 +100,32 @@ test('same-business duplicate names are blocked before purchase',()=>{
   row.exists=findExistingInventory(row,[{id:75,item:'FISH BALLS',quantity:3000,unit:'g'}]);
   assert.equal(row.exists.id,75);
   assert.equal(validStockIntakeRow(row),false);
+});
+
+test('Inventory/Money reads must prove original Merchant business before review and preflight',()=>{
+  const origin={accountId:11,businessId:123,businessName:'Verified PH Merchant'};
+  const verified=[
+    {id:1,business_id:123,item:'Rice'},
+    {id:2,business_id:'123',item:'Beans'}
+  ];
+  assert.equal(stockIntakeScopedRows(verified,origin,'Inventory'),verified);
+  assert.deepEqual(stockIntakeScopedRows([],origin,'Money'),[]);
+  for(const records of [
+    null,undefined,{},[{id:1,item:'Missing business'}],
+    [{id:1,business_id:456,item:'Different business'}],
+    [{id:1,business_id:'not-a-business'}], [null]
+  ])assert.throws(()=>stockIntakeScopedRows(records,origin,'Money'),
+    /not tied to the verified Merchant business/);
+  assert.throws(()=>stockIntakeScopedRows([{business_id:123}],{businessId:NaN},'Inventory'),
+    /not tied to the verified Merchant business/);
+  // Require a pinned read to prevent A→B→A preference swaps from making
+  // an empty B Inventory list look like an empty A list.
+  assert.match(js,/api\('\/api\/inventory',\{headers:stockIntakeOriginHeaders\(next\)\}\)/);
+  assert.match(js,/api\('\/api\/inventory',\{headers:stockIntakeOriginHeaders\(before\)\}\)/);
+  assert.match(js,/stockIntakeScopedRows\(inventory,verify,'Inventory'\)/);
+  assert.match(js,/stockIntakeScopedRows\(transactions,verify,'Money'\)/);
+  assert.match(js,/stockIntakeScopedRows\(inventory,after,'Inventory'\)/);
+  assert.equal(stockIntakeOriginHeaders(origin)['x-abl-inventory-origin-business'],'123');
 });
 
 test('paid stock intake requires one Merchant, and records exactly a linked purchase expense without retry',()=>{
