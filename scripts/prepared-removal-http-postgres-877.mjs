@@ -36,12 +36,12 @@ const setup=async()=>{
    CREATE TABLE prepared_product_removals(id BIGSERIAL PRIMARY KEY,business_id BIGINT,product_id BIGINT,product_name_snapshot TEXT,removal_reason TEXT,accounting_treatment TEXT,quantity NUMERIC(14,4),unit_cost_snapshot NUMERIC(14,6),estimated_cost NUMERIC(14,2),recipe_batch_snapshot JSONB,note TEXT,actor_account_id BIGINT,idempotency_key TEXT,occurred_at TIMESTAMPTZ DEFAULT NOW(),UNIQUE(business_id,idempotency_key));
    CREATE TABLE prepared_product_removal_ingredients(removal_id BIGINT,inventory_id BIGINT,ingredient_name_snapshot TEXT,quantity_used NUMERIC(14,4),unit_cost_snapshot NUMERIC(12,4),cost_snapshot NUMERIC(12,4));
    CREATE TABLE prepared_product_removal_lots(removal_id BIGINT,inventory_id BIGINT,lot_id BIGINT,quantity_used NUMERIC(16,6),expires_at_snapshot TIMESTAMPTZ);
-   INSERT INTO products VALUES (81,12,'Prepared meal','prepared_recipe'),(82,12,'Precision meal','prepared_recipe'),(83,12,'Rollback meal','prepared_recipe'),(91,13,'Foreign meal','prepared_recipe');
-   INSERT INTO product_recipe_batches VALUES (81,11,'portion',1,'portion',11),(82,1,'portion',1,'portion',1),(83,1,'portion',1,'portion',1);
-   INSERT INTO inventory(id,business_id,item,unit,quantity,unit_cost) VALUES (101,12,'Main ingredient','kg',3,68.4200),(102,12,'Tiny ingredient','kg',1,2.1350),(103,12,'Rollback ingredient','kg',1,4.0150),(201,13,'Foreign item','kg',8,7);
-   INSERT INTO recipes VALUES (81,101,1),(82,102,0.0001),(83,103,1);
+   INSERT INTO products VALUES (81,12,'Prepared meal','prepared_recipe'),(82,12,'Precision meal','prepared_recipe'),(83,12,'Rollback meal','prepared_recipe'),(84,12,'Competing meal A','prepared_recipe'),(85,12,'Competing meal B','prepared_recipe'),(91,13,'Foreign meal','prepared_recipe');
+   INSERT INTO product_recipe_batches VALUES (81,11,'portion',1,'portion',11),(82,1,'portion',1,'portion',1),(83,1,'portion',1,'portion',1),(84,1,'portion',1,'portion',1),(85,1,'portion',1,'portion',1);
+   INSERT INTO inventory(id,business_id,item,unit,quantity,unit_cost) VALUES (101,12,'Main ingredient','kg',3,68.4200),(102,12,'Tiny ingredient','kg',1,2.1350),(103,12,'Rollback ingredient','kg',1,4.0150),(104,12,'Shared last ingredient','kg',1,5.1250),(201,13,'Foreign item','kg',8,7);
+   INSERT INTO recipes VALUES (81,101,1),(82,102,0.0001),(83,103,1),(84,104,1),(85,104,1);
    INSERT INTO supply_lots(id,business_id,inventory_id,item_name,internal_lot_code,base_unit,quantity_received_base,quantity_remaining_base,unit_cost_base) VALUES
-    (501,12,101,'Main ingredient','LOT-A','kg',3,3,68.4200),(502,12,102,'Tiny ingredient','LOT-B','kg',1,1,2.1350),(503,12,103,'Rollback ingredient','LOT-C','kg',1,1,4.0150);
+    (501,12,101,'Main ingredient','LOT-A','kg',3,3,68.4200),(502,12,102,'Tiny ingredient','LOT-B','kg',1,1,2.1350),(503,12,103,'Rollback ingredient','LOT-C','kg',1,1,4.0150),(504,12,104,'Shared last ingredient','LOT-D','kg',1,1,5.1250);
   `);
  }finally{db.release()}
 };
@@ -143,6 +143,40 @@ async function main(){
  r=await send({...concurrent,idempotency_key:'prepared-ci-shortage-0007'});
  assert.equal(r.status,409,'New intent cannot spend stock already consumed');
  assert.equal(await snapshot(),concurrentSaved,'Shortage rollback must not create records');
+
+ // Different intent keys AND different prepared products compete for one last
+ // ingredient/lot. A unique-key barrier alone cannot protect this race:
+ // the real shared Inventory lock must allow exactly one noncash removal.
+ const distinctA={...base,product_id:84,quantity:1,reason:'owner_consumption',
+  idempotency_key:'prepared-ci-distinct-A-0008'};
+ const distinctB={...base,product_id:85,quantity:1,reason:'quality_rejected',
+  idempotency_key:'prepared-ci-distinct-B-0009'};
+ const beforeDistinct=JSON.parse(await snapshot());
+ const competing=await Promise.all([send(distinctA),send(distinctB)]);
+ assert.deepEqual(competing.map(v=>v.status).sort((a,b)=>a-b),[201,409],
+  'Only one distinct intent may consume the final ingredient, even for separate recipes');
+ const winningIndex=competing.findIndex(v=>v.status===201);
+ const winning=competing[winningIndex],winningBody=winningIndex===0?distinctA:distinctB;
+ const losingBody=winningIndex===0?distinctB:distinctA;
+ assert.equal(Number(winning.data.removal.estimated_cost),5.13,
+  'The winner retains exact half-cent PHP cost evidence');
+ assert.equal(winning.data.removal.accounting_treatment,
+  winningIndex===0?'noncash_owner_draw':'noncash_product_loss');
+ const afterDistinct=JSON.parse(await snapshot());
+ assert.equal(afterDistinct[0].find(v=>Number(v.id)===104).quantity,'0.000');
+ assert.equal(afterDistinct[1].find(v=>Number(v.id)===504).quantity,'0.000000');
+ for(let i=2;i<5;i++)assert.equal(afterDistinct[i].length,beforeDistinct[i].length+1,
+  'One distinct-key winner creates exactly one removal, ingredient and FEFO lot allocation');
+ assert.equal(afterDistinct[3].filter(v=>Number(v.inventory_id)===104).length,1);
+ assert.equal(afterDistinct[4].filter(v=>Number(v.lot_id)===504).length,1);
+ const distinctSaved=await snapshot();
+ r=await send(winningBody);assert.equal(r.status,200);
+ assert.equal(r.data.already_recorded,true);
+ assert.equal(r.data.removal.id,winning.data.removal.id);
+ assert.equal(await snapshot(),distinctSaved,'Winning intent replay is read-only');
+ r=await send(losingBody);assert.equal(r.status,409);
+ assert.equal(await snapshot(),distinctSaved,
+  'Losing distinct-key intent stays unposted even when retried');
 
  console.log('PREPARED_REMOVAL_HTTP_POSTGRES_877_PASS literalExpress=true realFEFO=true syntheticIdentity=true realRollback=true replay=true');
 }
