@@ -92,10 +92,15 @@ test('revoked Merchant binding or membership cannot pass the post-upload receipt
     await writer.query("UPDATE profile_business_bindings SET status='active' WHERE account_id=9101 AND business_id=201");
     await revoker.query('BEGIN');
     await revoker.query('UPDATE business_memberships SET active=FALSE WHERE account_id=9101 AND business_id=201');
-    pending=lockGrant(writer,9101,201);
+    // Observe the expected denial from the moment the asynchronous query
+    // starts: it may reject in the event-loop turn that releases the lock.
+    pending=lockGrant(writer,9101,201).then(
+      ()=>({allowed:true}),error=>({allowed:false,error}));
     assert.equal(await blocking(writerPid,revokerPid),true,'post-upload check must wait for membership revocation');
     await revoker.query('COMMIT');
-    await assert.rejects(pending,e=>e.status===403);pending=null;
+    const deniedGrant=await pending;
+    assert.equal(deniedGrant.allowed,false);
+    assert.equal(deniedGrant.error.status,403);pending=null;
     await assert.rejects(()=>lockGrant(writer,9101,202),e=>e.status===403);
     console.log(JSON.stringify({status:'PASS',db:'isolated PostgreSQL 16',postUploadGrantLock:true,realBlockingObserved:true,revokeBeforeLockDenied:true,persistedReceipt:false}));
   } finally {
@@ -142,10 +147,13 @@ test('receipt association recheck holds source business ownership stable until C
     await observer.query('UPDATE inventory_purchases SET business_id=14 WHERE id=101');
     await changer.query('BEGIN');
     await changer.query('UPDATE inventory_purchases SET business_id=15 WHERE id=101');
-    pending=validate(writer,14,links,{lockRows:true});
+    pending=validate(writer,14,links,{lockRows:true}).then(
+      ()=>({allowed:true}),error=>({allowed:false,error}));
     assert.equal(await blocked(writerPid,changerPid),true,'receipt verification waits for a pending change');
     await changer.query('COMMIT');
-    await assert.rejects(pending,e=>e.status===404);pending=null;
+    const deniedLink=await pending;
+    assert.equal(deniedLink.allowed,false);
+    assert.equal(deniedLink.error.status,404);pending=null;
     await observer.query('UPDATE inventory_purchases SET business_id=14 WHERE id=101');
     await writer.query('BEGIN');
     await validate(writer,14,links,{lockRows:true});
