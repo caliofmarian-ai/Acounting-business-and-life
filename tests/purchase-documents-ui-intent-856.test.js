@@ -666,3 +666,56 @@ test('verified server-shape 201 and replay 200 accept unchanged PDF metadata and
   assert.equal(retry.posts[1].client_request_key,key);
   assert.equal(retry.state().pendingSubmitted,false);
 });
+
+
+// Archive client defense: execute the literal shipped archive renderer, not a
+// copied mock. The server shape() returns numeric business_id and id for every
+// private Merchant document. A malformed/mixed 200 must disclose none of it.
+test('private receipt archive rejects foreign-business and malformed HTTP 200 rows before rendering',async()=>{
+  const begin=source.indexOf('  async function archive(){');
+  const end=source.indexOf('\n  function readFile(',begin);
+  assert.ok(begin>=0&&end>begin,'literal archive controller must be present');
+  const archiveSource=source.slice(begin,end);
+  const row={id:77,business_id:14,document_kind:'invoice',issuer_name:'My shop',
+    document_number:'R-4',issue_date:'2026-11-07',gross_amount:15.50,
+    currency_code:'PHP',has_attachment:true};
+  const makeArchive=response=>{
+    const box={innerHTML:'Loading Merchant receipts'},panel={};
+    const archive=new Function('api','panel','box',`
+      const ROOT='/api/procurement/purchase-documents';
+      let overlay=panel,businessId=14,archiveRequest=0;
+      const $=(selector,root)=>selector==='#mpdSaved'&&root===panel?box:null;
+      const escape=value=>String(value??'').replace(/[&<>"']/g,c=>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      const currency=value=>String(value??'');
+      ${archiveSource}
+      return archive;
+    `)(async path=>{
+      assert.match(path,/business_id=14$/);
+      return response;
+    },panel,box);
+    return{archive,box};
+  };
+  const permitted=makeArchive({documents:[row]});
+  await permitted.archive();
+  assert.match(permitted.box.innerHTML,/My shop/);
+  assert.match(permitted.box.innerHTML,/\/77\/file\?business_id=14/);
+  const empty=makeArchive({documents:[]});
+  await empty.archive();
+  assert.match(empty.box.innerHTML,/No purchase documents saved yet/);
+  for(const response of [
+    {documents:[{...row,business_id:15,issuer_name:'FOREIGN PRIVATE RECEIPT'}]},
+    {documents:[row,{...row,id:78,business_id:15,issuer_name:'FOREIGN PRIVATE RECEIPT'}]},
+    {documents:[{...row,id:'77'}]},
+    {documents:[{...row,business_id:[14]}]},
+    {documents:[{...row,document_kind:{toString:()=> 'invoice'}}]},
+    {documents:[{...row,has_attachment:'true'}]},
+    {documents:{length:1}},
+    {}
+  ]){
+    const testArchive=makeArchive(response);
+    await assert.rejects(testArchive.archive(),/business or document identity could not be verified/);
+    assert.doesNotMatch(testArchive.box.innerHTML,/FOREIGN PRIVATE RECEIPT|\/77\/file|\/78\/file/);
+    assert.match(testArchive.box.innerHTML,/Could not verify the Merchant purchase archive/);
+  }
+});

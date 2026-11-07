@@ -127,7 +127,20 @@
       throw error;
     });
     if(!data||panel!==overlay||biz!==businessId||request!==archiveRequest||!box)return;
-    if(!data.documents?.length){box.innerHTML='<p class="mpdHelp">No purchase documents saved yet.</p>';return}
+    // A request URL with a Merchant business parameter does not establish
+    // provenance for each returned private record. Reject an entire mixed
+    // or malformed archive before rendering a row or a file download link.
+    const allowedKinds=['purchase_receipt','invoice','order_slip','other'];
+    if(!Array.isArray(data.documents)||data.documents.some(d=>
+      !d||typeof d!=='object'||Array.isArray(d)||
+      !Number.isSafeInteger(d.id)||d.id<=0||
+      !Number.isSafeInteger(d.business_id)||d.business_id!==biz||
+      !allowedKinds.includes(d.document_kind)||
+      typeof d.has_attachment!=='boolean')){
+      box.innerHTML='<p class="mpdHelp">Could not verify the Merchant purchase archive. Reopen after checking your business.</p>';
+      throw new Error('Purchase archive business or document identity could not be verified.');
+    }
+    if(!data.documents.length){box.innerHTML='<p class="mpdHelp">No purchase documents saved yet.</p>';return}
     box.innerHTML=data.documents.map(d=>
       '<div class="mpdDoc"><strong>'+escape(d.issuer_name||'Purchase document')+' · '+escape(d.document_kind.replaceAll('_',' '))+'</strong>'+
       '<span>'+escape(String(d.issue_date).slice(0,10))+' · '+escape(currency(d.gross_amount,d.currency_code))+'</span>'+
