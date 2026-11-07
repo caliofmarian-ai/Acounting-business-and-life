@@ -821,14 +821,17 @@ test('HTTP purchase adapter discards indeterminate COMMIT client, but returns he
       body:{...payload,origin_business_id:1},
       get(name){assert.equal(name,'Idempotency-Key');return key}
     };
-    const result={status:null,body:null};
+    const result={status:null,body:null,cache:null};
     const response={
+      setHeader(name,value){if(name==='Cache-Control')result.cache=value;return this},
       status(value){result.status=value;return this},
       json(value){result.body=value;return this}
     };
     let middlewareError=null;
     await handlers.purchase(request,response,error=>{middlewareError=error});
     assert.equal(middlewareError,null);
+    assert.equal(result.cache,'private, no-store',
+      'success and uncertain-commit responses must not cache private evidence');
     assert.equal(created,1);
     assert.equal(releases.length,1,'connection released exactly once');
     if(loseCommitAck){
@@ -1131,5 +1134,28 @@ test('HTTP writer uses the initiating purchase body and rejects async body repla
     }
     assert.equal(releases.length,poolConnects,'each acquired client released once');
     for(const args of releases)assert.equal(args.length,0,'healthy client returned after confirmed rollback');
+  }
+});
+
+test('private intent inspection and rejection responses are explicitly non-cacheable',async()=>{
+  const handlers=createInventoryPurchaseIntentHttpHandlers({
+    pool:{async connect(){throw Error('Invalid request must not access database')}},
+    authorizeOrigin:async()=>{throw Error('Invalid request must not authorize')},
+    verifyCurrentMerchantAuthority:async()=>{throw Error('Invalid request must not inspect grants')},
+    createPurchase:async()=>{throw Error('Invalid request must not mutate stock')}
+  });
+  for(const route of ['purchase','inspect']){
+    const output={headers:{},status:null,body:null,errors:[]};
+    const res={
+      setHeader(name,value){output.headers[name.toLowerCase()]=value;return this},
+      status(code){output.status=code;return this},
+      json(body){output.body=body;return this}
+    };
+    await handlers[route]({body:null},res,error=>output.errors.push(error));
+    assert.deepEqual(output.errors,[]);
+    assert.equal(output.status,400);
+    assert.equal(output.body.code,'INVENTORY_PURCHASE_INTENT_INVALID');
+    assert.equal(output.headers['cache-control'],'private, no-store',
+      'neither errors nor private inspection data may be cached: '+route);
   }
 });

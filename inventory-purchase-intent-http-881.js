@@ -26,6 +26,14 @@ export function createInventoryPurchaseIntentHttpHandlers({
     throw new Error('HTTP purchase intent requires transactional pool, bound session authority, live DB grant and writer');
   }
   async function handle(req,res,next,readOnly){
+    // Purchase and reconciliation responses can include private Merchant
+    // stock/expense evidence. Never allow browser/intermediary caching, even
+    // for authorization failures, replays or indeterminate transaction errors.
+    // Real Express ServerResponse always exposes setHeader; local synthetic
+    // response fakes may omit it.
+    if(typeof res.setHeader==='function'){
+      res.setHeader('Cache-Control','private, no-store');
+    }
     let client;
     // A lost COMMIT acknowledgement leaves transaction state indeterminate.
     // node-postgres removes a connection from the pool when release(err) is used;
