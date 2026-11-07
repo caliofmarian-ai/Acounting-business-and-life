@@ -110,6 +110,20 @@ test('Inventory/Money reads must prove original Merchant business before review 
   ];
   assert.equal(stockIntakeScopedRows(verified,origin,'Inventory'),verified);
   assert.deepEqual(stockIntakeScopedRows([],origin,'Money'),[]);
+  // Regression: Number([123]), Number(' 123 '), Number('1.23e2') and
+  // Number({valueOf(){return 123}}) previously forged the same business.
+  for(const business_id of [
+    [123],{valueOf:()=>123},' 123 ','1.23e2','123.0','00123',
+    '+123','0x7b',123.0001,null,undefined,true,false
+  ]){
+    assert.throws(()=>stockIntakeScopedRows([{id:1,business_id}],origin,'Inventory'),
+      /not tied to the verified Merchant business/);
+  }
+  // Boolean true also matched business 1 under the old coercion.
+  assert.throws(()=>stockIntakeScopedRows([{id:1,business_id:true}],
+    {accountId:11,businessId:1},'Money'),/not tied to the verified Merchant business/);
+  assert.throws(()=>stockIntakeScopedRows([{id:1,business_id:Number.MAX_SAFE_INTEGER+1}],
+    origin,'Inventory'),/not tied to the verified Merchant business/);
   for(const records of [
     null,undefined,{},[{id:1,item:'Missing business'}],
     [{id:1,business_id:456,item:'Different business'}],

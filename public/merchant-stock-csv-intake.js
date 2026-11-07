@@ -35,8 +35,14 @@ export function stockIntakeOriginHeaders(context){
 export function stockIntakeScopedRows(rows,context,source){
   if(!Array.isArray(rows)||!Number.isSafeInteger(context?.businessId)||context.businessId<1||
      rows.some(row=>{
-       const id=Number(row?.business_id);
-       return !row||typeof row!=='object'||!Number.isSafeInteger(id)||id!==context.businessId;
+       const value=row?.business_id;
+       // Never grant a response row Merchant provenance via JS Number coercion.
+       // PostgreSQL IDs arrive as safe integers or digit-only decimal strings.
+       const canonical=(typeof value==='number'&&Number.isSafeInteger(value)&&value>0)||
+         (typeof value==='string'&&/^[1-9][0-9]*$/.test(value));
+       const id=canonical?Number(value):null;
+       return !row||typeof row!=='object'||Array.isArray(row)||
+         !Number.isSafeInteger(id)||id!==context.businessId;
      })){
     throw new Error((source||'Merchant')+
       ' records are not tied to the verified Merchant business. Stop and refresh before approving paid Stock and Money.');
