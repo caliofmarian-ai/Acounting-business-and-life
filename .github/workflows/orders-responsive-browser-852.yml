@@ -1,0 +1,37 @@
+name: Merchant Orders Responsive Browser 852
+on:
+  pull_request:
+    paths:
+      - 'public/orders.css'
+      - 'tests/orders-responsive-board-852.test.js'
+      - 'scripts/orders-responsive-browser-852.mjs'
+      - '.github/workflows/orders-responsive-browser-852.yml'
+permissions:
+  contents: read
+concurrency:
+  group: orders-responsive-852
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Exact head and CSS contract checks
+        run: |
+          git rev-parse HEAD
+          node --test tests/orders-responsive-board-852.test.js
+      - name: Real Chrome CSS viewports and synthetic screenshots
+        run: node scripts/orders-responsive-browser-852.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orders-responsive-852
+          path: artifacts/orders-responsive-852/
+          if-no-files-found: warn

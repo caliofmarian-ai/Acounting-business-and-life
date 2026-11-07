@@ -51,7 +51,9 @@ test('notification module hydrates the reserved bell and badge without replacing
 test('lazy Legal stays inside More and never adds a new canonical topbar button',()=>{
   const block=legal.slice(legal.indexOf('function addButton'),legal.indexOf('function openSheet'));
   assert.match(block,/if\(window\.__ABL_LAZY_FEATURES__\)return/);
-  assert.match(loader,/openButtonFeature\('legal','legalCenterBtn'\)/);
+  const more=loader.slice(loader.indexOf('function ensureMore'),loader.indexOf('function openMore'));
+  assert.match(more,/bg\.querySelector\('\[data-lazy-action="legal"\]'\)\.onclick=openLegalCenter;/);
+  assert.doesNotMatch(loader,/openButtonFeature\('legal','legalCenterBtn'\)/);
 });
 
 test('first-paint topbar controls receive their CSS before body scripts in the composed runtime',()=>{
