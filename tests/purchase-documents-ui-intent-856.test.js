@@ -506,7 +506,7 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
   `)(api,String,value=>String(value),panel,boxes);
   const oldArchive=controller.archive(),newArchive=controller.archive();
   assert.equal(pending.length,2);
-  pending[1].resolve({documents:[{id:71,issuer_name:'Newest receipt',document_kind:'invoice',
+  pending[1].resolve({documents:[{id:71,business_id:14,issuer_name:'Newest receipt',document_kind:'invoice',
     issue_date:'2026-11-07',gross_amount:27,currency_code:'PHP',has_attachment:false}]});
   await newArchive;
   assert.match(boxes['#mpdSaved'].innerHTML,/Newest receipt/);
@@ -529,7 +529,7 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
     'older purchase links must not replace current choices');
 
   const failingOld=controller.archive(),goodNew=controller.archive();
-  pending[5].resolve({documents:[{id:72,issuer_name:'Confirmed again',document_kind:'purchase_receipt',
+  pending[5].resolve({documents:[{id:72,business_id:14,issuer_name:'Confirmed again',document_kind:'purchase_receipt',
     issue_date:'2026-11-07',gross_amount:19,currency_code:'PHP',has_attachment:false}]});
   await goodNew;
   pending[4].reject(new Error('Obsolete archive GET failed'));
