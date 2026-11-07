@@ -7,7 +7,7 @@ import {
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
   STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes,
-  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows,verifyPaidStockIntakeReceipt,verifyPaidStockIntakeExpenseDatePatch
+  canonicalStockIntakeIdentityId,stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows,verifyPaidStockIntakeReceipt,verifyPaidStockIntakeExpenseDatePatch
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -749,4 +749,48 @@ test('paid CSV receiving refuses stock amounts PostgreSQL physical NUMERIC(12,3)
   assert.equal(validStockIntakeRow(tooLarge),true,'max valid 4dp kg quantity fits nine base-unit whole digits');
   assert.match(js,/stockIntakeBaseQuantityExact\(row\.quantity,row\.unit\)/);
   assert.match(js,/Physical stock supports at most 999,999,999\.999 base g\/ml\/unit/);
+});
+
+test('canonical session/workspace identity refuses numeric coercion before paid Stock receiving',()=>{
+  for(const val of [11,'11',31,'31',Number.MAX_SAFE_INTEGER,String(Number.MAX_SAFE_INTEGER)])
+    assert.equal(canonicalStockIntakeIdentityId(val),Number(val));
+  for(const val of [null,undefined,0,-1,'0','031',' 31','31 ','3.1e1','31.0',
+    [31],true,{},Infinity,31.5,'9007199254740993'])
+    assert.equal(canonicalStockIntakeIdentityId(val),null,String(val));
+});
+
+test('actual Merchant snapshot rejects malformed origin IDs while preserving canonical PostgreSQL IDs',async()=>{
+  const begin=js.indexOf('  async function snapshot(){');
+  const end=js.indexOf('  function sameContext(',begin);
+  assert.ok(begin>=0&&end>begin);
+  const source=js.slice(begin,end).trim();
+  const factory=new Function('api','window','canonicalStockIntakeIdentityId','return ('+source+');');
+  const run=(accountId,businessId,activeId)=>{
+    const called=[];
+    const api=async path=>{
+      called.push(path);
+      if(path==='/api/me')return{account:{id:accountId,active_role:'merchant'},
+        profiles:[{role:'merchant',enabled:true}]};
+      if(path==='/api/accounting/workspaces')return{role:'merchant',
+        businesses:[{id:businessId,name:'Synthetic Merchant',country_code:'PH'}],
+        active_business_id:activeId};
+      throw Error('unexpected Stock/Money read '+path);
+    };
+    return{snapshot:factory(api,{ABLSession:{authenticated:()=>true}},canonicalStockIntakeIdentityId),called};
+  };
+  for(const [a,b,c] of [['11','31','31'],[11,31,31]]){
+    const {snapshot,called}=run(a,b,c);
+    assert.deepEqual(await snapshot(),{accountId:11,businessId:31,businessName:'Synthetic Merchant'});
+    assert.deepEqual(called,['/api/me','/api/accounting/workspaces']);
+  }
+  for(const malformed of ['031',' 31','3.1e1','31.0',[31],true,{},0,'9007199254740993']){
+    for(const [a,b,c] of [[malformed,'31','31'],['11',malformed,'31'],['11','31',malformed]]){
+      const {snapshot,called}=run(a,b,c);
+      await assert.rejects(snapshot(),/identifier invalid|business changed/i);
+      assert.ok(!called.some(path=>path==='/api/inventory'||path==='/api/transactions'));
+    }
+  }
+  assert.match(source,/canonicalStockIntakeIdentityId\(me\?\.account\?\.id\)/);
+  assert.match(source,/canonicalStockIntakeIdentityId\(business\?\.id\)/);
+  assert.match(source,/canonicalStockIntakeIdentityId\(workspace\.active_business_id\)/);
 });

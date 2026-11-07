@@ -18,6 +18,15 @@ export function stockIntakeClassification(code){
   const {inventory_domain,stock_role,inventory_type}=STOCK_INTAKE_CLASSIFICATIONS[code];
   return{inventory_domain,stock_role,inventory_type};
 }
+// IDs from authentication/workspace JSON cannot acquire Merchant authority
+// via Number() coercion of arrays, padded strings, exponents or booleans.
+export function canonicalStockIntakeIdentityId(value){
+  if((typeof value!=='number'&&typeof value!=='string')||
+     (typeof value==='number'&&!Number.isSafeInteger(value))||
+     !/^[1-9][0-9]*$/.test(String(value)))return null;
+  const id=Number(value);
+  return Number.isSafeInteger(id)?id:null;
+}
 // #841/#842 server authority: capture the already verified originating Merchant
 // before any asynchronous stock/Money preflight. Never derive this header from
 // the mutable selected-business preference, the CSV, or the HTTP response.
@@ -421,6 +430,8 @@ if(hasDocument){
   async function snapshot(){
     if(!window.ABLSession?.authenticated())throw new Error('Please sign in to Business & Life first, then return to this page.');
     const me=await api('/api/me');
+    const accountId=canonicalStockIntakeIdentityId(me?.account?.id);
+    if(!accountId)throw new Error('Merchant account identifier invalid. Reload before receiving stock.');
     if(me?.account?.active_role!=='merchant'||!me?.profiles?.some(p=>p.role==='merchant'&&p.enabled))
       throw new Error('Switch to an active Merchant profile before starting a stock import.');
     const workspace=await api('/api/accounting/workspaces');
@@ -428,11 +439,13 @@ if(hasDocument){
     if(!Array.isArray(workspace.businesses)||workspace.businesses.length!==1)
       throw new Error('Multiple Merchant businesses are bound to this account. Use the normal Merchant Stock form until exact-business-bound purchases are released.');
     const business=workspace.businesses[0];
-    if(Number(business.id)!==Number(workspace.active_business_id))
+    const businessId=canonicalStockIntakeIdentityId(business?.id);
+    const activeBusinessId=canonicalStockIntakeIdentityId(workspace.active_business_id);
+    if(!businessId||!activeBusinessId||businessId!==activeBusinessId)
       throw new Error('The active Merchant business changed. Reload before importing.');
     if(business.country_code&&business.country_code!=='PH')
       throw new Error('This importer is for Philippines Merchant businesses only.');
-    return{accountId:Number(me.account.id),businessId:Number(business.id),businessName:String(business.name||'')};
+    return{accountId,businessId,businessName:String(business.name||'')};
   }
   function sameContext(a,b){
     return a&&b&&a.accountId===b.accountId&&a.businessId===b.businessId&&a.businessName===b.businessName;
