@@ -4,6 +4,7 @@
   const MAX_FILE=6*1024*1024;
   let overlay=null,businessId=null,saveInProgress=false,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
   let openAttempt=0,opening=false,saveAttempt=0;
+  let archiveRequest=0,linkableRequest=0;
   const $=(selector,root=document)=>root.querySelector(selector);
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const currency=(value,code='PHP')=>value==null?'Amount not recorded':new Intl.NumberFormat('en-PH',{style:'currency',currency:code||'PHP'}).format(Number(value));
@@ -97,9 +98,14 @@
   async function linkable(){
     const panel=overlay,biz=businessId;
     if(!panel||!biz)return;
+    const request=++linkableRequest;
     const box=$('#mpdLinkable',panel);
-    const data=await api(ROOT+'/linkable-purchases?business_id='+encodeURIComponent(biz));
-    if(panel!==overlay||biz!==businessId||!box)return;
+    const data=await api(ROOT+'/linkable-purchases?business_id='+encodeURIComponent(biz)).catch(error=>{
+      // A superseded fetch cannot replace newer content or surface an old error.
+      if(panel!==overlay||biz!==businessId||request!==linkableRequest)return null;
+      throw error;
+    });
+    if(!data||panel!==overlay||biz!==businessId||request!==linkableRequest||!box)return;
     if(!data.purchases?.length){box.innerHTML='<p class="mpdHelp">No recorded Inventory purchases yet. Save this receipt now and link it later.</p>';return}
     box.innerHTML=data.purchases.map(p=>'<label><input type="checkbox" name="mpdLink" value="'+Number(p.id)+'">'+
       '<span><strong>'+escape(p.inventory_name)+'</strong> · '+escape(currency(p.total_cost))+
@@ -108,9 +114,14 @@
   async function archive(){
     const panel=overlay,biz=businessId;
     if(!panel||!biz)return;
+    const request=++archiveRequest;
     const box=$('#mpdSaved',panel);
-    const data=await api(ROOT+'?business_id='+encodeURIComponent(biz));
-    if(panel!==overlay||biz!==businessId||!box)return;
+    const data=await api(ROOT+'?business_id='+encodeURIComponent(biz)).catch(error=>{
+      // An older read may finish after a confirmed save refresh in this SAME dialog.
+      if(panel!==overlay||biz!==businessId||request!==archiveRequest)return null;
+      throw error;
+    });
+    if(!data||panel!==overlay||biz!==businessId||request!==archiveRequest||!box)return;
     if(!data.documents?.length){box.innerHTML='<p class="mpdHelp">No purchase documents saved yet.</p>';return}
     box.innerHTML=data.documents.map(d=>
       '<div class="mpdDoc"><strong>'+escape(d.issuer_name||'Purchase document')+' · '+escape(d.document_kind.replaceAll('_',' '))+'</strong>'+

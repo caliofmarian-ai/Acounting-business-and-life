@@ -430,3 +430,55 @@ test('late old archive completion cannot unlock the replacement Merchant receipt
   assert.equal(c.state().pendingSubmitted,false);
   assert.notEqual(c.posts[0].client_request_key,c.posts[1].client_request_key);
 });
+
+
+test('same-dialog stale archive and linked-purchase responses cannot overwrite the latest refresh',async()=>{
+  // Execute the literal shipped functions with deferred responses; unlike a
+  // profile-switch-only test, panel and business stay identical throughout.
+  const begin=source.indexOf('  async function linkable(){');
+  const end=source.indexOf('\n  function readFile(',begin);
+  assert.ok(begin>=0&&end>begin,'literal archive and purchase-link controllers exist');
+  const pending=[];
+  const api=path=>new Promise((resolve,reject)=>pending.push({path,resolve,reject}));
+  const boxes={'#mpdLinkable':{innerHTML:'Loading links'},'#mpdSaved':{innerHTML:'Loading archive'}};
+  const panel={};
+  const controller=new Function('api','escape','currency','panel','boxes',`
+    const ROOT='/api/procurement/purchase-documents';
+    let overlay=panel,businessId=14,linkableRequest=0,archiveRequest=0;
+    const $=(selector,root)=>root===panel?boxes[selector]:null;
+    ${source.slice(begin,end)}
+    return {archive,linkable};
+  `)(api,String,value=>String(value),panel,boxes);
+  const oldArchive=controller.archive(),newArchive=controller.archive();
+  assert.equal(pending.length,2);
+  pending[1].resolve({documents:[{id:71,issuer_name:'Newest receipt',document_kind:'invoice',
+    issue_date:'2026-11-07',gross_amount:27,currency_code:'PHP',has_attachment:false}]});
+  await newArchive;
+  assert.match(boxes['#mpdSaved'].innerHTML,/Newest receipt/);
+  const latestArchive=boxes['#mpdSaved'].innerHTML;
+  pending[0].resolve({documents:[]});
+  await oldArchive;
+  assert.equal(boxes['#mpdSaved'].innerHTML,latestArchive,
+    'older initial GET must not erase the saved receipt after post-save refresh');
+
+  const oldLinks=controller.linkable(),newLinks=controller.linkable();
+  assert.equal(pending.length,4);
+  pending[3].resolve({purchases:[{id:51,inventory_name:'Latest purchase',
+    total_cost:45,created_at:'2026-11-07',purchase_quantity:2,purchase_unit:'kg'}]});
+  await newLinks;
+  assert.match(boxes['#mpdLinkable'].innerHTML,/Latest purchase/);
+  const latestLinks=boxes['#mpdLinkable'].innerHTML;
+  pending[2].resolve({purchases:[]});
+  await oldLinks;
+  assert.equal(boxes['#mpdLinkable'].innerHTML,latestLinks,
+    'older purchase links must not replace current choices');
+
+  const failingOld=controller.archive(),goodNew=controller.archive();
+  pending[5].resolve({documents:[{id:72,issuer_name:'Confirmed again',document_kind:'purchase_receipt',
+    issue_date:'2026-11-07',gross_amount:19,currency_code:'PHP',has_attachment:false}]});
+  await goodNew;
+  pending[4].reject(new Error('Obsolete archive GET failed'));
+  await failingOld;
+  assert.match(boxes['#mpdSaved'].innerHTML,/Confirmed again/,
+    'superseded network failure cannot erase new content or alert after success');
+});
