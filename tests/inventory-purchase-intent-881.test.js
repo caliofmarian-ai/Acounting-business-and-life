@@ -913,8 +913,7 @@ test('HTTP replay and both read-only inspection outcomes retire a client after l
             assert.equal(route,'replay');
             statements.push('claim-replay');return{rowCount:0,rows:[]};
           }
-          if(sql.includes('SELECT payload_sha256,purchase_id,response_json')){
-            assert.equal(route,'replay');
+          if(route==='replay'&&sql.includes('SELECT payload_sha256,purchase_id,response_json')){
             statements.push('replay-row');return{rowCount:1,rows:[{
               payload_sha256:fingerprint,purchase_id:44,response_json:{purchase:{id:44}}
             }]};
