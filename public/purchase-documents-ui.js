@@ -111,7 +111,16 @@
       throw error;
     });
     if(!data||panel!==overlay||biz!==businessId||request!==linkableRequest||!box||hasUnsavedSelection())return;
-    if(!data.purchases?.length){box.innerHTML='<p class="mpdHelp">No recorded Inventory purchases yet. Save this receipt now and link it later.</p>';return}
+    // Server rows carry p.business_id. Never render a private purchase based
+    // only on the query parameter; validate every row before any rendering.
+    if(!Array.isArray(data.purchases)||data.purchases.some(p=>
+      !p||typeof p!=='object'||Array.isArray(p)||
+      !Number.isSafeInteger(p.id)||p.id<=0||
+      !Number.isSafeInteger(p.business_id)||p.business_id!==biz)){
+      box.innerHTML='<p class="mpdHelp">Could not verify the Merchant purchase list. Reopen after checking your business.</p>';
+      throw new Error('Linked purchases business or row identity could not be verified.');
+    }
+    if(!data.purchases.length){box.innerHTML='<p class="mpdHelp">No recorded Inventory purchases yet. Save this receipt now and link it later.</p>';return}
     box.innerHTML=data.purchases.map(p=>'<label><input type="checkbox" name="mpdLink" value="'+Number(p.id)+'">'+
       '<span><strong>'+escape(p.inventory_name)+'</strong> · '+escape(currency(p.total_cost))+
       '<br><small>'+escape(String(p.created_at).slice(0,10))+' · '+escape(p.purchase_quantity)+' '+escape(p.purchase_unit)+'</small></span></label>').join('');

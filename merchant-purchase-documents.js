@@ -347,7 +347,7 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
     try{
       const {businessId}=await requireMerchantDocumentBusiness(pool,identity,req);
       const q=await pool.query(`
-        SELECT p.id,p.created_at,p.total_cost,p.purchase_quantity,p.purchase_unit,
+        SELECT p.id,p.business_id,p.created_at,p.total_cost,p.purchase_quantity,p.purchase_unit,
                p.transaction_id,i.item inventory_name
           FROM inventory_purchases p JOIN inventory i ON i.id=p.inventory_id
          WHERE p.business_id=$1 AND i.business_id=$1

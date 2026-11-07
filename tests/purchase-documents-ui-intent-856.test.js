@@ -518,7 +518,7 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
 
   const oldLinks=controller.linkable(),newLinks=controller.linkable();
   assert.equal(pending.length,4);
-  pending[3].resolve({purchases:[{id:51,inventory_name:'Latest purchase',
+  pending[3].resolve({purchases:[{id:51,business_id:14,inventory_name:'Latest purchase',
     total_cost:45,created_at:'2026-11-07',purchase_quantity:2,purchase_unit:'kg'}]});
   await newLinks;
   assert.match(boxes['#mpdLinkable'].innerHTML,/Latest purchase/);
@@ -563,14 +563,14 @@ test('late purchase-list GET cannot discard a checkbox selected for a new draft'
   `)(api,panel,box,String,Number);
   const first=linkable();
   selected=['51'];
-  resolveRead({purchases:[{id:51,inventory_name:'Stock',total_cost:10,
+  resolveRead({purchases:[{id:51,business_id:14,inventory_name:'Stock',total_cost:10,
     created_at:'2026-11-07',purchase_quantity:1,purchase_unit:'kg'}]});
   await first;
   assert.deepEqual(selected,['51'],'the next receipt checkbox stays checked');
   assert.equal(writes,0,'in-flight old GET never resets the checked DOM');
   selected=[];
   const second=linkable();
-  resolveRead({purchases:[{id:52,inventory_name:'Updated stock',total_cost:20,
+  resolveRead({purchases:[{id:52,business_id:14,inventory_name:'Updated stock',total_cost:20,
     created_at:'2026-11-07',purchase_quantity:2,purchase_unit:'kg'}]});
   await second;
   assert.equal(writes,1,'ordinary unselected refresh still renders');
@@ -717,5 +717,47 @@ test('private receipt archive rejects foreign-business and malformed HTTP 200 ro
     await assert.rejects(testArchive.archive(),/business or document identity could not be verified/);
     assert.doesNotMatch(testArchive.box.innerHTML,/FOREIGN PRIVATE RECEIPT|\/77\/file|\/78\/file/);
     assert.match(testArchive.box.innerHTML,/Could not verify the Merchant purchase archive/);
+  }
+});
+
+test('private linked purchases reject foreign or malformed HTTP rows before rendering',async()=>{
+  const begin=source.indexOf('  async function linkable(){');
+  const end=source.indexOf('\n  async function archive(){',begin);
+  assert.ok(begin>=0&&end>begin);
+  const literal=source.slice(begin,end);
+  const base={id:51,business_id:14,inventory_name:'My Inventory',total_cost:15,
+    created_at:'2026-11-07',purchase_quantity:1,purchase_unit:'kg'};
+  const run=async response=>{
+    const box={innerHTML:'Loading',querySelectorAll:()=>[]},panel={};
+    const linkable=new Function('api','panel','box',`
+      const ROOT='/api/procurement/purchase-documents';
+      let overlay=panel,businessId=14,linkableRequest=0;
+      const $=(selector,root)=>selector==='#mpdLinkable'&&root===panel?box:null;
+      const escape=value=>String(value??'');
+      const currency=value=>String(value??'');
+      ${literal}
+      return linkable;
+    `)(async path=>{assert.match(path,/business_id=14$/);return response},panel,box);
+    let error=null;try{await linkable()}catch(e){error=e}
+    return {error,html:box.innerHTML};
+  };
+  const valid=await run({purchases:[base]});
+  assert.equal(valid.error,null);assert.match(valid.html,/My Inventory/);
+  const empty=await run({purchases:[]});
+  assert.equal(empty.error,null);assert.match(empty.html,/No recorded Inventory purchases/);
+  for(const response of [
+    {purchases:[{...base,business_id:15,inventory_name:'PRIVATE FOREIGN PURCHASE'}]},
+    {purchases:[base,{...base,id:52,business_id:15,inventory_name:'PRIVATE FOREIGN PURCHASE'}]},
+    {purchases:[{...base,business_id:undefined}]},
+    {purchases:[{...base,business_id:'14'}]},
+    {purchases:[{...base,business_id:[14]}]},
+    {purchases:[{...base,id:'51'}]},
+    {purchases:[{...base,id:0}]},
+    {purchases:{length:1}},{}
+  ]){
+    const denied=await run(response);
+    assert.match(denied.error?.message||'',/Linked purchases business or row identity/);
+    assert.doesNotMatch(denied.html,/PRIVATE FOREIGN PURCHASE|value="51"/);
+    assert.match(denied.html,/Could not verify the Merchant purchase list/);
   }
 });
