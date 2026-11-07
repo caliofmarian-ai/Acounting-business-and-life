@@ -153,16 +153,47 @@ function literalKey(value){
 // A replay must never return a different purchase than the row committed
 // under this intent. Keep both persistence and replay fail-closed if a caller
 // supplies a mismatched snapshot (or a stored row is later corrupted).
-function verifiedPurchaseResponse(response,purchaseId){
+function verifiedPurchaseResponse(response,purchaseId,businessId){
   if(!response||typeof response!=='object'||Array.isArray(response)||
      !response.purchase||typeof response.purchase!=='object'||Array.isArray(response.purchase)){
     throw bad('Purchase response must contain its linked purchase','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
   }
+  const conflict=message=>bad(message,'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+  const sameId=(actual,expected,label)=>{
+    if(actual===undefined)return; // Optional field absent in older snapshots.
+    try{
+      if(dbId(actual,label)!==dbId(expected,label))throw new Error('Mismatch');
+    }catch{throw conflict('Purchase response '+label+' does not match the authorized source')}
+  };
   let claimedId;
   try{claimedId=dbId(response.purchase.id,'Response purchase')}
-  catch{throw bad('Purchase response contains an invalid purchase ID','INVENTORY_PURCHASE_INTENT_CONFLICT',409)}
+  catch{throw conflict('Purchase response contains an invalid purchase ID')}
   if(claimedId!==dbId(purchaseId,'Purchase')){
-    throw bad('Purchase response does not match the committed purchase ID','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+    throw conflict('Purchase response does not match the committed purchase ID');
+  }
+  // A valid purchase FK alone does not make its private response trustworthy:
+  // a callback can accidentally include a DIFFERENT Merchant's stock or
+  // expense row. Reject contradictory business/link evidence before JSONB
+  // persistence, on replay, and during read-only inspection.
+  for(const name of ['purchase','inventory','lot','transaction']){
+    const row=response[name];
+    if(row===undefined||row===null)continue; // Expense or lot may be omitted.
+    if(typeof row!=='object'||Array.isArray(row))throw conflict('Invalid '+name+' response evidence');
+    if(businessId!==undefined)sameId(row.business_id,businessId,name+' business');
+  }
+  const inventory=response.inventory,lot=response.lot,transaction=response.transaction;
+  if(inventory){
+    if(response.purchase.inventory_id!==undefined&&inventory.id!==undefined)
+      sameId(response.purchase.inventory_id,inventory.id,'purchase/inventory link');
+    if(lot&&lot.inventory_id!==undefined&&inventory.id!==undefined)
+      sameId(lot.inventory_id,inventory.id,'lot/inventory link');
+  }
+  if(transaction){
+    sameId(transaction.source_id,purchaseId,'expense/purchase link');
+    if(transaction.source!==undefined&&transaction.source!=='inventory_purchase')
+      throw conflict('Purchase response includes an unrelated transaction source');
+    if(transaction.type!==undefined&&transaction.type!=='business_expense')
+      throw conflict('Purchase response includes an unrelated transaction type');
   }
   return response;
 }
@@ -339,7 +370,7 @@ export async function claimInventoryPurchaseIntent(client,{businessId,accountId,
   const row=prior.rows[0];
   if(row.payload_sha256!==fingerprint)throw bad('Purchase intent key was reused with different details','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
   if(row.purchase_id==null||row.response_json==null)throw bad('Purchase intent has no committed result','INVENTORY_PURCHASE_INTENT_INCOMPLETE',409);
-  return{kind:'replay',purchaseId:row.purchase_id,response:verifiedPurchaseResponse(row.response_json,row.purchase_id)};
+  return{kind:'replay',purchaseId:row.purchase_id,response:verifiedPurchaseResponse(row.response_json,row.purchase_id,business)};
 }
 
 // Serialize EVERY new Inventory purchase for a business before the existing-item
@@ -358,7 +389,7 @@ export async function lockInventoryPurchaseBusiness(client,businessId){
 export async function finishInventoryPurchaseIntent(client,{businessId,accountId,intentKey,purchaseId,response}){
   const args=[dbId(businessId,'Business'),dbId(accountId,'Account'),literalKey(intentKey),dbId(purchaseId,'Purchase')];
   if(!response||typeof response!=='object'||Array.isArray(response))throw bad('A committed purchase response object is required');
-  verifiedPurchaseResponse(response,args[3]);
+  verifiedPurchaseResponse(response,args[3],args[0]);
   requireLosslessPurchaseSnapshot(response);
   // The original response object is NOT necessarily the JSON response that
   // PostgreSQL will persist (e.g. a nested toJSON method or Date). Validate
@@ -369,7 +400,7 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
   catch{throw bad('Purchase response must be JSON serializable','INVENTORY_PURCHASE_INTENT_CONFLICT',409)}
   if(!json||Buffer.byteLength(json,'utf8')>65536)throw bad('Purchase response snapshot exceeds intent limit');
   const snapshot=JSON.parse(json);
-  verifiedPurchaseResponse(snapshot,args[3]);
+  verifiedPurchaseResponse(snapshot,args[3],args[0]);
   // Do not associate a scoped Merchant intent with another business's purchase.
   // The database relationship is checked inside this SAME open transaction.
   // UPDATE ... FROM alone does not lock the source purchase. A correlated
@@ -594,7 +625,7 @@ export async function inspectInventoryPurchaseIntent(client,options){
     `,[purchase,business]);
     if(source.rowCount!==1)throw bad('Original purchase provenance has changed',
       'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
-    const response=verifiedPurchaseResponse(row.response_json,purchase);
+    const response=verifiedPurchaseResponse(row.response_json,purchase,business);
     assertOriginalInstructions();
     readCommitAttempted=true;
     await client.query('COMMIT');

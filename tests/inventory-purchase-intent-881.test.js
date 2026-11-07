@@ -1159,3 +1159,75 @@ test('private intent inspection and rejection responses are explicitly non-cache
       'neither errors nor private inspection data may be cached: '+route);
   }
 });
+
+
+test('original Merchant provenance and optional purchase/lot/expense links cannot contradict private response',async()=>{
+  const ctx={businessId:101,accountId:501,intentKey:key,purchaseId:44};
+  const valid={purchase:{id:44,business_id:'101',inventory_id:'10'},
+    inventory:{id:10,business_id:101},
+    lot:{id:90,business_id:'101',inventory_id:10},
+    transaction:{id:72,business_id:101,source:'inventory_purchase',
+      source_id:'44',type:'business_expense'}};
+  const poisoned=[
+    {...valid,purchase:{...valid.purchase,business_id:202}},
+    {...valid,inventory:{...valid.inventory,business_id:202}},
+    {...valid,lot:{...valid.lot,business_id:202}},
+    {...valid,transaction:{...valid.transaction,business_id:202}},
+    {...valid,purchase:{...valid.purchase,inventory_id:11}},
+    {...valid,lot:{...valid.lot,inventory_id:11}},
+    {...valid,transaction:{...valid.transaction,source_id:45}},
+    {...valid,transaction:{...valid.transaction,source:'order'}},
+    {...valid,transaction:{...valid.transaction,type:'sale'}},
+    {...valid,transaction:{...valid.transaction,business_id:'not-a-business'}},
+    {...valid,lot:['wrong','shape']}
+  ];
+  let queries=0;
+  const noSql={async query(){queries++;throw Error('Contradictory private response reached SQL')}};
+  for(const response of poisoned){
+    await assert.rejects(finishInventoryPurchaseIntent(noSql,{...ctx,response}),
+      e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+  }
+  assert.equal(queries,0,'no poisoned response is persisted, even within a pending purchase');
+  let persisted;
+  const realEnough={async query(_sql,args){
+    persisted=JSON.parse(args[4]);
+    return{rowCount:1,rows:[{purchase_id:44}]};
+  }};
+  assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,{...ctx,response:valid}),valid);
+  assert.deepEqual(persisted,valid);
+  // Older purchase responses may intentionally omit optional lot/expense fields.
+  assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
+    {...ctx,response:{purchase:{id:44}}}),{purchase:{id:44}});
+});
+
+test('foreign Merchant response provenance is rejected on replay and inspection, without a new purchase',async()=>{
+  const original={businessId:101,accountId:501,intentKey:key,payload};
+  const poisoned={purchase:{id:44,business_id:202},inventory:{id:5,business_id:202}};
+  let replayStatements=0;
+  const replay={async query(sql){
+    replayStatements++;
+    if(sql.includes('INSERT INTO inventory_purchase_intents'))return{rowCount:0,rows:[]};
+    if(sql.includes('SELECT payload_sha256,purchase_id,response_json'))return{rowCount:1,rows:[{
+      payload_sha256:inventoryPurchaseFingerprint(payload),purchase_id:44,response_json:poisoned
+    }]};
+    throw Error('Unexpected replay query');
+  }};
+  await assert.rejects(claimInventoryPurchaseIntent(replay,original),
+    e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+  assert.equal(replayStatements,2,'foreign response must not be returned as a successful replay');
+
+  const statements=[];
+  const inspected={async query(sql){
+    statements.push(sql.trim().split(/\\s+/)[0]);
+    if(sql.trim()==='BEGIN'||sql.trim()==='ROLLBACK')return{rowCount:0,rows:[]};
+    if(sql.includes('FROM inventory_purchase_intents'))return{rowCount:1,rows:[{
+      payload_sha256:inventoryPurchaseFingerprint(payload),purchase_id:44,response_json:poisoned
+    }]};
+    if(sql.includes('FROM inventory_purchases'))return{rowCount:1,rows:[{id:44}]};
+    throw Error('Unexpected inspection SQL');
+  }};
+  await assert.rejects(inspectInventoryPurchaseIntent(inspected,{
+    ...original,verifyCurrentMerchantAuthority:async()=>true
+  }),e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+  assert.equal(statements.at(-1),'ROLLBACK','inspection cannot declare a foreign snapshot committed');
+});
