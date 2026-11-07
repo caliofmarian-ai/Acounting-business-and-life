@@ -521,3 +521,42 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
   assert.match(boxes['#mpdSaved'].innerHTML,/Confirmed again/,
     'superseded network failure cannot erase new content or alert after success');
 });
+
+test('late purchase-list GET cannot discard a checkbox selected for a new draft',async()=>{
+  // Literal source test; overwriting DOM-like innerHTML clears live checkbox state.
+  const begin=source.indexOf('  async function linkable(){');
+  const end=source.indexOf('\n  async function archive(){',begin);
+  assert.ok(begin>=0&&end>begin);
+  let resolveRead,selected=[],writes=0,html='Existing choices';
+  const box={
+    querySelectorAll:selector=>{
+      assert.equal(selector,'input[name="mpdLink"]:checked');
+      return selected.map(value=>({value}));
+    },
+    get innerHTML(){return html},
+    set innerHTML(value){html=value;selected=[];writes++}
+  };
+  const panel={};
+  const api=path=>new Promise(resolve=>{assert.match(path,/linkable-purchases/);resolveRead=resolve});
+  const {linkable}=new Function('api','panel','box','escape','currency',`
+    const ROOT='/api/procurement/purchase-documents';
+    let overlay=panel,businessId=14,linkableRequest=0;
+    const $=(selector,root)=>root===panel?box:null;
+    ${source.slice(begin,end)}
+    return {linkable};
+  `)(api,panel,box,String,Number);
+  const first=linkable();
+  selected=['51'];
+  resolveRead({purchases:[{id:51,inventory_name:'Stock',total_cost:10,
+    created_at:'2026-11-07',purchase_quantity:1,purchase_unit:'kg'}]});
+  await first;
+  assert.deepEqual(selected,['51'],'the next receipt checkbox stays checked');
+  assert.equal(writes,0,'in-flight old GET never resets the checked DOM');
+  selected=[];
+  const second=linkable();
+  resolveRead({purchases:[{id:52,inventory_name:'Updated stock',total_cost:20,
+    created_at:'2026-11-07',purchase_quantity:2,purchase_unit:'kg'}]});
+  await second;
+  assert.equal(writes,1,'ordinary unselected refresh still renders');
+  assert.match(html,/Updated stock/);
+});

@@ -100,12 +100,15 @@
     if(!panel||!biz)return;
     const request=++linkableRequest;
     const box=$('#mpdLinkable',panel);
+    // Do not replace active checkbox selections with an older GET response.
+    // A Merchant can start the next draft during the preceding receipt refresh.
+    const hasUnsavedSelection=()=>Boolean(box?.querySelectorAll?.('input[name="mpdLink"]:checked')?.length);
     const data=await api(ROOT+'/linkable-purchases?business_id='+encodeURIComponent(biz)).catch(error=>{
       // A superseded fetch cannot replace newer content or surface an old error.
       if(panel!==overlay||biz!==businessId||request!==linkableRequest)return null;
       throw error;
     });
-    if(!data||panel!==overlay||biz!==businessId||request!==linkableRequest||!box)return;
+    if(!data||panel!==overlay||biz!==businessId||request!==linkableRequest||!box||hasUnsavedSelection())return;
     if(!data.purchases?.length){box.innerHTML='<p class="mpdHelp">No recorded Inventory purchases yet. Save this receipt now and link it later.</p>';return}
     box.innerHTML=data.purchases.map(p=>'<label><input type="checkbox" name="mpdLink" value="'+Number(p.id)+'">'+
       '<span><strong>'+escape(p.inventory_name)+'</strong> · '+escape(currency(p.total_cost))+
