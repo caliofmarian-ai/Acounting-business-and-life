@@ -18,8 +18,9 @@ function between(source,start,end){
 
 test('Orders modal owns background scroll until cancel or workspace close',()=>{
   assert.match(orders,/function openOrderModal\(\)\{[^}]*document\.body\.style\.overflow='hidden'/);
-  assert.match(orders,/function closeOrderModal\(\)\{[^}]*document\.body\.style\.overflow=''/);
-  assert.match(orders,/function closeOrders\(\)\{[^}]*closeOrderModal\(\)/);
+  assert.match(orders,/function closeOrderModal\(\)\{[^}]*document\.body\.style\.overflow=orderModalPreviousOverflow/);
+  assert.match(orders,/function closeOrders\(\)\{invalidateOrders/);
+  assert.match(orders,/function invalidateOrders[\s\S]*?closeOrderModal\(\)/);
   assert.doesNotMatch(orders,/back\.classList\.remove\('hidden'\)/);
 });
 

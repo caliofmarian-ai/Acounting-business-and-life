@@ -370,7 +370,7 @@ app.post('/api/profile-money/:role/entries',body,async(req,res,next)=>{try{
   if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile does not use the personal/profile Money ledger'});
   if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before recording Money entries'});
   profileMoneyEntryCapabilities(role);
-  const key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await createProfileMoneyEntry(pool,{
     publicId:'pme_'+crypto.randomUUID().replaceAll('-',''),entryKey:key,accountId:me.account.id,profileRole:role,
     entryType:req.body?.entry_type,direction:req.body?.direction,category:req.body?.category,
@@ -387,7 +387,7 @@ app.post('/api/profile-money/:role/entries/:id/reverse',body,async(req,res,next)
   const me=await identity(req),role=clean(req.params.role,40);
   if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile does not use the personal/profile Money ledger'});
   if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before correcting Money entries'});
-  const key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await reverseProfileMoneyEntry(pool,{
     publicId:'pme_rev_'+crypto.randomUUID().replaceAll('-',''),reversalKey:key,accountId:me.account.id,
     profileRole:role,entryId:Number(req.params.id),note:req.body?.note||'',actorAccountId:me.account.id
@@ -525,7 +525,7 @@ app.post('/api/settings/budgets',body,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.post('/api/settings/budgets/:id/entries',body,async(req,res,next)=>{try{
-  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const me=await identity(req),key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const direction=req.body?.direction==='debit'?'debit':'credit';
   const entryType=clean(req.body?.entry_type||(direction==='credit'?'allocation':'release'),40);
   const row=await postProfileBudgetEntry(pool,{
@@ -537,7 +537,7 @@ app.post('/api/settings/budgets/:id/entries',body,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.post('/api/settings/budget-transfers',body,async(req,res,next)=>{try{
-  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const me=await identity(req),key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await transferProfileBudgetAllocation(pool,{
     publicId:'btx_'+crypto.randomUUID().replaceAll('-',''),transferKey:key,accountId:me.account.id,
     sourceEnvelopeId:req.body?.source_envelope_id,destinationEnvelopeId:req.body?.destination_envelope_id,
@@ -553,7 +553,7 @@ app.get('/api/settings/money-movements',async(req,res,next)=>{try{
 
 app.post('/api/settings/money-movements',body,async(req,res,next)=>{try{
   rejectSensitiveFinancialFields(req.body);
-  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const me=await identity(req),key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await createProfileMoneyMovementRequest(pool,{
     publicId:'move_'+crypto.randomUUID().replaceAll('-',''),idempotencyKey:key,accountId:me.account.id,
     movementType:req.body?.movement_type,sourceFinancialAccountId:req.body?.source_financial_account_id,
@@ -570,7 +570,7 @@ app.post('/api/settings/money-movements',body,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.post('/api/settings/profile-fund-transfers',body,async(req,res,next)=>{try{
-  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const me=await identity(req),key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await transferFundsBetweenProfiles(pool,{
     publicId:'pft_'+crypto.randomUUID().replaceAll('-',''),transferKey:key,accountId:me.account.id,
     sourceProfileRole:req.body?.source_profile_role,sourceBusinessId:req.body?.source_business_id||null,
