@@ -2,7 +2,9 @@
 (()=>{
   const ROOT='/api/procurement/purchase-documents';
   const MAX_FILE=6*1024*1024;
-  let overlay=null,businessId=null,pendingKey=null,chosenFile=null,previousOverflow='';
+  let overlay=null,businessId=null,saveInProgress=false,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
+  let openAttempt=0,opening=false,saveAttempt=0;
+  let archiveRequest=0,linkableRequest=0;
   const $=(selector,root=document)=>root.querySelector(selector);
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const currency=(value,code='PHP')=>value==null?'Amount not recorded':new Intl.NumberFormat('en-PH',{style:'currency',currency:code||'PHP'}).format(Number(value));
@@ -84,9 +86,11 @@
     $('#mpdForm',overlay).onsubmit=save;
   }
   function selectFile(file){
-    if(!file)return;
+    // Clearing either native picker revokes the previous attachment. An empty
+    // files/change event must never submit a stale private receipt instead.
     chosenFile=null;
     $('#mpdChosenFile',overlay).textContent='No file selected.';
+    if(!file){message('');return;}
     if(file.size>MAX_FILE){message('File exceeds 6 MB. Use a smaller scan or photo.',true);return}
     if(!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type)){message('Only JPEG, PNG, WEBP and PDF are accepted.',true);return}
     chosenFile=file;
@@ -96,9 +100,17 @@
   async function linkable(){
     const panel=overlay,biz=businessId;
     if(!panel||!biz)return;
+    const request=++linkableRequest;
     const box=$('#mpdLinkable',panel);
-    const data=await api(ROOT+'/linkable-purchases?business_id='+encodeURIComponent(biz));
-    if(panel!==overlay||biz!==businessId||!box)return;
+    // Do not replace active checkbox selections with an older GET response.
+    // A Merchant can start the next draft during the preceding receipt refresh.
+    const hasUnsavedSelection=()=>Boolean(box?.querySelectorAll?.('input[name="mpdLink"]:checked')?.length);
+    const data=await api(ROOT+'/linkable-purchases?business_id='+encodeURIComponent(biz)).catch(error=>{
+      // A superseded fetch cannot replace newer content or surface an old error.
+      if(panel!==overlay||biz!==businessId||request!==linkableRequest)return null;
+      throw error;
+    });
+    if(!data||panel!==overlay||biz!==businessId||request!==linkableRequest||!box||hasUnsavedSelection())return;
     if(!data.purchases?.length){box.innerHTML='<p class="mpdHelp">No recorded Inventory purchases yet. Save this receipt now and link it later.</p>';return}
     box.innerHTML=data.purchases.map(p=>'<label><input type="checkbox" name="mpdLink" value="'+Number(p.id)+'">'+
       '<span><strong>'+escape(p.inventory_name)+'</strong> · '+escape(currency(p.total_cost))+
@@ -107,9 +119,14 @@
   async function archive(){
     const panel=overlay,biz=businessId;
     if(!panel||!biz)return;
+    const request=++archiveRequest;
     const box=$('#mpdSaved',panel);
-    const data=await api(ROOT+'?business_id='+encodeURIComponent(biz));
-    if(panel!==overlay||biz!==businessId||!box)return;
+    const data=await api(ROOT+'?business_id='+encodeURIComponent(biz)).catch(error=>{
+      // An older read may finish after a confirmed save refresh in this SAME dialog.
+      if(panel!==overlay||biz!==businessId||request!==archiveRequest)return null;
+      throw error;
+    });
+    if(!data||panel!==overlay||biz!==businessId||request!==archiveRequest||!box)return;
     if(!data.documents?.length){box.innerHTML='<p class="mpdHelp">No purchase documents saved yet.</p>';return}
     box.innerHTML=data.documents.map(d=>
       '<div class="mpdDoc"><strong>'+escape(d.issuer_name||'Purchase document')+' · '+escape(d.document_kind.replaceAll('_',' '))+'</strong>'+
@@ -128,16 +145,22 @@
   }
   async function save(event){
     event.preventDefault();
+    // A disabled submit button does not cancel a second submit event already
+    // dispatched while workspace/file checks or POST acknowledgement await.
+    // Only one receipt save operation may own the dialog at a time.
+    if(saveInProgress)return;
     const panel=overlay,biz=businessId;
     if(!panel||!biz)return;
+    saveInProgress=true;
+    // Each save owns its loading state only for the dialog identity that started it.
+    const saveOwner=++saveAttempt;
     const btn=$('#mpdSave',panel);btn.disabled=true;
     try{
       const workspace=await api('/api/accounting/workspaces');
       if(panel!==overlay||workspace.role!=='merchant'||Number(workspace.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
       const form=$('#mpdForm',panel),data=new FormData(form);
-      if(!pendingKey)pendingKey=requestKey();
       const payload={
-        business_id:biz,client_request_key:pendingKey,
+        business_id:biz,
         document_kind:String(data.get('document_kind')||'purchase_receipt'),
         issuer_name:String(data.get('issuer_name')||''),
         issue_date:String(data.get('issue_date')||today()),
@@ -146,36 +169,125 @@
         currency_code:'PHP',note:String(data.get('note')||''),
         links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
       };
-      if(chosenFile){payload.file_name=chosenFile.name;payload.data_url=await readFile(chosenFile)}
+      const fileAtStart=chosenFile;
+      if(fileAtStart){payload.file_name=fileAtStart.name;payload.data_url=await readFile(fileAtStart)}
       if(panel!==overlay||biz!==businessId)return;
       const confirmed=await api('/api/accounting/workspaces');
       if(panel!==overlay||confirmed.role!=='merchant'||Number(confirmed.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
+      // Reading a camera file or rechecking the workspace is asynchronous. Other
+      // form controls remain editable during those awaits: never send an older
+      // document/file/link snapshot after the operator changed the visible draft.
+      const latest=new FormData(form);
+      const currentDraft={
+        document_kind:String(latest.get('document_kind')||'purchase_receipt'),
+        issuer_name:String(latest.get('issuer_name')||''),
+        issue_date:String(latest.get('issue_date')||today()),
+        document_number:String(latest.get('document_number')||''),
+        gross_amount:String(latest.get('gross_amount')||''),
+        note:String(latest.get('note')||''),
+        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
+      };
+      if(fileAtStart!==chosenFile||Object.entries(currentDraft).some(([name,value])=>
+        JSON.stringify(value)!==JSON.stringify(payload[name]))){
+        throw new Error('Receipt details changed while preparing. Review the current draft and submit again.');
+      }
+      // A failed/lost POST acknowledgement is not proof of rollback. Keep the
+      // same key for the exact same receipt, and never reuse it for edited data.
+      // No key is reserved before workspace and file validation finish.
+      const intent=JSON.stringify(payload);
+      if(pendingSubmitted&&pendingPayload!==intent){
+        throw new Error('The earlier receipt submission may already be saved. Check Saved documents before changing it; close and reopen for a different receipt.');
+      }
+      if(!pendingKey||pendingPayload!==intent)pendingKey=requestKey();
+      pendingPayload=intent;
+      payload.client_request_key=pendingKey;
+      pendingSubmitted=true;
       const result=await api(ROOT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(panel!==overlay||biz!==businessId)return;
-      pendingKey=null;chosenFile=null;
-      form.reset();form.elements.issue_date.value=today();
-      $('#mpdChosenFile',overlay).textContent='No file selected.';
-      message(result.already_saved?'This document was already saved.':'Purchase document saved securely.');
-      await archive();await linkable();
+      // A confirmed old receipt must never erase details/file for a newer
+      // receipt the operator entered while its POST was still in flight.
+      const afterPost=new FormData(form);
+      const newerDraft={
+        document_kind:String(afterPost.get('document_kind')||'purchase_receipt'),
+        issuer_name:String(afterPost.get('issuer_name')||''),
+        issue_date:String(afterPost.get('issue_date')||today()),
+        document_number:String(afterPost.get('document_number')||''),
+        gross_amount:String(afterPost.get('gross_amount')||''),
+        note:String(afterPost.get('note')||''),
+        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
+      };
+      const newerEdits=fileAtStart!==chosenFile||Object.entries(currentDraft).some(([name,value])=>
+        JSON.stringify(value)!==JSON.stringify(newerDraft[name]));
+      pendingKey=null;pendingPayload=null;pendingSubmitted=false;
+      if(!newerEdits){
+        chosenFile=null;
+        form.reset();form.elements.issue_date.value=today();
+        $('#mpdChosenFile',overlay).textContent='No file selected.';
+      }
+      // The POST result is definitive before the two auxiliary GET refreshes.
+      // A failed archive/list refresh must never be presented as a failed save:
+      // that would encourage creating a second receipt with a new intent key.
+      const savedNotice=(result.already_saved?'This document was already saved.':'Purchase document saved securely.')+
+        (newerEdits?' Your newer unsaved edits are preserved; review them before submitting a different receipt.':'');
+      message(savedNotice);
+      // Replacing the linked-purchase checkboxes would erase a next receipt's
+      // unsaved selection. Refresh the confirmed archive, not the live draft.
+      const refreshes=await Promise.allSettled(newerEdits?[archive()]:[archive(),linkable()]);
+      if(panel===overlay&&biz===businessId&&refreshes.some(item=>item.status==='rejected')){
+        message(savedNotice+' Archive or purchase links could not refresh. The save is confirmed; close and reopen to reload the list.',true);
+      }
     }catch(error){if(panel===overlay)message(error.message,true)}
-    finally{if(btn)btn.disabled=false}
+    finally{
+      // An obsolete preflight/POST/archive response must not unlock another
+      // Merchant's newly opened receipt dialog after a forced profile switch.
+      if(saveOwner===saveAttempt){saveInProgress=false;if(btn)btn.disabled=false}
+    }
   }
-  function close(){
+  function close(force=false){
+    // A POST can commit even when its acknowledgement is lost. Ordinary X/Escape
+    // dismissal during an in-flight POST must not discard the only stable retry key.
+    // Completed POSTs may dismiss while unrelated archive GET refreshes finish.
+    // A real profile switch must still close immediately to hide private data.
+    if(force!==true&&saveInProgress&&pendingSubmitted){
+      message('Receipt save is processing. Keep this dialog open until the request finishes.',true);
+      return false;
+    }
+    if(force!==true&&pendingSubmitted){
+      const acknowledged=window.confirm('This receipt may already be saved. Closing loses its original retry key. Check Saved documents before making another receipt. Close anyway?');
+      if(!acknowledged)return false;
+    }
     if(!overlay)return;
-    overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;
+    // A closed panel must not be revived by an older async workspace/list call.
+    openAttempt++;
+    opening=false;
+    // Forced identity revocation also releases the old dialog's busy state;
+    // a late finally from that dialog cannot clear a replacement save.
+    saveAttempt++;
+    saveInProgress=false;
+    overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;
     document.body.style.overflow=previousOverflow;
+    return true;
   }
   async function open(){
-    if(overlay)return;
+    // The workspace GET can resolve after a profile switch; coalesce fast clicks
+    // until the first response has been checked against the current identity epoch.
+    if(overlay||opening)return;
+    opening=true;
+    const attempt=++openAttempt;
     try{
       const current=await api('/api/accounting/workspaces');
+      if(attempt!==openAttempt)return;
       if(current.role!=='merchant'||!Number(current.active_business_id))throw new Error('Switch to your Merchant business to save purchase receipts.');
       businessId=Number(current.active_business_id);
       injectCss();render();previousOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
+      opening=false;
       await Promise.all([linkable(),archive()]);
     }catch(error){
+      if(attempt!==openAttempt)return;
       if(overlay)message(error.message,true);
       else window.alert(error.message);
+    }finally{
+      if(attempt===openAttempt)opening=false;
     }
   }
   function ensureButton(){
@@ -183,7 +295,13 @@
     const heading=$('#viewStock h1');
     if(!heading)return;
     const old=$('#merchantPurchaseDocumentsButton');
-    if(role!=='merchant'){if(old)old.remove();if(overlay)close();return}
+    if(role!=='merchant'){
+      if(old)old.remove();
+      // A role change can arrive while initial workspace discovery is pending.
+      if(opening){openAttempt++;opening=false}
+      if(overlay)close(true);
+      return;
+    }
     if(old)return;
     const btn=document.createElement('button');
     btn.id='merchantPurchaseDocumentsButton';btn.type='button';
@@ -192,7 +310,15 @@
     heading.insertAdjacentElement('afterend',btn);
   }
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&overlay)close()});
-  document.addEventListener('abl:profile-state',()=>{if(overlay)close();queueMicrotask(ensureButton)});
+  function invalidatePurchaseDocumentContext(){
+    // Invalidate even without a visible overlay: open() might still be awaiting
+    // an older account's response. Never show its private document panel.
+    openAttempt++;
+    opening=false;
+    if(overlay)close(true);
+    queueMicrotask(ensureButton);
+  }
+  document.addEventListener('abl:profile-state',invalidatePurchaseDocumentContext);
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ensureButton,{once:true});
   else ensureButton();
   new MutationObserver(ensureButton).observe(document.body,{attributes:true,attributeFilter:['data-business-finance-role']});

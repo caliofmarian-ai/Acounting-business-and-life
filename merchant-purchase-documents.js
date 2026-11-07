@@ -9,9 +9,23 @@ const {exactProfileBusiness}=supplierDomainV2Internals;
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const error=(status,message)=>Object.assign(new Error(message),{status});
 const positiveId=(value,label='Identifier')=>{
+  // Record/business identity is never Number()-coerced from booleans, arrays or exponent strings.
+  if((typeof value!=='number'&&typeof value!=='string')||
+     (typeof value==='string'&&!/^\d+$/.test(value))){
+    throw error(400,label+' must be a positive integer');
+  }
   const id=Number(value);
   if(!Number.isSafeInteger(id)||id<1)throw error(400,label+' must be a positive integer');
   return id;
+};
+// Optional receipt evidence is normalized only after checking the ENTIRE supplied
+// value. Silent truncation/coercion would seal different source records under
+// the same client-intent fingerprint and make a retry impossible to repair.
+const evidenceField=(value,max,label)=>{
+  if(value==null)return '';
+  if(typeof value!=='string')throw error(400,label+' must be a string');
+  if(value.length>max)throw error(400,label+' exceeds supported length');
+  return value.trim();
 };
 const allowedKinds=new Set(['invoice','purchase_receipt','order_slip','other']);
 const linkTables=Object.freeze({
@@ -23,40 +37,68 @@ const linkTables=Object.freeze({
 const fileTypes=['image/jpeg','image/png','image/webp','application/pdf'];
 export const MERCHANT_PURCHASE_FILE_MAX_BYTES=6*1024*1024;
 
+// The Philippines uses UTC+08 year-round; the server may run on UTC.
+export function philippinesPurchaseDocumentDate(instant=new Date()){
+  const t=instant instanceof Date?instant.getTime():NaN;
+  if(!Number.isFinite(t))throw error(400,'Invalid purchase document clock');
+  const ph=new Date(t+28800000);
+  if(!Number.isFinite(ph.getTime()))throw error(400,'Invalid purchase document clock');
+  return ph.toISOString().slice(0,10);
+}
+
 export function normalizeMerchantPurchaseDocument(input={}){
   const businessId=positiveId(input.business_id,'business_id');
-  const key=clean(input.client_request_key,100);
-  if(!/^[a-zA-Z0-9_-]{12,100}$/.test(key))throw error(400,'A stable client_request_key is required');
-  const kind=clean(input.document_kind||'purchase_receipt',40).toLowerCase();
+  // Never truncate an intent identifier: distinct overlong keys must not alias.
+  const key=input.client_request_key;
+  if(typeof key!=='string'||!/^[a-zA-Z0-9_-]{12,100}$/.test(key)){
+    throw error(400,'A stable client_request_key is required');
+  }
+  const kind=(input.document_kind==null||input.document_kind===''?'purchase_receipt':
+    evidenceField(input.document_kind,40,'Document kind')).toLowerCase();
   if(!allowedKinds.has(kind))throw error(400,'Invalid purchase document kind');
-  const issueDate=clean(input.issue_date||new Date().toISOString().slice(0,10),10);
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)||Number.isNaN(Date.parse(issueDate))||new Date(issueDate).toISOString().slice(0,10)!==issueDate)throw error(400,'Invalid issue date');
-  const currency=clean(input.currency_code||'PHP',3).toUpperCase();
+  // Validate the *entire* submitted date: never turn a malformed date into a valid one by truncation.
+  const issueDate=input.issue_date==null||input.issue_date===''?philippinesPurchaseDocumentDate():input.issue_date;
+  if(typeof issueDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)||issueDate.startsWith('0000-')||Number.isNaN(Date.parse(issueDate))||new Date(issueDate).toISOString().slice(0,10)!==issueDate)throw error(400,'Invalid issue date');
+  // Validate the entire code, not its first three characters (PHPOOPS is not PHP).
+  const rawCurrency=input.currency_code==null||input.currency_code===''?'PHP':input.currency_code;
+  const currency=typeof rawCurrency==='string'?rawCurrency.trim().toUpperCase():'';
   if(!/^[A-Z]{3}$/.test(currency))throw error(400,'Invalid currency');
-  const amount=input.gross_amount==null||input.gross_amount===''?null:Number(input.gross_amount);
-  if(amount!==null&&(!Number.isFinite(amount)||amount<0||amount>1e12))throw error(400,'Invalid document amount');
-  const links=Array.isArray(input.links)?input.links:[];
+  // PostgreSQL NUMERIC(14,2) must not silently round or reject a value accepted by the API.
+  // Keep Number for backward-compatible request fingerprints on previously valid receipts.
+  const rawAmount=input.gross_amount;
+  if(rawAmount!==null&&rawAmount!==undefined&&rawAmount!==''&&
+     (typeof rawAmount!=='number'&&typeof rawAmount!=='string'||Object.is(rawAmount,-0)))throw error(400,'Invalid document amount');
+  const amountText=rawAmount==null||rawAmount===''?null:String(rawAmount);
+  if(amountText!==null&&!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(amountText))throw error(400,'Invalid document amount');
+  const amount=amountText===null?null:Number(amountText);
+  if(amount!==null&&(!Number.isFinite(amount)||amount>=1e12))throw error(400,'Invalid document amount');
+  // A malformed supplied association must not be silently dropped and then sealed by the intent key.
+  if(input.links!=null&&!Array.isArray(input.links))throw error(400,'Purchase links must be an array');
+  const links=input.links??[];
   if(links.length>100)throw error(400,'A document can link at most 100 purchase records');
   const unique=new Set();
   const normalizedLinks=links.map(item=>{
-    const kind=clean(item?.kind,32),id=positiveId(item?.id,'Linked record');
+    const kind=evidenceField(item?.kind,32,'Linked record kind'),id=positiveId(item?.id,'Linked record');
     if(!Object.hasOwn(linkTables,kind))throw error(400,'Unsupported purchase record link');
     const key=kind+':'+id;
     if(unique.has(key))throw error(400,'Duplicate linked purchase record');
     unique.add(key);
     return{kind,id};
   });
+  // Do not coerce supplied evidence metadata (e.g. [] to '') into an apparently attachment-free receipt.
+  if(input.data_url!=null&&typeof input.data_url!=='string')throw error(400,'Evidence data must be a string');
+  if(input.file_name!=null&&typeof input.file_name!=='string')throw error(400,'File name must be a string');
   const dataUrl=clean(input.data_url,9*1024*1024);
-  const fileName=clean(input.file_name,220);
+  const fileName=evidenceField(input.file_name,220,'File name');
   if(dataUrl&&!fileName)throw error(400,'File name is required for uploaded evidence');
   if(dataUrl&&!/^data:(image\/jpeg|image\/png|image\/webp|application\/pdf);base64,/i.test(dataUrl))throw error(400,'Only JPEG, PNG, WEBP or PDF files are accepted');
   if(dataUrl.length>8*1024*1024+100)throw error(413,'Evidence file is too large');
   if(fileName&&!dataUrl)throw error(400,'An uploaded file must contain evidence data');
   return{
     businessId,key,kind,issueDate,currency,amount,
-    issuer:clean(input.issuer_name,180),
-    documentNumber:clean(input.document_number,120),
-    note:clean(input.note,1000),
+    issuer:evidenceField(input.issuer_name,180,'Issuer name'),
+    documentNumber:evidenceField(input.document_number,120,'Document number'),
+    note:evidenceField(input.note,1000,'Document note'),
     links:normalizedLinks,dataUrl,fileName
   };
 }
@@ -103,11 +145,14 @@ async function requireMerchantDocumentBusiness(pool,identity,req,source='query')
   return{me,businessId:Number(business.id)};
 }
 
-async function validatePurchaseLinks(db,businessId,links){
+// The first preflight may use the pool; the final pre-insert verification
+// holds share locks on the linked source rows through the receipt COMMIT.
+// A concurrent business reassignment or deletion cannot outrun that check.
+async function validatePurchaseLinks(db,businessId,links,{lockRows=false}={}){
   for(const link of links){
     const table=linkTables[link.kind];
     const extra=link.kind==='expense_transaction'?" AND type='business_expense'":'';
-    const result=await db.query('SELECT 1 FROM '+table+' WHERE id=$1 AND business_id=$2'+extra,[link.id,businessId]);
+    const result=await db.query('SELECT 1 FROM '+table+' WHERE id=$1 AND business_id=$2'+extra+(lockRows?' FOR SHARE':''),[link.id,businessId]);
     if(!result.rowCount)throw error(404,'Linked purchase record unavailable in this Merchant workspace');
   }
 }
@@ -125,24 +170,83 @@ async function scopedDocument(pool,id,businessId){
   return q.rows[0];
 }
 
+// Lock the *current* Merchant grant after scanning and before the final write.
+// FOR SHARE serializes a simultaneous binding/membership revocation with receipt commit.
+// The initial request authorization alone is not sufficient across a slow private upload.
+async function lockMerchantDocumentWriteAuthority(db,actorAccountId,businessId){
+  const allowed=await db.query(`
+    SELECT pb.business_id FROM profile_business_bindings pb
+      JOIN business_memberships bm
+        ON bm.business_id=pb.business_id AND bm.account_id=pb.account_id
+     WHERE pb.account_id=$1 AND pb.role='merchant' AND pb.business_id=$2
+       AND pb.status='active' AND bm.active=TRUE
+     FOR SHARE OF pb,bm
+  `,[actorAccountId,businessId]);
+  if(!allowed.rowCount)throw error(403,'Merchant purchase document access changed; retry after authorization');
+}
+
 async function savePurchaseDocument(pool,{actorAccountId,record}){
-  const fingerprint=crypto.createHash('sha256').update(JSON.stringify({
+  const fingerprintForLinks=links=>crypto.createHash('sha256').update(JSON.stringify({
     kind:record.kind,issueDate:record.issueDate,currency:record.currency,amount:record.amount,
     issuer:record.issuer,number:record.documentNumber,note:record.note,
-    links:record.links,fileName:record.fileName,
+    links,fileName:record.fileName,
     fileDigest:record.dataUrl?crypto.createHash('sha256').update(record.dataUrl).digest('hex'):''
   })).digest('hex');
+  // Linked records are a set, not a display-ordered sequence. Preserve the
+  // original-order fingerprint for backwards-compatible exact replay of old rows.
+  const canonicalLinks=[...record.links].sort((a,b)=>
+    a.kind===b.kind?a.id-b.id:(a.kind<b.kind?-1:1));
+  const fingerprint=fingerprintForLinks(canonicalLinks);
+  const legacyFingerprint=fingerprintForLinks(record.links);
+  const sameReceiptFingerprint=saved=>saved===fingerprint||saved===legacyFingerprint;
   const existing=await pool.query(
     'SELECT * FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',
     [record.businessId,record.key]
   );
   if(existing.rowCount){
-    if(existing.rows[0].request_fingerprint!==fingerprint)throw error(409,'This request key already belongs to a different receipt');
-    return{document:shape(existing.rows[0]),already_saved:true};
+    // The initial HTTP Merchant check may have happened before a concurrent grant
+    // revocation. A replay also returns private document metadata: re-authorize
+    // under a transaction-held grant lock, not just the initial unlocked lookup.
+    let replayClient=null,replayTxStarted=false,replayCommitAttempted=false,replayConnectionUnsafe=false;
+    try{
+      replayClient=await pool.connect();
+      try{await replayClient.query('BEGIN');replayTxStarted=true}
+      catch(e){replayConnectionUnsafe=true;throw e}
+      await lockMerchantDocumentWriteAuthority(replayClient,actorAccountId,record.businessId);
+      const current=await replayClient.query(
+        'SELECT * FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',
+        [record.businessId,record.key]
+      );
+      if(current.rowCount){
+        if(!sameReceiptFingerprint(current.rows[0].request_fingerprint))throw error(409,'This request key already belongs to a different receipt');
+        replayCommitAttempted=true;
+        await replayClient.query('COMMIT');
+        replayTxStarted=false;
+        return{document:shape(current.rows[0]),already_saved:true};
+      }
+      // If the preliminary record disappeared, use the normal, guarded create path.
+      replayCommitAttempted=true;
+      await replayClient.query('COMMIT');
+      replayTxStarted=false;
+    }catch(e){
+      // COMMIT acknowledgement may be lost after a durable commit; an uncertain
+      // BEGIN or failed ROLLBACK can leave a transaction open. Evict the client.
+      if(replayCommitAttempted)replayConnectionUnsafe=true;
+      if(replayTxStarted){
+        try{await replayClient.query('ROLLBACK');replayTxStarted=false}
+        catch{replayConnectionUnsafe=true}
+      }
+      throw e;
+    }finally{
+      replayClient?.release(replayConnectionUnsafe?new Error('UNSAFE_PURCHASE_RECEIPT_DB_CLIENT'):undefined);
+    }
   }
 
   await validatePurchaseLinks(pool,record.businessId,record.links);
   let evidence=null,client=null;
+  // An error from COMMIT can mean the database committed but its acknowledgement
+  // was lost. Never tombstone the only original of a possibly committed receipt.
+  let newReceiptInserted=false,commitAttempted=false,transactionStarted=false,connectionUnsafe=false;
   try{
     if(record.dataUrl){
       evidence=await storePrivateEvidence(pool,{
@@ -154,8 +258,10 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
       });
     }
     client=await pool.connect();
-    await client.query('BEGIN');
-    await validatePurchaseLinks(client,record.businessId,record.links);
+    try{await client.query('BEGIN');transactionStarted=true}
+    catch(e){connectionUnsafe=true;throw e}
+    await lockMerchantDocumentWriteAuthority(client,actorAccountId,record.businessId);
+    await validatePurchaseLinks(client,record.businessId,record.links,{lockRows:true});
     const added=await client.query(`
       INSERT INTO merchant_purchase_documents(
         business_id,created_by_account_id,client_request_key,request_fingerprint,
@@ -174,11 +280,24 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
         'SELECT * FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',
         [record.businessId,record.key]
       );
-      if(saved.rows[0]?.request_fingerprint!==fingerprint)throw error(409,'This request key already belongs to a different receipt');
+      if(!sameReceiptFingerprint(saved.rows[0]?.request_fingerprint))throw error(409,'This request key already belongs to a different receipt');
+      commitAttempted=true;
       await client.query('COMMIT');
-      if(evidence)await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'duplicate_upload_cleanup'});
+      transactionStarted=false;
+      if(evidence){
+        // ON CONFLICT resolved to a previously committed receipt. Failure to
+        // delete this separate, unused upload cannot undo that committed
+        // receipt or turn a confirmed replay into a failed save. The warning
+        // contains no filename, evidence ID or customer/business details.
+        try{
+          await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'duplicate_upload_cleanup'});
+        }catch{
+          console.warn('MERCHANT_PURCHASE_DUPLICATE_EVIDENCE_CLEANUP_FAILED');
+        }
+      }
       return{document:shape(saved.rows[0]),already_saved:true};
     }
+    newReceiptInserted=true;
     const document=added.rows[0];
     for(const link of record.links){
       await client.query(
@@ -190,16 +309,40 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
       objectId:evidence.id,sourceType:'merchant_purchase_document',
       sourceId:String(document.id),actorAccountId,purpose:'purchase_accounting_bind'
     });
+    commitAttempted=true;
     await client.query('COMMIT');
+    transactionStarted=false;
     return{document:shape(document),already_saved:false};
   }catch(e){
-    if(client)await client.query('ROLLBACK').catch(()=>{});
-    if(evidence)await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'failed_purchase_receipt_cleanup'}).catch(()=>{});
+    if(commitAttempted)connectionUnsafe=true;
+    if(transactionStarted){
+      try{await client.query('ROLLBACK');transactionStarted=false}
+      catch{connectionUnsafe=true}
+    }
+    // COMMIT status is unknowable after a lost acknowledgement. Preserve scanned
+    // evidence for reconciliation/replay rather than deleting a committed original.
+    if(evidence&&!(newReceiptInserted&&commitAttempted)){
+      await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'failed_purchase_receipt_cleanup'}).catch(()=>{});
+    }
     throw e;
-  }finally{client?.release()}
+  }finally{
+    client?.release(connectionUnsafe?new Error('UNSAFE_PURCHASE_RECEIPT_DB_CLIENT'):undefined);
+  }
 }
 
 export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity}){
+  // These routes expose account/business-private purchase evidence. Guard the
+  // complete route family before authentication, including errors and files.
+  app.use('/api/procurement/purchase-documents',(req,res,next)=>{
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.vary('Cookie');
+    res.vary('Authorization');
+    // Express may otherwise answer a repeated private JSON GET with 304 from
+    // a stale ETag even after an account/business switch.
+    delete req.headers['if-none-match'];
+    delete req.headers['if-modified-since'];
+    next();
+  });
   app.get('/api/procurement/purchase-documents/linkable-purchases',async(req,res,next)=>{
     try{
       const {businessId}=await requireMerchantDocumentBusiness(pool,identity,req);
@@ -261,4 +404,4 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
   });
 }
 
-export const merchantPurchaseDocumentInternals={validatePurchaseLinks,savePurchaseDocument};
+export const merchantPurchaseDocumentInternals={validatePurchaseLinks,savePurchaseDocument,lockMerchantDocumentWriteAuthority};
