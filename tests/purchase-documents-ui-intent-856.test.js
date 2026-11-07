@@ -169,6 +169,45 @@ test('failed workspace and file preflight do not reserve or submit a request key
   assert.equal(c.posts[0].note,'Confirmed file selection');
 });
 
+test('Merchant save preflight rejects coerced or noncanonical workspace IDs',async()=>{
+  for(const id of [[14],' 14 ','1.4e1','014',true,{},9007199254740992,0,-14,null]){
+    const c=makeController();
+    c.setActiveBusiness(id);
+    await c.submit();
+    assert.equal(c.posts.length,0,'no POST for '+String(id));
+    assert.equal(c.keyCount(),0,'no intent key for '+String(id));
+    assert.match(c.messages.at(-1).text,/Merchant workspace changed/);
+  }
+  for(const id of [14,'14']){
+    const c=makeController();
+    c.setActiveBusiness(id);
+    await c.submit();
+    assert.equal(c.posts.length,1);
+  }
+});
+
+test('final pre-POST check rejects coerced business identity without submitting',async()=>{
+  const c=makeController();
+  c.changeDuringConfirmation(()=>c.setActiveBusiness([14]));
+  await c.submit();
+  assert.equal(c.posts.length,0);
+  assert.equal(c.keyCount(),0);
+  assert.match(c.messages.at(-1).text,/Merchant workspace changed/);
+});
+
+test('post-ACK coercible workspace identity revokes the private dialog',async()=>{
+  const c=makeController(),gate=c.holdNextPost();
+  const saving=c.submit();
+  await gate.whenHeld;
+  c.setActiveBusiness(' 14 ');
+  gate.release();
+  await saving;
+  assert.equal(c.posts.length,1);
+  assert.equal(c.state().overlayActive,false);
+  assert.equal(c.resetCount(),0);
+  assert.equal(c.messages.some(m=>/saved securely|already saved/i.test(m.text)),false);
+});
+
 test('in-flight metadata edit during workspace recheck never posts an obsolete receipt',async()=>{
   const c=makeController();
   c.changeDuringConfirmation(()=>{c.fields.gross_amount='31.00'});
@@ -407,6 +446,7 @@ const invalidateSource=source.slice(invalidateStart,invalidateEnd);
 
 function makeOpeningController(){
   let calls=0,createCount=0,hold=false,release=null,notify=null,fail=false;
+  let activeBusiness=14;
   const alerts=[];
   const api=async path=>{
     assert.equal(path,'/api/accounting/workspaces');
@@ -416,7 +456,7 @@ function makeOpeningController(){
       await new Promise(resolve=>{release=resolve;notify?.()});
     }
     if(fail){fail=false;throw new Error('Old workspace error')}
-    return {role:'merchant',active_business_id:14};
+    return {role:'merchant',active_business_id:activeBusiness};
   };
   const factory=new Function('api','document','window','queueMicrotask','created',`
     let overlay=null,businessId=null,openAttempt=0,opening=false,saveAttempt=0;
@@ -433,6 +473,7 @@ function makeOpeningController(){
   const controller=factory(api,{body:{style:{overflow:''}}},{alert:v=>alerts.push(v)},
     callback=>callback(),()=>{createCount++});
   return {...controller,alerts,calls:()=>calls,created:()=>createCount,
+    setActiveBusiness:value=>{activeBusiness=value},
     failNext:()=>{fail=true},
     holdNext:()=>{
       let started;
@@ -441,6 +482,25 @@ function makeOpeningController(){
       return {whenHeld,release:()=>{assert.ok(release,'initial workspace GET must be held');release()}};
     }};
 }
+
+test('opening receipts rejects coercible Merchant workspace IDs and accepts canonical ones',async()=>{
+  for(const id of [[14],' 14 ','1.4e1','014',true,{},9007199254740992,0,-14,null]){
+    const c=makeOpeningController();
+    c.setActiveBusiness(id);
+    await c.open();
+    assert.equal(c.created(),0,'no private panel for '+String(id));
+    assert.equal(c.state().overlay,false);
+    assert.match(c.alerts.at(-1),/Switch to your Merchant business/);
+  }
+  for(const id of [14,'14']){
+    const c=makeOpeningController();
+    c.setActiveBusiness(id);
+    await c.open();
+    assert.equal(c.created(),1);
+    assert.equal(c.state().businessId,14);
+    assert.equal(c.close(),true);
+  }
+});
 
 test('profile switch during initial workspace GET never resurrects stale private receipts',async()=>{
   const c=makeOpeningController(),gate=c.holdNext();

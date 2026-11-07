@@ -234,9 +234,16 @@
     // Each save owns its loading state only for the dialog identity that started it.
     const saveOwner=++saveAttempt;
     const btn=$('#mpdSave',panel);btn.disabled=true;
+    // Never use Number coercion as Merchant authorization for private receipts.
+    const matchesMerchantWorkspace=current=>{
+      const active=current?.active_business_id;
+      const valid=(typeof active==='number'&&Number.isSafeInteger(active)&&active>0)||
+        (typeof active==='string'&&/^[1-9][0-9]*$/.test(active)&&Number.isSafeInteger(Number(active)));
+      return current?.role==='merchant'&&valid&&Number(active)===biz;
+    };
     try{
       const workspace=await api('/api/accounting/workspaces');
-      if(panel!==overlay||workspace.role!=='merchant'||Number(workspace.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
+      if(panel!==overlay||!matchesMerchantWorkspace(workspace))throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
       const form=$('#mpdForm',panel),data=new FormData(form);
       const payload={
         business_id:biz,
@@ -252,7 +259,7 @@
       if(fileAtStart){payload.file_name=fileAtStart.name;payload.data_url=await readFile(fileAtStart)}
       if(panel!==overlay||biz!==businessId)return;
       const confirmed=await api('/api/accounting/workspaces');
-      if(panel!==overlay||confirmed.role!=='merchant'||Number(confirmed.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
+      if(panel!==overlay||!matchesMerchantWorkspace(confirmed))throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
       // Reading a camera file or rechecking the workspace is asynchronous. Other
       // form controls remain editable during those awaits: never send an older
       // document/file/link snapshot after the operator changed the visible draft.
@@ -296,10 +303,7 @@
         return;
       }
       if(panel!==overlay||biz!==businessId)return;
-      const activeAfterPost=postWorkspace?.active_business_id;
-      const validAfterPost=(typeof activeAfterPost==='number'&&Number.isSafeInteger(activeAfterPost)&&activeAfterPost>0)||
-        (typeof activeAfterPost==='string'&&/^[1-9][0-9]*$/.test(activeAfterPost)&&Number.isSafeInteger(Number(activeAfterPost)));
-      if(postWorkspace?.role!=='merchant'||!validAfterPost||Number(activeAfterPost)!==biz){
+      if(!matchesMerchantWorkspace(postWorkspace)){
         close(true);
         return;
       }
@@ -376,8 +380,11 @@
     try{
       const current=await api('/api/accounting/workspaces');
       if(attempt!==openAttempt)return;
-      if(current.role!=='merchant'||!Number(current.active_business_id))throw new Error('Switch to your Merchant business to save purchase receipts.');
-      businessId=Number(current.active_business_id);
+      const active=current?.active_business_id;
+      const validActive=(typeof active==='number'&&Number.isSafeInteger(active)&&active>0)||
+        (typeof active==='string'&&/^[1-9][0-9]*$/.test(active)&&Number.isSafeInteger(Number(active)));
+      if(current?.role!=='merchant'||!validActive)throw new Error('Switch to your Merchant business to save purchase receipts.');
+      businessId=Number(active);
       injectCss();render();previousOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
       opening=false;
       await Promise.all([linkable(),archive()]);
