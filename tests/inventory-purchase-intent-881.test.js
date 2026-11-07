@@ -1163,11 +1163,13 @@ test('private intent inspection and rejection responses are explicitly non-cache
 
 test('original Merchant provenance and optional purchase/lot/expense links cannot contradict private response',async()=>{
   const ctx={businessId:101,accountId:501,intentKey:key,purchaseId:44};
-  const valid={purchase:{id:44,business_id:'101',inventory_id:'10'},
+  const valid={purchase:{id:44,business_id:'101',inventory_id:'10',
+      total_cost:'68.42',account:'cash'},
     inventory:{id:10,business_id:101},
     lot:{id:90,business_id:'101',inventory_id:10},
     transaction:{id:72,business_id:101,source:'inventory_purchase',
-      source_id:'44',type:'business_expense'}};
+      source_id:'44',type:'business_expense',amount:'68.42',
+      account:'cash',payment_method:'cash'}};
   const poisoned=[
     {...valid,purchase:{...valid.purchase,business_id:202}},
     {...valid,inventory:{...valid.inventory,business_id:202}},
@@ -1179,6 +1181,12 @@ test('original Merchant provenance and optional purchase/lot/expense links canno
     {...valid,transaction:{...valid.transaction,source:'order'}},
     {...valid,transaction:{...valid.transaction,type:'sale'}},
     {...valid,transaction:{...valid.transaction,business_id:'not-a-business'}},
+    {...valid,transaction:{...valid.transaction,amount:'68.43'}},
+    {...valid,transaction:{...valid.transaction,amount:'68.420'}},
+    {...valid,transaction:{...valid.transaction,amount:'6.842e1'}},
+    {...valid,transaction:{...valid.transaction,account:'gcash'}},
+    {...valid,transaction:{...valid.transaction,payment_method:'bank'}},
+    {...valid,inventory:undefined,lot:{...valid.lot,inventory_id:11}},
     {...valid,lot:['wrong','shape']}
   ];
   let queries=0;
@@ -1195,6 +1203,14 @@ test('original Merchant provenance and optional purchase/lot/expense links canno
   }};
   assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,{...ctx,response:valid}),valid);
   assert.deepEqual(persisted,valid);
+  const numericEquivalent={...valid,transaction:{...valid.transaction,amount:68.42}};
+  assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
+    {...ctx,response:numericEquivalent}),numericEquivalent,
+    'Finite JSON number and PostgreSQL NUMERIC text carry the same exact centavos');
+  const missingInventory={purchase:{...valid.purchase},lot:{...valid.lot}};
+  assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
+    {...ctx,response:missingInventory}),missingInventory,
+    'Legacy optional inventory snapshot can be omitted without breaking correct lot linkage');
   // Older purchase responses may intentionally omit optional lot/expense fields.
   assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
     {...ctx,response:{purchase:{id:44}}}),{purchase:{id:44}});

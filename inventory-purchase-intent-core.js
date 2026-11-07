@@ -188,12 +188,36 @@ function verifiedPurchaseResponse(response,purchaseId,businessId){
     if(lot&&lot.inventory_id!==undefined&&inventory.id!==undefined)
       sameId(lot.inventory_id,inventory.id,'lot/inventory link');
   }
+  // Inventory is optional in an older response. The FEFO lot must still
+  // agree with the purchase about the underlying stock item.
+  if(lot&&response.purchase.inventory_id!==undefined&&lot.inventory_id!==undefined)
+    sameId(response.purchase.inventory_id,lot.inventory_id,'purchase/lot inventory link');
   if(transaction){
     sameId(transaction.source_id,purchaseId,'expense/purchase link');
     if(transaction.source!==undefined&&transaction.source!=='inventory_purchase')
       throw conflict('Purchase response includes an unrelated transaction source');
     if(transaction.type!==undefined&&transaction.type!=='business_expense')
       throw conflict('Purchase response includes an unrelated transaction type');
+    // A linked expense source ID alone does not establish the actual cost or
+    // paid-from account. Compare exact NUMERIC(14,2) centavos without Float.
+    // Both fields may be absent in minimal historical response snapshots.
+    if(transaction.amount!==undefined&&response.purchase.total_cost!==undefined){
+      const centavos=value=>{
+        const raw=(typeof value==='number'||typeof value==='string')?String(value):'';
+        if(!/^(?:0|[1-9][0-9]{0,11})(?:[.][0-9]{1,2})?$/.test(raw))
+          throw conflict('Purchase response has invalid monetary evidence');
+        const [units,decimals='']=raw.split('.');
+        return BigInt(units)*100n+BigInt(decimals.padEnd(2,'0'));
+      };
+      if(centavos(transaction.amount)!==centavos(response.purchase.total_cost))
+        throw conflict('Purchase response expense amount differs from committed purchase');
+    }
+    if(response.purchase.account!==undefined){
+      for(const field of ['account','payment_method']){
+        if(transaction[field]!==undefined&&transaction[field]!==response.purchase.account)
+          throw conflict('Purchase response expense paid-from account differs from committed purchase');
+      }
+    }
   }
   return response;
 }
