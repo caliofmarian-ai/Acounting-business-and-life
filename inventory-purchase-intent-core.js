@@ -123,6 +123,15 @@ const readCommitUnknown=cause=>{
   failure.cause=cause;
   return failure;
 };
+// BEGIN may start on the server even when its acknowledgement never arrives.
+// Retire this potentially open transaction session; do not lend it to another
+// Merchant or imply that a purchase was durably written.
+const beginUnknown=cause=>{
+  const failure=bad('Purchase transaction BEGIN could not be confirmed; inspect the original intent before retrying',
+    'INVENTORY_PURCHASE_INTENT_BEGIN_UNKNOWN',503);
+  failure.cause=cause;
+  return failure;
+};
 function dbId(value,label){
   // Reject arrays, wrappers, booleans and objects as Merchant/account/purchase
   // identities rather than coercing them through String() (e.g. [1] => "1").
@@ -441,7 +450,8 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
   let newPurchaseCommitAttempted=false;
   let readCommitAttempted=false;
   try{
-    await client.query('BEGIN');
+    try{await client.query('BEGIN')}
+    catch(cause){throw beginUnknown(cause)}
     started=true;
     assertInstructionsUnchanged();
     const claim=await claimInventoryPurchaseIntent(client,context);
@@ -536,7 +546,9 @@ export async function inspectInventoryPurchaseIntent(client,options){
   let started=false;
   let readCommitAttempted=false;
   try{
-    await client.query('BEGIN');started=true;
+    try{await client.query('BEGIN')}
+    catch(cause){throw beginUnknown(cause)}
+    started=true;
     assertOriginalInstructions();
     const allowed=await verify(client,Object.freeze({
       businessId:business,accountId:account,intentKey:key,stage:'reconcile'

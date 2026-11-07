@@ -74,12 +74,15 @@ export function createInventoryPurchaseIntentHttpHandlers({
         tx=>createPurchase(tx,Object.freeze({businessId,accountId,intentKey}),req.body));
       return res.status(result.kind==='new'?201:200).json(result.response);
     }catch(error){
-      if(error?.code==='INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN'||
+      if(error?.code==='INVENTORY_PURCHASE_INTENT_BEGIN_UNKNOWN'||
+         error?.code==='INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN'||
          error?.code==='INVENTORY_PURCHASE_INTENT_READ_COMMIT_UNKNOWN'||
          error?.code==='INVENTORY_PURCHASE_INTENT_ROLLBACK_UNKNOWN'){
         discardConnectionError=error.cause instanceof Error?error.cause:error;
         return res.status(503).json({code:error.code,safe_to_retry:false,
-          message:error.code==='INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN'
+          message:error.code==='INVENTORY_PURCHASE_INTENT_BEGIN_UNKNOWN'
+            ?'Transaction start acknowledgement lost. Reconcile the original intent before attempting another purchase.'
+            :error.code==='INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN'
             ?'Outcome unknown. Inspect this original intent key before any further purchase.'
             :error.code==='INVENTORY_PURCHASE_INTENT_READ_COMMIT_UNKNOWN'
               ?'Replay or inspection acknowledgement lost. Reconcile the original intent before another purchase.'

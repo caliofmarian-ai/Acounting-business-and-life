@@ -963,3 +963,69 @@ test('HTTP replay and both read-only inspection outcomes retire a client after l
     }
   }
 });
+
+test('HTTP purchase and inspection retire a pooled client when BEGIN acknowledgement is lost',async()=>{
+  // Controlled synthetic transport failure: PostgreSQL may have begun a
+  // transaction before its BEGIN response was lost. An unchecked release()
+  // would expose an open/invalid session to a different Merchant operation.
+  for(const route of ['purchase','inspect']){
+    for(const loseBeginAck of [true,false]){
+      const lostBegin=new Error('synthetic lost BEGIN acknowledgement');
+      const statements=[],releases=[];
+      let posts=0,grants=0;
+      const client={
+        async query(sql){
+          statements.push(sql);
+          if(sql==='BEGIN'){
+            if(loseBeginAck)throw lostBegin;
+            return{rowCount:0,rows:[]};
+          }
+          if(sql==='ROLLBACK')return{rowCount:0,rows:[]};
+          if(sql.includes('INSERT INTO inventory_purchase_intents')){
+            assert.equal(route,'purchase');
+            return{rowCount:1,rows:[{intent_key:key}]};
+          }
+          throw Error('Unexpected SQL on rejected purchase authority: '+sql);
+        },
+        release(...args){releases.push(args)}
+      };
+      const handlers=createInventoryPurchaseIntentHttpHandlers({
+        pool:{async connect(){return client}},
+        authorizeOrigin:async()=>({role:'merchant',businessId:1,accountId:2}),
+        verifyCurrentMerchantAuthority:async()=>{grants++;return false},
+        createPurchase:async()=>{posts++;throw Error('No writes permitted')}
+      });
+      const req={
+        body:{...payload,origin_business_id:1},
+        get(header){assert.equal(header,'Idempotency-Key');return key}
+      };
+      const output={status:null,body:null,errors:[]};
+      const res={
+        status(code){output.status=code;return this},
+        json(body){output.body=body;return this}
+      };
+      await handlers[route](req,res,error=>output.errors.push(error));
+      assert.deepEqual(output.errors,[]);
+      assert.equal(posts,0);
+      assert.equal(releases.length,1);
+      assert.equal(statements[0],'BEGIN');
+      if(loseBeginAck){
+        assert.deepEqual(statements,['BEGIN'],
+          'indeterminate BEGIN must not dispatch SQL or assume ROLLBACK success');
+        assert.equal(grants,0,'no authorization or receiving follows a lost BEGIN');
+        assert.equal(output.status,503);
+        assert.equal(output.body.code,'INVENTORY_PURCHASE_INTENT_BEGIN_UNKNOWN');
+        assert.equal(output.body.safe_to_retry,false);
+        assert.equal(releases[0][0],lostBegin,
+          'retire possibly open/broken session from node-postgres pool');
+      }else{
+        assert.deepEqual(statements.at(-1),'ROLLBACK');
+        assert.equal(grants,1);
+        assert.equal(output.status,403);
+        assert.equal(output.body.code,'INVENTORY_PURCHASE_INTENT_FORBIDDEN');
+        assert.equal(releases[0].length,0,
+          'confirmed BEGIN+ROLLBACK returns healthy client normally');
+      }
+    }
+  }
+});
