@@ -751,6 +751,8 @@ try{
           headers:{'content-type':'application/json','Idempotency-Key':key,
             'X-Test-Account':actor},
           body:JSON.stringify(data)});
+        eq(result.headers.get('cache-control'),'private, no-store',
+          'actual Express '+path+' response must prevent private purchase caching');
         return {status:result.status,body:await result.json()};
       };
       const [first,duplicate]=await Promise.all([
@@ -795,6 +797,8 @@ try{
         headers:{'content-type':'application/json','X-Test-Account':'501'},
         body:JSON.stringify({...body,item:'HTTP missing key 881'})});
       eq(missingKey.status,400,'missing stable header cannot receive new stock');
+      eq(missingKey.headers.get('cache-control'),'private, no-store',
+        'direct invalid HTTP request must retain private no-store response header');
       eq(await counts('HTTP missing key 881'),null,'missing stable header causes no stock write');
       eq((await send('/qa/inventory/purchase',httpKey,body,'502')).status,403,
         'unauthenticated synthetic account is rejected');
