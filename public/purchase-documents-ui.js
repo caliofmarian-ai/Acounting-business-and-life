@@ -86,9 +86,11 @@
     $('#mpdForm',overlay).onsubmit=save;
   }
   function selectFile(file){
-    if(!file)return;
+    // Clearing either native picker revokes the previous attachment. An empty
+    // files/change event must never submit a stale private receipt instead.
     chosenFile=null;
     $('#mpdChosenFile',overlay).textContent='No file selected.';
+    if(!file){message('');return;}
     if(file.size>MAX_FILE){message('File exceeds 6 MB. Use a smaller scan or photo.',true);return}
     if(!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type)){message('Only JPEG, PNG, WEBP and PDF are accepted.',true);return}
     chosenFile=file;

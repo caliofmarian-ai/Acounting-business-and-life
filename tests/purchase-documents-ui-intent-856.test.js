@@ -560,3 +560,44 @@ test('late purchase-list GET cannot discard a checkbox selected for a new draft'
   assert.equal(writes,1,'ordinary unselected refresh still renders');
   assert.match(html,/Updated stock/);
 });
+
+test('clearing either native receipt picker revokes the previously selected private attachment',()=>{
+  // Literal shipped handler. Both native camera and file inputs dispatch it.
+  const begin=source.indexOf('  function selectFile(file){');
+  const end=source.indexOf('\n  async function linkable(){',begin);
+  assert.ok(begin>=0&&end>begin);
+  assert.match(source,/mpdFile',overlay\)\.onchange=event=>selectFile\(event\.target\.files\?\.\[0\]\)/);
+  assert.match(source,/mpdCamera',overlay\)\.onchange=event=>selectFile\(event\.target\.files\?\.\[0\]\)/);
+  const display={textContent:''},messages=[];
+  const controller=new Function('display','messages',`
+    const MAX_FILE=6*1024*1024,overlay={};
+    let chosenFile=null;
+    const $=(selector,root)=>{
+      if(selector!=='#mpdChosenFile'||root!==overlay)throw Error('Wrong display');
+      return display;
+    };
+    const message=(text,error=false)=>messages.push({text,error});
+    ${source.slice(begin,end)}
+    return{selectFile,selected:()=>chosenFile};
+  `)(display,messages);
+  const oldReceipt={name:'old-receipt.pdf',size:1024,type:'application/pdf'};
+  controller.selectFile(oldReceipt);
+  assert.equal(controller.selected(),oldReceipt);
+  assert.match(display.textContent,/old-receipt.pdf/);
+  controller.selectFile(undefined); // native FileList became empty
+  assert.equal(controller.selected(),null,
+    'empty picker change must not preserve a stale private attachment');
+  assert.equal(display.textContent,'No file selected.');
+  assert.equal(messages.at(-1).text,'');
+  controller.selectFile(oldReceipt);
+  controller.selectFile({name:'unsupported.txt',size:2,type:'text/plain'});
+  assert.equal(controller.selected(),null,'invalid replacement revokes old receipt');
+  assert.match(messages.at(-1).text,/Only JPEG, PNG, WEBP and PDF/);
+  controller.selectFile(oldReceipt);
+  controller.selectFile({name:'oversized.pdf',size:6*1024*1024+1,type:'application/pdf'});
+  assert.equal(controller.selected(),null,'oversize replacement revokes old receipt');
+  const nextReceipt={name:'new-receipt.jpg',size:2048,type:'image/jpeg'};
+  controller.selectFile(nextReceipt);
+  assert.equal(controller.selected(),nextReceipt,'valid replacement still works');
+  assert.match(display.textContent,/new-receipt.jpg/);
+});
