@@ -88,6 +88,44 @@ export function verifyPaidStockIntakeReceipt(result,context,row,paidFrom){
   )fail();
   return result;
 }
+// A historical Money correction is a second, audited HTTP write after stock
+// receiving has already committed. A 200 with the same transaction ID alone
+// does NOT prove the original expense was dated or kept in the same business.
+// A mismatch must leave the row saved-date-pending, never send another purchase.
+export function verifyPaidStockIntakeExpenseDatePatch(updated,original,context,approvedDate){
+  const fail=()=>{throw new Error(
+    'Historical expense date update could not be verified for the original paid purchase. Stock and expense may be saved; reconcile Money and do NOT post the stock again.'
+  )};
+  const id=value=>{
+    if((typeof value!=='number'&&typeof value!=='string')||!/^[1-9][0-9]*$/.test(String(value)))return null;
+    const parsed=Number(value);
+    return Number.isSafeInteger(parsed)?parsed:null;
+  };
+  const expectedBusiness=id(context?.businessId),originalId=id(original?.id);
+  const updatedAt=updated?.occurred_at;
+  const expectedAt=typeof approvedDate==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(approvedDate)?
+    Date.parse(approvedDate+'T12:00:00+08:00'):NaN;
+  // Require an explicit timezone (PostgreSQL JSON TIMESTAMPTZ emits UTC).
+  // Never accept a local/ambiguous timestamp from a future API change.
+  const datedEpoch=typeof updatedAt==='string'&&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(updatedAt)?
+    Date.parse(updatedAt):NaN;
+  const originalAmount=parsePhpMoney(original?.amount);
+  if(!updated||typeof updated!=='object'||Array.isArray(updated)||
+     !expectedBusiness||!originalId||!id(original?.source_id)||
+     id(original?.business_id)!==expectedBusiness||
+     id(updated.id)!==originalId||id(updated.business_id)!==expectedBusiness||
+     original.source!=='inventory_purchase'||updated.source!==original.source||
+     id(updated.source_id)!==id(original.source_id)||
+     original.type!=='business_expense'||updated.type!==original.type||
+     typeof original.account!=='string'||!original.account||
+     updated.account!==original.account||
+     original.payment_method!==original.account||updated.payment_method!==original.payment_method||
+     originalAmount===null||parsePhpMoney(updated.amount)!==originalAmount||
+     !Number.isFinite(expectedAt)||!Number.isFinite(datedEpoch)||datedEpoch!==expectedAt)fail();
+  return updated;
+}
+
 // Forward-compatible #881 purchase key: one secure, literal key per approved row.
 // #882 is NOT installed in HTTP yet; this header does not enable safe retry.
 export function stockIntakePurchaseIntentKey(row,randomUUID=()=>globalThis.crypto?.randomUUID?.()){
@@ -738,8 +776,7 @@ if(hasDocument){
             })
           });
           if(!requireCurrent())break;
-          if(Number(dated?.id)!==Number(result.transaction.id))
-            throw new Error('Linked expense date correction could not be verified.');
+          verifyPaidStockIntakeExpenseDatePatch(dated,result.transaction,originalContext,originalDate);
         }
         row.result='saved';
         message('results',saved+' purchase(s) and linked expenses dated '+originalDate+'.\n'+state.resultLog.join('\n'),'ok');

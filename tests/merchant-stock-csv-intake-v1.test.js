@@ -7,7 +7,7 @@ import {
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
   STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes,
-  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows,verifyPaidStockIntakeReceipt
+  stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows,verifyPaidStockIntakeReceipt,verifyPaidStockIntakeExpenseDatePatch
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -181,6 +181,47 @@ test('a saved purchase must prove exact Merchant, stock identity, paid expense a
   const check=js.indexOf('verifyPaidStockIntakeReceipt(result,originalContext,row,paidFrom)');
   const saved=js.indexOf("row.result='saved-date-pending'",check);
   assert.ok(check>0&&saved>check,'never mark a paid batch saved before validating the returned ledger');
+});
+
+
+test('historical paid expense date requires exact PHP-noon TIMESTAMPTZ and unchanged linked money evidence',()=>{
+  const context={accountId:11,businessId:123,businessName:'Verified PH Merchant'};
+  const original={id:401,business_id:123,source:'inventory_purchase',source_id:301,
+    type:'business_expense',account:'cash',payment_method:'cash',amount:'120.00',
+    occurred_at:'2026-11-07T01:02:03.000Z'};
+  const updated={...original,occurred_at:'2026-11-01T04:00:00.000Z'};
+  assert.equal(verifyPaidStockIntakeExpenseDatePatch(updated,original,context,'2026-11-01'),updated);
+  assert.equal(verifyPaidStockIntakeExpenseDatePatch(
+    {...updated,occurred_at:'2026-11-01T12:00:00+08:00'},original,context,'2026-11-01').id,401);
+  const mutations=[
+    tx=>{tx.id=402},tx=>{tx.business_id=999},tx=>{tx.source_id=302},
+    tx=>{tx.source='manual'},tx=>{tx.type='order_payment'},tx=>{tx.account='bank'},
+    tx=>{tx.payment_method='gcash'},tx=>{tx.amount='119.99'},
+    tx=>{tx.occurred_at=original.occurred_at},
+    tx=>{tx.occurred_at='2026-11-01T04:00:01.000Z'},
+    tx=>{tx.occurred_at='2026-11-01T04:00:00'}, // timezone ambiguity
+    tx=>{delete tx.occurred_at}
+  ];
+  for(const mutate of mutations){
+    const altered={...updated};mutate(altered);
+    assert.throws(()=>verifyPaidStockIntakeExpenseDatePatch(altered,original,context,'2026-11-01'),
+      /could not be verified/,String(mutate));
+  }
+  for(const invalid of [null,{id:401},[],{...updated,amount:'120.001'}]){
+    assert.throws(()=>verifyPaidStockIntakeExpenseDatePatch(invalid,original,context,'2026-11-01'),
+      /could not be verified/);
+  }
+  assert.throws(()=>verifyPaidStockIntakeExpenseDatePatch(updated,original,{...context,businessId:999},'2026-11-01'),
+    /could not be verified/);
+  assert.throws(()=>verifyPaidStockIntakeExpenseDatePatch(updated,original,context,'2026-11-02'),
+    /could not be verified/);
+  assert.ok(js.includes('verifyPaidStockIntakeExpenseDatePatch(dated,result.transaction,originalContext,originalDate)'),
+    'actual PATCH completion must verify original purchase, Merchant, amount and exact PH date');
+  const pending=js.indexOf("row.result='saved-date-pending'"),
+        checked=js.indexOf('verifyPaidStockIntakeExpenseDatePatch(dated,result.transaction,originalContext,originalDate)'),
+        saved=js.indexOf("row.result='saved';",checked);
+  assert.ok(pending>0&&checked>pending&&saved>checked,
+    'stock is already durably saved before PATCH verification and only marked fully dated afterward');
 });
 
 test('paid stock intake requires one Merchant, and records exactly a linked purchase expense without retry',()=>{
