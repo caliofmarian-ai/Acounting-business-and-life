@@ -18,7 +18,8 @@ function makeController(){
   const fields={document_kind:'purchase_receipt',issuer_name:'Market',issue_date:'2026-11-06',
     document_number:'',gross_amount:'30.00',note:''};
   const button={disabled:false};
-  const form={elements:{issue_date:{value:''}},reset(){}};
+  let resetCount=0;
+  const form={elements:{issue_date:{value:''}},reset(){resetCount++}};
   const receiptLabel={textContent:''};
   let selectedLinks=[];
   const panel={removed:false,remove(){this.removed=true},querySelectorAll:()=>selectedLinks.map(value=>({value}))};
@@ -65,7 +66,7 @@ function makeController(){
       ${closeSource}
       return {save,close,setFile:file=>{chosenFile=file},
         mountReplacement:()=>{if(overlay)throw new Error('Close old receipt panel before replacing');overlay={remove(){},querySelectorAll:panel.querySelectorAll};businessId=14},
-        state:()=>({pendingKey,pendingPayload,pendingSubmitted,overlayActive:!!overlay,saveInProgress,buttonDisabled:button.disabled})};`);
+        state:()=>({pendingKey,pendingPayload,pendingSubmitted,overlayActive:!!overlay,saveInProgress,buttonDisabled:button.disabled,chosenFile})};`);
   const controller=fn(api,FakeFormData,()=>('purchase-intent-'+(++keys)),()=>fields.issue_date,
     (text,isError)=>messages.push({text,isError}),
     async()=>{
@@ -82,6 +83,7 @@ function makeController(){
     failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
     failNextArchive:()=>{failArchiveOnce=true},failNextLinkable:()=>{failLinkableOnce=true},
     setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
+    resetCount:()=>resetCount,
     setConfirm:value=>{confirmResult=value},confirmations:()=>confirmationCount,
     holdNextArchive:()=>{
       let notify;
@@ -206,6 +208,38 @@ test('overlapping save events cannot create a second receipt intent while prefli
   assert.equal(c.keyCount(),1);
   assert.equal(c.state().pendingSubmitted,false);
   assert.equal(c.state().pendingKey,null);
+});
+
+test('confirmed in-flight POST preserves newer typed details and a replacement camera file',async()=>{
+  const c=makeController();
+  const firstFile={name:'original.pdf'};
+  const secondFile={name:'next-receipt.pdf'};
+  c.setFile(firstFile);
+  const gate=c.holdNextPost();
+  const saving=c.submit();
+  await gate.whenHeld;
+  assert.equal(c.posts.length,1,'old receipt payload has already been sent');
+  assert.equal(c.posts[0].file_name,'original.pdf');
+  c.fields.issuer_name='Next supplier';
+  c.fields.gross_amount='99.00';
+  c.setLinks(['202']);
+  c.setFile(secondFile);
+  gate.release();
+  await saving;
+  assert.equal(c.resetCount(),0,'old POST must not reset a newer draft');
+  assert.equal(c.state().chosenFile,secondFile,'new camera/PDF selection must survive old save acknowledgement');
+  assert.equal(c.fields.issuer_name,'Next supplier');
+  assert.equal(c.fields.gross_amount,'99.00');
+  assert.match(c.messages.at(-1).text,/newer unsaved edits are preserved/);
+  assert.equal(c.state().pendingSubmitted,false,'old confirmed intent key is released');
+  await c.submit();
+  assert.equal(c.posts.length,2);
+  assert.equal(c.posts[1].issuer_name,'Next supplier');
+  assert.equal(c.posts[1].gross_amount,'99.00');
+  assert.equal(c.posts[1].file_name,'next-receipt.pdf');
+  assert.deepEqual(c.posts[1].links,[{kind:'inventory_purchase',id:202}]);
+  assert.notEqual(c.posts[1].client_request_key,c.posts[0].client_request_key);
+  assert.equal(c.resetCount(),1,'new fully submitted draft resets normally');
 });
 
 test('confirmed save remains confirmed when archive GET fails after POST',async()=>{

@@ -199,13 +199,31 @@
       pendingSubmitted=true;
       const result=await api(ROOT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(panel!==overlay||biz!==businessId)return;
-      pendingKey=null;pendingPayload=null;pendingSubmitted=false;chosenFile=null;
-      form.reset();form.elements.issue_date.value=today();
-      $('#mpdChosenFile',overlay).textContent='No file selected.';
+      // A confirmed old receipt must never erase details/file for a newer
+      // receipt the operator entered while its POST was still in flight.
+      const afterPost=new FormData(form);
+      const newerDraft={
+        document_kind:String(afterPost.get('document_kind')||'purchase_receipt'),
+        issuer_name:String(afterPost.get('issuer_name')||''),
+        issue_date:String(afterPost.get('issue_date')||today()),
+        document_number:String(afterPost.get('document_number')||''),
+        gross_amount:String(afterPost.get('gross_amount')||''),
+        note:String(afterPost.get('note')||''),
+        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
+      };
+      const newerEdits=fileAtStart!==chosenFile||Object.entries(currentDraft).some(([name,value])=>
+        JSON.stringify(value)!==JSON.stringify(newerDraft[name]));
+      pendingKey=null;pendingPayload=null;pendingSubmitted=false;
+      if(!newerEdits){
+        chosenFile=null;
+        form.reset();form.elements.issue_date.value=today();
+        $('#mpdChosenFile',overlay).textContent='No file selected.';
+      }
       // The POST result is definitive before the two auxiliary GET refreshes.
       // A failed archive/list refresh must never be presented as a failed save:
       // that would encourage creating a second receipt with a new intent key.
-      const savedNotice=result.already_saved?'This document was already saved.':'Purchase document saved securely.';
+      const savedNotice=(result.already_saved?'This document was already saved.':'Purchase document saved securely.')+
+        (newerEdits?' Your newer unsaved edits are preserved; review them before submitting a different receipt.':'');
       message(savedNotice);
       const refreshes=await Promise.allSettled([archive(),linkable()]);
       if(panel===overlay&&biz===businessId&&refreshes.some(item=>item.status==='rejected')){
