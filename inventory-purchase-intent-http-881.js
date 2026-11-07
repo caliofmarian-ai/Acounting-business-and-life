@@ -75,12 +75,15 @@ export function createInventoryPurchaseIntentHttpHandlers({
       return res.status(result.kind==='new'?201:200).json(result.response);
     }catch(error){
       if(error?.code==='INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN'||
+         error?.code==='INVENTORY_PURCHASE_INTENT_READ_COMMIT_UNKNOWN'||
          error?.code==='INVENTORY_PURCHASE_INTENT_ROLLBACK_UNKNOWN'){
         discardConnectionError=error.cause instanceof Error?error.cause:error;
         return res.status(503).json({code:error.code,safe_to_retry:false,
           message:error.code==='INVENTORY_PURCHASE_INTENT_COMMIT_UNKNOWN'
             ?'Outcome unknown. Inspect this original intent key before any further purchase.'
-            :'Rollback could not be confirmed. Reconcile the original intent before another purchase.'});
+            :error.code==='INVENTORY_PURCHASE_INTENT_READ_COMMIT_UNKNOWN'
+              ?'Replay or inspection acknowledgement lost. Reconcile the original intent before another purchase.'
+              :'Rollback could not be confirmed. Reconcile the original intent before another purchase.'});
       }
       if(Number.isInteger(error?.status)&&error.status>=400&&error.status<500){
         return res.status(error.status).json({code:error.code||'INVENTORY_PURCHASE_INTENT_INVALID',

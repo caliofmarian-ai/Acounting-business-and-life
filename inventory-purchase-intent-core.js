@@ -114,6 +114,15 @@ const rollbackUnknown=cause=>{
   failure.cause=cause;
   return failure;
 };
+// A replay or read-only inspection can also lose its COMMIT acknowledgement.
+// Even without any new economic writes, the underlying client may be broken:
+// the HTTP adapter must retire it instead of returning it to the pool.
+const readCommitUnknown=cause=>{
+  const failure=bad('Purchase replay/inspection commit could not be confirmed; inspect the original intent before further action',
+    'INVENTORY_PURCHASE_INTENT_READ_COMMIT_UNKNOWN',503);
+  failure.cause=cause;
+  return failure;
+};
 function dbId(value,label){
   // Reject arrays, wrappers, booleans and objects as Merchant/account/purchase
   // identities rather than coercing them through String() (e.g. [1] => "1").
@@ -430,6 +439,7 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
   };
   let started=false;
   let newPurchaseCommitAttempted=false;
+  let readCommitAttempted=false;
   try{
     await client.query('BEGIN');
     started=true;
@@ -438,7 +448,9 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
     if(claim.kind==='replay'){
       await assertAuthorized('replay');
       assertInstructionsUnchanged();
+      readCommitAttempted=true;
       await client.query('COMMIT');
+      readCommitAttempted=false;
       started=false;
       return claim; // No purchase callback, inventory delta, lot or second expense.
     }
@@ -480,6 +492,7 @@ export async function executeInventoryPurchaseIntent(client,options,createPurcha
       uncertain.cause=error;
       throw uncertain;
     }
+    if(readCommitAttempted)throw readCommitUnknown(error);
     if(rollbackFailure)throw rollbackUnknown(rollbackFailure);
     throw error;
   }
@@ -521,6 +534,7 @@ export async function inspectInventoryPurchaseIntent(client,options){
   if(typeof verify!=='function')throw bad('Current Merchant grant verifier required',
     'INVENTORY_PURCHASE_INTENT_AUTH_REQUIRED',403);
   let started=false;
+  let readCommitAttempted=false;
   try{
     await client.query('BEGIN');started=true;
     assertOriginalInstructions();
@@ -540,7 +554,10 @@ export async function inspectInventoryPurchaseIntent(client,options){
     `,[business,account,key]);
     assertOriginalInstructions();
     if(found.rowCount===0){
-      await client.query('COMMIT');started=false;
+      readCommitAttempted=true;
+      await client.query('COMMIT');
+      readCommitAttempted=false;
+      started=false;
       return{kind:'unconfirmed',safeToRetry:false};
     }
     if(found.rowCount!==1)throw bad('Ambiguous purchase intent',
@@ -560,13 +577,19 @@ export async function inspectInventoryPurchaseIntent(client,options){
       'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
     const response=verifiedPurchaseResponse(row.response_json,purchase);
     assertOriginalInstructions();
-    await client.query('COMMIT');started=false;
+    readCommitAttempted=true;
+    await client.query('COMMIT');
+    readCommitAttempted=false;
+    started=false;
     return{kind:'committed',purchaseId:purchase,response,safeToRetry:false};
   }catch(error){
+    let rollbackFailure=null;
     if(started){
       try{await client.query('ROLLBACK')}
-      catch(failure){throw rollbackUnknown(failure)}
+      catch(failure){rollbackFailure=failure}
     }
+    if(readCommitAttempted)throw readCommitUnknown(error);
+    if(rollbackFailure)throw rollbackUnknown(rollbackFailure);
     throw error;
   }
 }

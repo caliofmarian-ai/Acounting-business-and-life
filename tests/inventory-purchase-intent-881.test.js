@@ -889,3 +889,78 @@ test('HTTP purchase and inspection retire a client when PostgreSQL ROLLBACK itse
     }
   }
 });
+
+test('HTTP replay and both read-only inspection outcomes retire a client after lost COMMIT acknowledgement',async()=>{
+  // Controlled transport failure: a successful read/replay COMMIT can still
+  // lose its acknowledgement, leaving an unusable PostgreSQL pool client.
+  // This is NOT an isolated real-PostgreSQL/network integration claim.
+  for(const route of ['replay','inspect-absent','inspect-committed']){
+    for(const loseAcknowledgement of [true,false]){
+      const lostAck=new Error('synthetic read-only COMMIT transport loss');
+      const statements=[],releases=[],requestBody={...payload,origin_business_id:1};
+      const fingerprint=inventoryPurchaseFingerprint(requestBody);
+      const client={
+        async query(sql){
+          if(sql==='BEGIN'||sql==='ROLLBACK'){
+            statements.push(sql);return{rowCount:0,rows:[]};
+          }
+          if(sql==='COMMIT'){
+            statements.push('COMMIT');
+            if(loseAcknowledgement)throw lostAck;
+            return{rowCount:0,rows:[]};
+          }
+          if(sql.includes('INSERT INTO inventory_purchase_intents')){
+            assert.equal(route,'replay');
+            statements.push('claim-replay');return{rowCount:0,rows:[]};
+          }
+          if(sql.includes('SELECT payload_sha256,purchase_id,response_json')){
+            assert.equal(route,'replay');
+            statements.push('replay-row');return{rowCount:1,rows:[{
+              payload_sha256:fingerprint,purchase_id:44,response_json:{purchase:{id:44}}
+            }]};
+          }
+          if(sql.includes('FROM inventory_purchase_intents')){
+            statements.push('inspect-row');
+            if(route==='inspect-absent')return{rowCount:0,rows:[]};
+            return{rowCount:1,rows:[{
+              payload_sha256:fingerprint,purchase_id:44,response_json:{purchase:{id:44}}
+            }]};
+          }
+          if(sql.includes('FROM inventory_purchases')){
+            statements.push('source-row');return{rowCount:1,rows:[{id:44}]};
+          }
+          throw new Error('unexpected SQL in read COMMIT error test');
+        },
+        release(...args){releases.push(args)}
+      };
+      const handlers=createInventoryPurchaseIntentHttpHandlers({
+        pool:{async connect(){return client}},
+        authorizeOrigin:async()=>({role:'merchant',businessId:1,accountId:2}),
+        verifyCurrentMerchantAuthority:async()=>true,
+        createPurchase:async()=>{throw Error('replay/inspection cannot write a new purchase')}
+      });
+      const req={body:requestBody,get(header){
+        assert.equal(header,'Idempotency-Key');return key;
+      }};
+      const result={status:null,body:null,errors:[]};
+      const res={status(status){result.status=status;return this},
+        json(body){result.body=body;return this}};
+      await (route==='replay'?handlers.purchase:handlers.inspect)(
+        req,res,error=>result.errors.push(error));
+      assert.deepEqual(result.errors,[]);
+      assert.equal(releases.length,1,'single pool release: '+route);
+      if(loseAcknowledgement){
+        assert.equal(result.status,503,route);
+        assert.equal(result.body.code,'INVENTORY_PURCHASE_INTENT_READ_COMMIT_UNKNOWN',route);
+        assert.equal(result.body.safe_to_retry,false,route);
+        assert.equal(releases[0][0],lostAck,'broken read COMMIT connection retired: '+route);
+        assert.deepEqual(statements.slice(-2),['COMMIT','ROLLBACK']);
+      }else{
+        assert.equal(result.status,route==='inspect-absent'?202:200,route);
+        assert.equal(releases[0].length,0,'confirmed read COMMIT connection reusable: '+route);
+        assert.equal(statements.at(-1),'COMMIT');
+      }
+      assert.ok(!statements.some(x=>/finish|purchase-write/.test(x)));
+    }
+  }
+});
