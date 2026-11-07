@@ -27,6 +27,7 @@ function makeController(){
   let keys=0,workspaceIsMerchant=true,failPostOnce=false,failFileOnce=false;
   let workspaceChecks=0,changeDuringVerify=null,changeDuringRead=null;
   let failArchiveOnce=false,failLinkableOnce=false,confirmResult=false,confirmationCount=0;
+  let linkableRefreshes=0;
   let holdPost=false,releasePost=null,notifyPostHeld=null;
   let holdArchive=false,releaseArchive=null,notifyArchiveHeld=null;
   let holdWorkspace=false,releaseWorkspace=null,notifyWorkspaceHeld=null;
@@ -73,7 +74,8 @@ function makeController(){
       if(holdArchive){holdArchive=false;await new Promise(resolve=>{releaseArchive=resolve;notifyArchiveHeld?.()})}
       if(failArchiveOnce){failArchiveOnce=false;throw new Error('Archive GET unavailable');}
     },
-    async()=>{if(failLinkableOnce){failLinkableOnce=false;throw new Error('Purchase-link GET unavailable');}},
+    async()=>{if(failLinkableOnce){failLinkableOnce=false;throw new Error('Purchase-link GET unavailable');}
+      linkableRefreshes++;selectedLinks=[];},
     async()=>{if(failFileOnce){failFileOnce=false;throw new Error('File read failed');}
       if(changeDuringRead){const change=changeDuringRead;changeDuringRead=null;await Promise.resolve();change();}
       return 'data:application/pdf;base64,JVBERi0xLjQK'},
@@ -83,7 +85,7 @@ function makeController(){
     failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
     failNextArchive:()=>{failArchiveOnce=true},failNextLinkable:()=>{failLinkableOnce=true},
     setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
-    resetCount:()=>resetCount,
+    resetCount:()=>resetCount,linkableRefreshes:()=>linkableRefreshes,selectedLinks:()=>selectedLinks,
     setConfirm:value=>{confirmResult=value},confirmations:()=>confirmationCount,
     holdNextArchive:()=>{
       let notify;
@@ -227,6 +229,8 @@ test('confirmed in-flight POST preserves newer typed details and a replacement c
   gate.release();
   await saving;
   assert.equal(c.resetCount(),0,'old POST must not reset a newer draft');
+  assert.equal(c.linkableRefreshes(),0,'old POST must not re-render and erase new link checkboxes');
+  assert.deepEqual(c.selectedLinks(),['202']);
   assert.equal(c.state().chosenFile,secondFile,'new camera/PDF selection must survive old save acknowledgement');
   assert.equal(c.fields.issuer_name,'Next supplier');
   assert.equal(c.fields.gross_amount,'99.00');
@@ -240,6 +244,7 @@ test('confirmed in-flight POST preserves newer typed details and a replacement c
   assert.deepEqual(c.posts[1].links,[{kind:'inventory_purchase',id:202}]);
   assert.notEqual(c.posts[1].client_request_key,c.posts[0].client_request_key);
   assert.equal(c.resetCount(),1,'new fully submitted draft resets normally');
+  assert.equal(c.linkableRefreshes(),1,'normal completed draft refreshes purchase-link choices');
 });
 
 test('confirmed save remains confirmed when archive GET fails after POST',async()=>{

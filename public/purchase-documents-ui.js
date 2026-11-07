@@ -225,7 +225,9 @@
       const savedNotice=(result.already_saved?'This document was already saved.':'Purchase document saved securely.')+
         (newerEdits?' Your newer unsaved edits are preserved; review them before submitting a different receipt.':'');
       message(savedNotice);
-      const refreshes=await Promise.allSettled([archive(),linkable()]);
+      // Replacing the linked-purchase checkboxes would erase a next receipt's
+      // unsaved selection. Refresh the confirmed archive, not the live draft.
+      const refreshes=await Promise.allSettled(newerEdits?[archive()]:[archive(),linkable()]);
       if(panel===overlay&&biz===businessId&&refreshes.some(item=>item.status==='rejected')){
         message(savedNotice+' Archive or purchase links could not refresh. The save is confirmed; close and reopen to reload the list.',true);
       }
