@@ -286,6 +286,23 @@
       if(!acknowledgedDocumentMatches(result,payload)){
         throw new Error('Purchase document acknowledgement did not match this receipt. Original retry key is retained; check Saved documents before resubmitting or changing the draft.');
       }
+      // An old Merchant A POST may commit while the operator silently switches
+      // to Merchant B without a profile-state event. Cached panel/business IDs
+      // are not authority to clear B's draft or show A's private save result.
+      let postWorkspace;
+      try{postWorkspace=await api('/api/accounting/workspaces')}
+      catch{
+        if(panel===overlay)close(true);
+        return;
+      }
+      if(panel!==overlay||biz!==businessId)return;
+      const activeAfterPost=postWorkspace?.active_business_id;
+      const validAfterPost=(typeof activeAfterPost==='number'&&Number.isSafeInteger(activeAfterPost)&&activeAfterPost>0)||
+        (typeof activeAfterPost==='string'&&/^[1-9][0-9]*$/.test(activeAfterPost)&&Number.isSafeInteger(Number(activeAfterPost)));
+      if(postWorkspace?.role!=='merchant'||!validAfterPost||Number(activeAfterPost)!==biz){
+        close(true);
+        return;
+      }
       // A confirmed old receipt must never erase details/file for a newer
       // receipt the operator entered while its POST was still in flight.
       const afterPost=new FormData(form);

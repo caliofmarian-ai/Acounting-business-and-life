@@ -26,7 +26,7 @@ function makeController(){
   let selectedLinks=[];
   const panel={removed:false,remove(){this.removed=true},querySelectorAll:()=>selectedLinks.map(value=>({value}))};
   const messages=[],posts=[];
-  let keys=0,workspaceIsMerchant=true,failPostOnce=false,failFileOnce=false;
+  let keys=0,workspaceIsMerchant=true,activeBusinessId=14,failPostOnce=false,failFileOnce=false;
   let nextPostResponse; const persisted=new Map();
   let workspaceChecks=0,changeDuringVerify=null,changeDuringRead=null;
   let failArchiveOnce=false,failLinkableOnce=false,confirmResult=false,confirmationCount=0;
@@ -45,7 +45,7 @@ function makeController(){
         const change=changeDuringVerify;changeDuringVerify=null;
         await Promise.resolve();change();
       }
-      return {role:workspaceIsMerchant?'merchant':'customer',active_business_id:14};
+      return {role:workspaceIsMerchant?'merchant':'customer',active_business_id:activeBusinessId};
     }
     assert.equal(path,'/api/procurement/purchase-documents');
     const payload=JSON.parse(options.body);
@@ -100,7 +100,7 @@ function makeController(){
     failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
     replyNextPost:response=>{nextPostResponse=response},
     failNextArchive:()=>{failArchiveOnce=true},failNextLinkable:()=>{failLinkableOnce=true},
-    setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
+    setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},setActiveBusiness:id=>{activeBusinessId=id},keyCount:()=>keys,
     resetCount:()=>resetCount,linkableRefreshes:()=>linkableRefreshes,selectedLinks:()=>selectedLinks,
     setConfirm:value=>{confirmResult=value},confirmations:()=>confirmationCount,
     holdNextArchive:()=>{
@@ -279,6 +279,37 @@ test('confirmed save remains confirmed when archive GET fails after POST',async(
   assert.equal(c.posts.length,2,'the operator can explicitly save the next receipt');
   assert.notEqual(c.posts[1].client_request_key,c.posts[0].client_request_key);
   assert.notEqual(c.messages.at(-1).isError,true,'successful subsequent save is not an error');
+});
+
+test('silent Merchant A→B switch during POST cannot show A receipt or reset the replacement draft',async()=>{
+  const c=makeController();
+  const gate=c.holdNextPost();
+  const posting=c.submit();
+  await gate.whenHeld;
+  assert.equal(c.posts.length,1,'the original A request was sent once');
+  c.setActiveBusiness(15); // no profile event and cached dialog business stays 14
+  gate.release();
+  await posting;
+  assert.equal(c.posts.length,1,'revoked response must never retry or create another receipt');
+  assert.equal(c.state().overlayActive,false,'A private dialog is forcibly revoked for Merchant B');
+  assert.equal(c.resetCount(),0,'old A acknowledgement must not clear B draft');
+  assert.equal(c.state().pendingSubmitted,false);
+  assert.equal(c.messages.some(entry=>/saved securely|already saved/i.test(entry.text)),false,
+    'private A confirmation must not be reported as B');
+});
+
+test('Merchant role revoked during successful POST cannot leave prior receipt dialog open',async()=>{
+  const c=makeController();
+  const gate=c.holdNextPost();
+  const posting=c.submit();
+  await gate.whenHeld;
+  c.setWorkspaceRole(false);
+  gate.release();
+  await posting;
+  assert.equal(c.posts.length,1);
+  assert.equal(c.state().overlayActive,false);
+  assert.equal(c.resetCount(),0);
+  assert.equal(c.messages.some(entry=>/saved securely|already saved/i.test(entry.text)),false);
 });
 
 test('confirmed replay remains confirmed when linked-purchase GET fails',async()=>{
