@@ -300,3 +300,47 @@ test('same-context Supplier decoration preserves the panel, but leaving the role
   assert.equal(h.workspace.innerHTML,'','role exit must remove Supplier-only private markup');
   assert.equal(h.workspace.classList.contains('hidden'),true);
 });
+
+test('explicit Supplier business unbind erases settled orders, private modal and cached stock',async()=>{
+  const h=supplierHarness(),loaded=h.open('Orders');
+  h.requests[0].resolve([order('PRIVATE-A-ORDER')]);await loaded;
+  assert.match(h.workspace.innerHTML,/PRIVATE-A-ORDER/);
+  h.node('supModal').innerHTML='PRIVATE-A-NOTE';
+  h.node('supModalBg').classList.remove('hidden');
+  h.seedSupplierInventory([{sku:'PRIVATE-A-SKU'}]);
+  h.business(null);
+  assert.equal(h.workspace.innerHTML,'');
+  assert.equal(h.workspace.classList.contains('hidden'),true);
+  assert.equal(h.node('supModal').innerHTML,'');
+  assert.equal(h.node('supModalBg').classList.contains('hidden'),true);
+  assert.deepEqual([...h.supplierInventory()],[]);
+  assert.equal(h.requests.length,1,'unbinding must not initiate network writes or reads');
+});
+
+test('explicit Supplier business unbind revokes a pending private response',async()=>{
+  const h=supplierHarness(),pending=h.open('Orders');
+  h.business(null);
+  h.requests[0].resolve([order('DESELECTED-A')]);await pending;
+  assert.equal(h.workspace.innerHTML,'');
+  assert.equal(h.workspace.classList.contains('hidden'),true);
+  assert.equal(clearEvents(h),0);
+});
+
+test('silent Supplier binding disappearance fails closed when its pending response returns',async()=>{
+  const h=supplierHarness(),pending=h.open('Orders');
+  h.accounting.activeBusinessId=null;
+  h.requests[0].resolve([order('UNBOUND-PRIVATE-A')]);await pending;
+  assert.equal(h.workspace.innerHTML,'','a no-longer-bound Supplier cannot show A orders');
+  assert.equal(h.workspace.classList.contains('hidden'),true);
+  assert.equal(clearEvents(h),0);
+});
+
+test('unrelated and obsolete unbind notifications preserve the still-selected Supplier business',async()=>{
+  const h=supplierHarness(),loaded=h.open('Orders');
+  h.requests[0].resolve([order('VALID-A')]);await loaded;
+  const html=h.workspace.innerHTML;
+  h.dispatch('abl:business-workspace-changed',{role:'merchant',activeBusinessId:null});
+  h.dispatch('abl:business-workspace-changed',{role:'supplier',activeBusinessId:null});
+  assert.equal(h.workspace.innerHTML,html);
+  assert.equal(h.workspace.classList.contains('hidden'),false);
+});

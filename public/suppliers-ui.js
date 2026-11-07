@@ -699,12 +699,20 @@ function beginSupplierWorkspaceRequest(){
 }
 function supplierWorkspaceRequestIsCurrent(request){
   const businessId=currentSupplierBusinessId();
-  return Boolean(request&&request.generation===supplierWorkspaceGeneration&&supplierWorkspaceOwned
+  const sameSurface=Boolean(request&&request.generation===supplierWorkspaceGeneration&&supplierWorkspaceOwned
     &&supplierProfileIsActive()&&request.profileKey===supplierProfileContext()
     &&request.workspace===supWorkspace&&document.getElementById('supWorkspace')===supWorkspace
-    &&!supWorkspace.classList.contains('hidden')
-    // Accounting hydrates the initial selected business asynchronously without a switch event.
-    &&(!request.businessId||!businessId||request.businessId===businessId));
+    &&!supWorkspace.classList.contains('hidden'));
+  // A pinned Supplier read cannot remain authorized after its business binding
+  // disappears. Without an event, the delayed response itself must purge the
+  // previous private panel, modal and cached Inventory.
+  if(sameSurface&&request.businessId&&!businessId){
+    clearSupplierPrivateSurface();
+    return false;
+  }
+  // Initial accounting hydration may legitimately establish the business
+  // after the request starts; it must not relax an already-pinned A binding.
+  return Boolean(sameSurface&&(!request.businessId||request.businessId===businessId));
 }
 function supplierWorkspaceLoading(section){
   const meta=SUPPLIER_SECTION_META[section]||SUPPLIER_SECTION_META.Today;
@@ -962,9 +970,17 @@ function observeSupplier(){
   document.addEventListener('abl:auth-expired',()=>{clearSupplierPrivateSurface();supMe=null;supplierWorkspaceProfileKey=null},{passive:true});
   document.addEventListener('abl:business-workspace-changed',event=>{
     const detail=event.detail,businessId=currentSupplierBusinessId();
-    if(detail?.role!=='supplier'||!supplierProfileIsActive()||!Number(detail.activeBusinessId)
-      ||Number(detail.activeBusinessId)===supplierWorkspaceBusinessId
-      ||(businessId&&Number(detail.activeBusinessId)!==businessId))return;
+    if(detail?.role!=='supplier'||!supplierProfileIsActive())return;
+    const signalledId=Number(detail.activeBusinessId);
+    if(!Number.isSafeInteger(signalledId)||signalledId<=0){
+      // An explicit Supplier business deselection revokes private panels even
+      // when the last request already settled. Ignore obsolete null events if
+      // accounting still has a valid selected Supplier business.
+      if(!businessId)clearSupplierPrivateSurface();
+      return;
+    }
+    if(signalledId===supplierWorkspaceBusinessId
+      ||(businessId&&signalledId!==businessId))return;
     const visible=supplierWorkspaceOwned&&supWorkspace&&!supWorkspace.classList.contains('hidden');
     invalidateSupplierWorkspace();
     if(visible){const request=beginSupplierWorkspaceRequest();if(request)supplierWorkspaceError(supSupplierSection,new Error('The selected Supplier business changed. Try again to load its current information.'),request)}
