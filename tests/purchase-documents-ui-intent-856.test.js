@@ -490,11 +490,11 @@ test('late old archive completion cannot unlock the replacement Merchant receipt
 test('same-dialog stale archive and linked-purchase responses cannot overwrite the latest refresh',async()=>{
   // Execute the literal shipped functions with deferred responses; unlike a
   // profile-switch-only test, panel and business stay identical throughout.
-  const begin=source.indexOf('  async function linkable(){');
+  const begin=source.indexOf('  async function verifiedMerchantRead(');
   const end=source.indexOf('\n  function readFile(',begin);
   assert.ok(begin>=0&&end>begin,'literal archive and purchase-link controllers exist');
   const pending=[];
-  const api=path=>new Promise((resolve,reject)=>pending.push({path,resolve,reject}));
+  const api=path=>path==='/api/accounting/workspaces'?Promise.resolve({role:'merchant',active_business_id:14}):new Promise((resolve,reject)=>pending.push({path,resolve,reject}));
   const boxes={'#mpdLinkable':{innerHTML:'Loading links'},'#mpdSaved':{innerHTML:'Loading archive'}};
   const panel={};
   const controller=new Function('api','escape','currency','panel','boxes',`
@@ -540,7 +540,7 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
 
 test('late purchase-list GET cannot discard a checkbox selected for a new draft',async()=>{
   // Literal source test; overwriting DOM-like innerHTML clears live checkbox state.
-  const begin=source.indexOf('  async function linkable(){');
+  const begin=source.indexOf('  async function verifiedMerchantRead(');
   const end=source.indexOf('\n  async function archive(){',begin);
   assert.ok(begin>=0&&end>begin);
   let resolveRead,selected=[],writes=0,html='Existing choices';
@@ -553,10 +553,10 @@ test('late purchase-list GET cannot discard a checkbox selected for a new draft'
     set innerHTML(value){html=value;selected=[];writes++}
   };
   const panel={};
-  const api=path=>new Promise(resolve=>{assert.match(path,/linkable-purchases/);resolveRead=resolve});
+  const api=path=>path==='/api/accounting/workspaces'?Promise.resolve({role:'merchant',active_business_id:14}):new Promise(resolve=>{assert.match(path,/linkable-purchases/);resolveRead=resolve});
   const {linkable}=new Function('api','panel','box','escape','currency',`
     const ROOT='/api/procurement/purchase-documents';
-    let overlay=panel,businessId=14,linkableRequest=0;
+    let overlay=panel,businessId=14,linkableRequest=0,archiveRequest=0;
     const $=(selector,root)=>root===panel?box:null;
     ${source.slice(begin,end)}
     return {linkable};
@@ -672,7 +672,7 @@ test('verified server-shape 201 and replay 200 accept unchanged PDF metadata and
 // copied mock. The server shape() returns numeric business_id and id for every
 // private Merchant document. A malformed/mixed 200 must disclose none of it.
 test('private receipt archive rejects foreign-business and malformed HTTP 200 rows before rendering',async()=>{
-  const begin=source.indexOf('  async function archive(){');
+  const begin=source.indexOf('  async function verifiedMerchantRead(');
   const end=source.indexOf('\n  function readFile(',begin);
   assert.ok(begin>=0&&end>begin,'literal archive controller must be present');
   const archiveSource=source.slice(begin,end);
@@ -683,7 +683,7 @@ test('private receipt archive rejects foreign-business and malformed HTTP 200 ro
     const box={innerHTML:'Loading Merchant receipts'},panel={};
     const archive=new Function('api','panel','box',`
       const ROOT='/api/procurement/purchase-documents';
-      let overlay=panel,businessId=14,archiveRequest=0;
+      let overlay=panel,businessId=14,archiveRequest=0,linkableRequest=0;
       const $=(selector,root)=>selector==='#mpdSaved'&&root===panel?box:null;
       const escape=value=>String(value??'').replace(/[&<>"']/g,c=>
         ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -691,6 +691,7 @@ test('private receipt archive rejects foreign-business and malformed HTTP 200 ro
       ${archiveSource}
       return archive;
     `)(async path=>{
+      if(path==='/api/accounting/workspaces')return{role:'merchant',active_business_id:14};
       assert.match(path,/business_id=14$/);
       return response;
     },panel,box);
@@ -721,7 +722,7 @@ test('private receipt archive rejects foreign-business and malformed HTTP 200 ro
 });
 
 test('private linked purchases reject foreign or malformed HTTP rows before rendering',async()=>{
-  const begin=source.indexOf('  async function linkable(){');
+  const begin=source.indexOf('  async function verifiedMerchantRead(');
   const end=source.indexOf('\n  async function archive(){',begin);
   assert.ok(begin>=0&&end>begin);
   const literal=source.slice(begin,end);
@@ -731,13 +732,13 @@ test('private linked purchases reject foreign or malformed HTTP rows before rend
     const box={innerHTML:'Loading',querySelectorAll:()=>[]},panel={};
     const linkable=new Function('api','panel','box',`
       const ROOT='/api/procurement/purchase-documents';
-      let overlay=panel,businessId=14,linkableRequest=0;
+      let overlay=panel,businessId=14,linkableRequest=0,archiveRequest=0;
       const $=(selector,root)=>selector==='#mpdLinkable'&&root===panel?box:null;
       const escape=value=>String(value??'');
       const currency=value=>String(value??'');
       ${literal}
       return linkable;
-    `)(async path=>{assert.match(path,/business_id=14$/);return response},panel,box);
+    `)(async path=>{if(path==='/api/accounting/workspaces')return{role:'merchant',active_business_id:14};assert.match(path,/business_id=14$/);return response},panel,box);
     let error=null;try{await linkable()}catch(e){error=e}
     return {error,html:box.innerHTML};
   };
@@ -760,4 +761,97 @@ test('private linked purchases reject foreign or malformed HTTP rows before rend
     assert.doesNotMatch(denied.html,/PRIVATE FOREIGN PURCHASE|value="51"/);
     assert.match(denied.html,/Could not verify the Merchant purchase list/);
   }
+});
+
+test('silent Merchant A to B switch during archive GET clears both private lists',async()=>{
+  const begin=source.indexOf('  async function verifiedMerchantRead(');
+  const end=source.indexOf('\n  function readFile(',begin);
+  assert.ok(begin>=0&&end>begin);
+  const boxes={'#mpdSaved':{innerHTML:'OLD A FILE LINK'},
+    '#mpdLinkable':{innerHTML:'OLD A PURCHASE LIST'}},panel={};
+  let selected=14,release,workspaceChecks=0;
+  const api=path=>{
+    if(path==='/api/accounting/workspaces'){
+      workspaceChecks++;return Promise.resolve({role:'merchant',active_business_id:selected});
+    }
+    if(path==='/api/procurement/purchase-documents?business_id=14')
+      return new Promise(resolve=>{release=resolve});
+    throw Error('Unexpected private URL '+path);
+  };
+  const ui=new Function('api','panel','boxes',`
+    const ROOT='/api/procurement/purchase-documents';
+    let overlay=panel,businessId=14,archiveRequest=0,linkableRequest=0;
+    const $=key=>boxes[key];const escape=v=>String(v);const currency=v=>String(v);
+    ${source.slice(begin,end)}
+    return{archive};
+  `)(api,panel,boxes);
+  const pending=ui.archive();
+  selected=15; // The workspace switches without another loader/profile event.
+  release({documents:[{id:71,business_id:14,document_kind:'invoice',issuer_name:'FOREIGN A RECEIPT',
+    issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true}]});
+  await assert.rejects(pending,/workspace changed/);
+  assert.equal(workspaceChecks,1);
+  assert.doesNotMatch(boxes['#mpdSaved'].innerHTML,/FOREIGN A RECEIPT|OLD A FILE LINK|\/71\/file/);
+  assert.doesNotMatch(boxes['#mpdLinkable'].innerHTML,/OLD A PURCHASE LIST/);
+  assert.match(boxes['#mpdSaved'].innerHTML,/Close and reopen/);
+});
+
+test('silent Merchant A to B switch during linkable GET hides private purchase names',async()=>{
+  const begin=source.indexOf('  async function verifiedMerchantRead(');
+  const end=source.indexOf('\n  function readFile(',begin);
+  const boxes={'#mpdSaved':{innerHTML:'OLD PRIVATE A RECEIPT'},
+    '#mpdLinkable':{innerHTML:'OLD PRIVATE A STOCK',querySelectorAll:()=>[]}},panel={};
+  let selected=14,release,checks=0;
+  const api=path=>{
+    if(path==='/api/accounting/workspaces'){
+      checks++;return Promise.resolve({role:'merchant',active_business_id:selected});
+    }
+    if(path==='/api/procurement/purchase-documents/linkable-purchases?business_id=14')
+      return new Promise(resolve=>{release=resolve});
+    throw Error('Unexpected private URL '+path);
+  };
+  const ui=new Function('api','panel','boxes',`
+    const ROOT='/api/procurement/purchase-documents';
+    let overlay=panel,businessId=14,archiveRequest=0,linkableRequest=0;
+    const $=key=>boxes[key];const escape=v=>String(v);const currency=v=>String(v);
+    ${source.slice(begin,end)}
+    return{linkable};
+  `)(api,panel,boxes);
+  const pending=ui.linkable();selected=15;
+  release({purchases:[{id:51,business_id:14,inventory_name:'PRIVATE A ITEM',
+    total_cost:10,created_at:'2026-11-07',purchase_quantity:2,purchase_unit:'kg'}]});
+  await assert.rejects(pending,/workspace changed/);
+  assert.equal(checks,1);
+  assert.doesNotMatch(boxes['#mpdLinkable'].innerHTML,/PRIVATE A ITEM|OLD PRIVATE A STOCK/);
+  assert.doesNotMatch(boxes['#mpdSaved'].innerHTML,/OLD PRIVATE A RECEIPT/);
+  assert.match(boxes['#mpdLinkable'].innerHTML,/Close and reopen/);
+});
+
+test('legitimate selected Merchant can still render archive and linkable purchases',async()=>{
+  const begin=source.indexOf('  async function verifiedMerchantRead(');
+  const end=source.indexOf('\n  function readFile(',begin);
+  const boxes={'#mpdSaved':{innerHTML:''},
+    '#mpdLinkable':{innerHTML:'',querySelectorAll:()=>[]}},panel={};
+  let checked=0;
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces'){
+      checked++;return{role:'merchant',active_business_id:'14'};
+    }
+    if(path.includes('/linkable-purchases?'))return{purchases:[{id:51,business_id:14,
+      inventory_name:'My sugar',total_cost:10,created_at:'2026-11-07',
+      purchase_quantity:2,purchase_unit:'kg'}]};
+    return{documents:[{id:71,business_id:14,document_kind:'invoice',issuer_name:'My receipt',
+      issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true}]};
+  };
+  const ui=new Function('api','panel','boxes',`
+    const ROOT='/api/procurement/purchase-documents';
+    let overlay=panel,businessId=14,archiveRequest=0,linkableRequest=0;
+    const $=key=>boxes[key];const escape=v=>String(v);const currency=v=>String(v);
+    ${source.slice(begin,end)}
+    return{archive,linkable};
+  `)(api,panel,boxes);
+  await Promise.all([ui.archive(),ui.linkable()]);
+  assert.equal(checked,2);
+  assert.match(boxes['#mpdSaved'].innerHTML,/My receipt/);
+  assert.match(boxes['#mpdLinkable'].innerHTML,/My sugar/);
 });

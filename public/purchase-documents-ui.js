@@ -97,6 +97,35 @@
     $('#mpdChosenFile',overlay).textContent=file.name+' · '+Math.round(file.size/1024)+' KB';
     message('');
   }
+  // A private read belongs to the currently selected Merchant when it paints,
+  // even if no profile-state event/new loader fired during its pending GET.
+  async function verifiedMerchantRead(panel,biz,isCurrent){
+    const revoke=()=>{
+      // The companion list can contain previously rendered private A data.
+      for(const selector of ['#mpdSaved','#mpdLinkable']){
+        const box=$(selector,panel);
+        if(box)box.innerHTML='<p class="mpdHelp">Merchant workspace changed or could not be verified. Close and reopen Purchase receipts.</p>';
+      }
+      archiveRequest++;
+      linkableRequest++;
+    };
+    let context;
+    try{context=await api('/api/accounting/workspaces')}
+    catch(error){
+      if(panel!==overlay||biz!==businessId||!isCurrent())return false;
+      revoke();
+      throw new Error('Merchant workspace verification failed. Close and reopen Purchase receipts.');
+    }
+    if(panel!==overlay||biz!==businessId||!isCurrent())return false;
+    const active=context?.active_business_id;
+    const valid=(typeof active==='number'&&Number.isSafeInteger(active)&&active>0)||
+      (typeof active==='string'&&/^[1-9][0-9]*$/.test(active)&&Number.isSafeInteger(Number(active)));
+    if(context?.role!=='merchant'||!valid||Number(active)!==biz){
+      revoke();
+      throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
+    }
+    return true;
+  }
   async function linkable(){
     const panel=overlay,biz=businessId;
     if(!panel||!biz)return;
@@ -110,7 +139,9 @@
       if(panel!==overlay||biz!==businessId||request!==linkableRequest)return null;
       throw error;
     });
-    if(!data||panel!==overlay||biz!==businessId||request!==linkableRequest||!box||hasUnsavedSelection())return;
+    if(!data||panel!==overlay||biz!==businessId||request!==linkableRequest||!box)return;
+    if(!await verifiedMerchantRead(panel,biz,()=>request===linkableRequest))return;
+    if(panel!==overlay||biz!==businessId||request!==linkableRequest||hasUnsavedSelection())return;
     // Server rows carry p.business_id. Never render a private purchase based
     // only on the query parameter; validate every row before any rendering.
     if(!Array.isArray(data.purchases)||data.purchases.some(p=>
@@ -136,6 +167,8 @@
       throw error;
     });
     if(!data||panel!==overlay||biz!==businessId||request!==archiveRequest||!box)return;
+    if(!await verifiedMerchantRead(panel,biz,()=>request===archiveRequest))return;
+    if(panel!==overlay||biz!==businessId||request!==archiveRequest)return;
     // A request URL with a Merchant business parameter does not establish
     // provenance for each returned private record. Reject an entire mixed
     // or malformed archive before rendering a row or a file download link.
