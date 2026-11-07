@@ -143,6 +143,30 @@
       reader.readAsDataURL(file);
     });
   }
+  // The route supplies this literal document shape on 201 and same-key 200.
+  // An unverified 2xx cannot release the only stable retry key.
+  function acknowledgedDocumentMatches(result,payload){
+    const doc=result?.document;
+    if(!doc||typeof doc!=='object'||Array.isArray(doc)||
+       (result.already_saved!==true&&result.already_saved!==false))return false;
+    const cents=value=>{
+      if(value==null)return null;
+      if((typeof value!=='string'&&typeof value!=='number')||
+        !/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(String(value)))return false;
+      const [whole,part='']=String(value).split('.');
+      return BigInt(whole)*100n+BigInt(part.padEnd(2,'0')||'0');
+    };
+    const expected=payload.gross_amount===''?null:cents(payload.gross_amount),saved=cents(doc.gross_amount);
+    const same=name=>typeof doc[name]==='string'&&doc[name]===String(payload[name]??'').trim();
+    const date=typeof doc.issue_date==='string'&&
+      (doc.issue_date===payload.issue_date||doc.issue_date===payload.issue_date+'T00:00:00.000Z');
+    return typeof doc.id==='number'&&Number.isSafeInteger(doc.id)&&doc.id>0&&
+      typeof doc.business_id==='number'&&doc.business_id===payload.business_id&&
+      doc.document_kind===payload.document_kind&&doc.currency_code===payload.currency_code&&date&&
+      same('issuer_name')&&same('document_number')&&same('note')&&
+      expected!==false&&saved!==false&&expected===saved&&
+      typeof doc.has_attachment==='boolean'&&doc.has_attachment===Boolean(payload.data_url);
+  }
   async function save(event){
     event.preventDefault();
     // A disabled submit button does not cancel a second submit event already
@@ -204,6 +228,9 @@
       pendingSubmitted=true;
       const result=await api(ROOT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(panel!==overlay||biz!==businessId)return;
+      if(!acknowledgedDocumentMatches(result,payload)){
+        throw new Error('Purchase document acknowledgement did not match this receipt. Original retry key is retained; check Saved documents before resubmitting or changing the draft.');
+      }
       // A confirmed old receipt must never erase details/file for a newer
       // receipt the operator entered while its POST was still in flight.
       const afterPost=new FormData(form);

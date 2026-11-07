@@ -8,7 +8,9 @@ const source=readFileSync(new URL('../public/purchase-documents-ui.js',import.me
 const start=source.indexOf('  async function save(event){');
 const end=source.indexOf('\n  function close(',start);
 assert.ok(start>=0&&end>start,'literal shipped save controller must be present');
-const saveSource=source.slice(start,end);
+const helperStart=source.indexOf('  function acknowledgedDocumentMatches(result,payload){');
+assert.ok(helperStart>=0&&helperStart<start,'literal shipped acknowledgement checker exists');
+const saveSource=source.slice(helperStart,end);
 const closeStart=source.indexOf('  function close(',end);
 const closeEnd=source.indexOf('\n  async function open(){',closeStart);
 assert.ok(closeStart>=0&&closeEnd>closeStart,'literal shipped close controller must be present');
@@ -25,6 +27,7 @@ function makeController(){
   const panel={removed:false,remove(){this.removed=true},querySelectorAll:()=>selectedLinks.map(value=>({value}))};
   const messages=[],posts=[];
   let keys=0,workspaceIsMerchant=true,failPostOnce=false,failFileOnce=false;
+  let nextPostResponse; const persisted=new Map();
   let workspaceChecks=0,changeDuringVerify=null,changeDuringRead=null;
   let failArchiveOnce=false,failLinkableOnce=false,confirmResult=false,confirmationCount=0;
   let linkableRefreshes=0;
@@ -47,12 +50,24 @@ function makeController(){
     assert.equal(path,'/api/procurement/purchase-documents');
     const payload=JSON.parse(options.body);
     posts.push(payload);
+    const wasSaved=persisted.has(payload.client_request_key);
+    if(!wasSaved)persisted.set(payload.client_request_key,100+persisted.size);
+    const realShape={already_saved:wasSaved,document:{
+      id:persisted.get(payload.client_request_key),business_id:payload.business_id,
+      document_kind:payload.document_kind,issue_date:payload.issue_date,
+      issuer_name:payload.issuer_name.trim(),document_number:payload.document_number.trim(),
+      currency_code:payload.currency_code,note:payload.note.trim(),
+      gross_amount:payload.gross_amount===''?null:Number(payload.gross_amount),
+      has_attachment:Boolean(payload.data_url)
+    }};
     if(holdPost){
       holdPost=false;
       await new Promise(resolve=>{releasePost=resolve;notifyPostHeld?.()});
     }
     if(failPostOnce){failPostOnce=false;throw new Error('Connection lost after submit');}
-    return {already_saved:posts.length>1};
+    const override=nextPostResponse; nextPostResponse=undefined;
+    return override===undefined?realShape:
+      typeof override==='function'?override(payload,realShape):override;
   };
   const FakeFormData=function(){this.get=name=>fields[name]??null};
   const fn=new Function('api','FormData','requestKey','today','message','archive','linkable','readFile','window','document',
@@ -83,6 +98,7 @@ function makeController(){
     {body:{style:{overflow:'hidden'}}},form,button,receiptLabel,panel);
   return{...controller,fields,posts,messages,
     failNextPost:()=>{failPostOnce=true},failNextFile:()=>{failFileOnce=true},
+    replyNextPost:response=>{nextPostResponse=response},
     failNextArchive:()=>{failArchiveOnce=true},failNextLinkable:()=>{failLinkableOnce=true},
     setWorkspaceRole:merchant=>{workspaceIsMerchant=merchant},keyCount:()=>keys,
     resetCount:()=>resetCount,linkableRefreshes:()=>linkableRefreshes,selectedLinks:()=>selectedLinks,
@@ -600,4 +616,53 @@ test('clearing either native receipt picker revokes the previously selected priv
   controller.selectFile(nextReceipt);
   assert.equal(controller.selected(),nextReceipt,'valid replacement still works');
   assert.match(display.textContent,/new-receipt.jpg/);
+});
+
+test('invalid 2xx receipt acknowledgements retain one original retry key and cannot erase draft',async()=>{
+  const cases=[
+    ()=>({}),(_p,g)=>({...g,document:undefined}),
+    (_p,g)=>({...g,already_saved:'true'}),
+    (_p,g)=>({...g,document:{...g.document,id:0}}),
+    (_p,g)=>({...g,document:{...g.document,business_id:99}}),
+    (_p,g)=>({...g,document:{...g.document,gross_amount:30.01}}),
+    (_p,g)=>({...g,document:{...g.document,issuer_name:'Wrong shop'}}),
+    (_p,g)=>({...g,document:{...g.document,issue_date:'2026-11-05'}}),
+    (_p,g)=>({...g,document:{...g.document,has_attachment:true}}),
+    (_p,g)=>({...g,document:{...g.document,currency_code:'USD'}})
+  ];
+  for(const bad of cases){
+    const c=makeController();
+    c.replyNextPost(bad);
+    await c.submit();
+    assert.equal(c.posts.length,1);
+    assert.equal(c.state().pendingSubmitted,true);
+    assert.equal(c.resetCount(),0);
+    assert.match(c.messages.at(-1).text,/acknowledgement did not match/);
+    const key=c.state().pendingKey;
+    assert.equal(key,c.posts[0].client_request_key);
+    c.fields.gross_amount='31.00'; await c.submit();
+    assert.equal(c.posts.length,1,'edited draft cannot resubmit an uncertain original');
+    c.fields.gross_amount='30.00'; await c.submit();
+    assert.equal(c.posts[1].client_request_key,key,'manual retry uses original intent');
+    assert.equal(c.state().pendingSubmitted,false);
+    assert.equal(c.resetCount(),1);
+  }
+});
+
+test('verified server-shape 201 and replay 200 accept unchanged PDF metadata and optional blank total',async()=>{
+  const c=makeController();
+  c.fields.issuer_name=' Market '; c.fields.document_number=' R-123 ';
+  c.fields.note=' Scanned receipt '; c.fields.gross_amount='';
+  c.setFile({name:'receipt.pdf'});
+  await c.submit();
+  assert.equal(c.posts.length,1);
+  assert.equal(c.state().pendingSubmitted,false);
+  assert.equal(c.resetCount(),1);
+  const retry=makeController();
+  retry.failNextPost(); retry.setFile({name:'receipt.pdf'});
+  await retry.submit();
+  const key=retry.state().pendingKey;
+  await retry.submit();
+  assert.equal(retry.posts[1].client_request_key,key);
+  assert.equal(retry.state().pendingSubmitted,false);
 });
