@@ -36,7 +36,24 @@ export function createInventoryPurchaseIntentHttpHandlers({
         throw httpError('Purchase instructions must be a JSON object',
           'INVENTORY_PURCHASE_INTENT_INVALID',400);
       }
+      // Capture the economic instructions BEFORE the first asynchronous gap.
+      // A later replacement of req.body must never let the writer post a
+      // different stock/expense payload than the intent's original fingerprint.
+      const initiatingPayload=req.body;
+      const initiatingFingerprint=inventoryPurchaseFingerprint(initiatingPayload);
+      const assertInitiatingPayloadUnchanged=()=>{
+        try{
+          if(req.body!==initiatingPayload||
+             inventoryPurchaseFingerprint(initiatingPayload)!==initiatingFingerprint){
+            throw new Error('Request body replaced or mutated');
+          }
+        }catch{
+          throw httpError('Purchase instructions changed during receiving; reopen the original operation',
+            'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
+        }
+      };
       const origin=await authorizeOrigin(req);
+      assertInitiatingPayloadUnchanged();
       const businessId=identifier(origin?.businessId);
       const accountId=identifier(origin?.accountId);
       if(origin?.role!=='merchant'||!businessId||!accountId){
@@ -46,21 +63,27 @@ export function createInventoryPurchaseIntentHttpHandlers({
       // Never infer the intended business from a new/current preference after
       // transport. The originating business is explicit and must still match
       // the authenticated, currently bound Merchant business.
-      if(!identifier(req.body.origin_business_id)||
-         identifier(req.body.origin_business_id)!==businessId){
+      if(!identifier(initiatingPayload.origin_business_id)||
+         identifier(initiatingPayload.origin_business_id)!==businessId){
         throw httpError('Purchase originated in a different Merchant business',
           'INVENTORY_PURCHASE_INTENT_CONFLICT',409);
       }
       const intentKey=req.get('Idempotency-Key');
-      // Validate before obtaining a database connection. Core repeats this
-      // check after every asynchronous transaction boundary.
-      inventoryPurchaseFingerprint(req.body);
+      // Reject edits/replacements even after authorization and all subsequent
+      // asynchronous DB waits; the coordinator separately enforces this on its
+      // captured body at each transaction boundary.
+      assertInitiatingPayloadUnchanged();
       const guardedContext={
-        businessId,accountId,intentKey,payload:req.body,
-        verifyCurrentMerchantAuthority:async(tx,claim)=>
-          (await verifyCurrentMerchantAuthority(tx,claim,req))===true
+        businessId,accountId,intentKey,payload:initiatingPayload,
+        verifyCurrentMerchantAuthority:async(tx,claim)=>{
+          assertInitiatingPayloadUnchanged();
+          const allowed=await verifyCurrentMerchantAuthority(tx,claim,req);
+          assertInitiatingPayloadUnchanged();
+          return allowed===true;
+        }
       };
       client=await pool.connect();
+      assertInitiatingPayloadUnchanged();
       if(readOnly){
         const result=await inspectInventoryPurchaseIntent(client,guardedContext);
         if(result.kind==='unconfirmed'){
@@ -71,7 +94,7 @@ export function createInventoryPurchaseIntentHttpHandlers({
           purchase_id:result.purchaseId,original_response:result.response});
       }
       const result=await executeInventoryPurchaseIntent(client,guardedContext,
-        tx=>createPurchase(tx,Object.freeze({businessId,accountId,intentKey}),req.body));
+        tx=>createPurchase(tx,Object.freeze({businessId,accountId,intentKey}),initiatingPayload));
       return res.status(result.kind==='new'?201:200).json(result.response);
     }catch(error){
       if(error?.code==='INVENTORY_PURCHASE_INTENT_BEGIN_UNKNOWN'||

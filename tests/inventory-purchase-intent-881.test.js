@@ -1053,3 +1053,83 @@ test('HTTP purchase and inspection retire a pooled client when BEGIN acknowledge
     }
   }
 });
+
+test('HTTP writer uses the initiating purchase body and rejects async body replacement/mutation',async()=>{
+  // The request body is shared mutable JavaScript state. The adapter must
+  // capture both its object identity and fingerprint before authorizeOrigin
+  // or pool.connect can await; its writer must never read a newer req.body.
+  // All test identities and PostgreSQL query results below are synthetic.
+  for(const phase of ['authorize-replace','connect-replace','connect-mutate','writer-replace','unchanged']){
+    const original={...payload,origin_business_id:1};
+    const req={body:original,get(header){assert.equal(header,'Idempotency-Key');return key}};
+    const statements=[],releases=[],writtenBodies=[];
+    let poolConnects=0,grants=0;
+    const client={
+      async query(sql){
+        if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK'){
+          statements.push(sql);return{rowCount:0,rows:[]};
+        }
+        if(sql.includes('INSERT INTO inventory_purchase_intents')){
+          statements.push('claim');return{rowCount:1,rows:[{intent_key:key}]};
+        }
+        if(sql.includes('pg_advisory_xact_lock')){
+          statements.push('business-lock');return{rowCount:1,rows:[]};
+        }
+        if(sql.includes('UPDATE inventory_purchase_intents')){
+          statements.push('finish');return{rowCount:1,rows:[{purchase_id:42}]};
+        }
+        throw Error('Unexpected SQL: '+sql);
+      },
+      release(...args){releases.push(args)}
+    };
+    const handlers=createInventoryPurchaseIntentHttpHandlers({
+      pool:{async connect(){
+        poolConnects++;
+        if(phase==='connect-replace')req.body={...original,total_cost:'999.00'};
+        if(phase==='connect-mutate')original.total_cost='999.00';
+        return client;
+      }},
+      authorizeOrigin:async()=>{
+        if(phase==='authorize-replace')req.body={...original,total_cost:'999.00'};
+        return{role:'merchant',businessId:1,accountId:2};
+      },
+      verifyCurrentMerchantAuthority:async()=>{grants++;return true},
+      createPurchase:async(_tx,context,body)=>{
+        assert.equal(context.businessId,'1');
+        assert.equal(context.accountId,'2');
+        writtenBodies.push(body);
+        assert.equal(body,original,'writer must use the original captured body');
+        if(phase==='writer-replace')req.body={...original,total_cost:'999.00'};
+        return{purchaseId:42,response:{purchase:{id:42},expense:{total:'12.50'}}};
+      }
+    });
+    const response={statusCode:null,body:null,
+      status(code){this.statusCode=code;return this},
+      json(body){this.body=body;return this}};
+    const nextErrors=[];
+    await handlers.purchase(req,response,error=>nextErrors.push(error));
+    assert.deepEqual(nextErrors,[],phase);
+    if(phase==='unchanged'){
+      assert.equal(response.statusCode,201);
+      assert.equal(writtenBodies.length,1);
+      assert.deepEqual(statements.slice(-2),['finish','COMMIT']);
+      assert.ok(grants>=2);
+    }else{
+      assert.equal(response.statusCode,409,phase);
+      assert.equal(response.body.code,'INVENTORY_PURCHASE_INTENT_CONFLICT',phase);
+      assert.ok(!statements.includes('COMMIT'),'changed body never committed: '+phase);
+      if(phase==='authorize-replace'){
+        assert.equal(poolConnects,0);
+        assert.equal(writtenBodies.length,0);
+      }else if(phase==='writer-replace'){
+        assert.equal(writtenBodies.length,1);
+        assert.equal(statements.at(-1),'ROLLBACK','mid-write replacement rolls back');
+      }else{
+        assert.equal(writtenBodies.length,0,'no financial callback after changed body');
+        assert.equal(statements.length,0,'reject before BEGIN when changed during connect');
+      }
+    }
+    assert.equal(releases.length,poolConnects,'each acquired client released once');
+    for(const args of releases)assert.equal(args.length,0,'healthy client returned after confirmed rollback');
+  }
+});
