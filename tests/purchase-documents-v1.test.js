@@ -441,7 +441,12 @@ test('uncertain purchase-receipt COMMIT preserves the original evidence; definit
     const calls=[];
     const client={
       query:async(sql)=>{
-        if(sql==='BEGIN'||sql==='ROLLBACK'){calls.push(sql);return{rowCount:0,rows:[]}}
+        if(sql==='BEGIN'||sql==='ROLLBACK'){
+          calls.push(sql);
+          if(failure==='begin'&&sql==='BEGIN')throw new Error('BEGIN acknowledgement lost');
+          if(failure==='rollback'&&sql==='ROLLBACK')throw new Error('ROLLBACK acknowledgement lost');
+          return{rowCount:0,rows:[]};
+        }
         if(sql==='COMMIT'){
           calls.push('COMMIT');
           if(failure==='commit')throw new Error('COMMIT acknowledgement lost');
@@ -452,7 +457,7 @@ test('uncertain purchase-receipt COMMIT preserves the original evidence; definit
         }
         if(sql.includes('INSERT INTO merchant_purchase_documents(')){
           calls.push('insert');
-          if(failure==='insert')throw new Error('definite insert failure');
+          if(failure==='insert'||failure==='rollback')throw new Error('definite insert failure');
           return{rowCount:1,rows:[{
             id:99,business_id:14,document_kind:'purchase_receipt',
             issuer_name:'Local market',document_number:'',issue_date:'2026-10-30',
@@ -462,7 +467,7 @@ test('uncertain purchase-receipt COMMIT preserves the original evidence; definit
         }
         throw new Error('Unexpected SQL '+sql);
       },
-      release:()=>calls.push('release')
+      release:err=>calls.push(err?'release-unsafe':'release')
     };
     const pool={
       query:async()=>({rowCount:0,rows:[]}),
@@ -475,8 +480,8 @@ test('uncertain purchase-receipt COMMIT preserves the original evidence; definit
       async()=>{calls.push('delete')}
     );
     const operation=save(pool,{actorAccountId:9,record});
-    if(failure==='commit'||failure==='insert'){
-      await assert.rejects(operation,new RegExp(failure==='commit'?'acknowledgement lost':'insert failure'));
+    if(['commit','insert','begin','rollback'].includes(failure)){
+      await assert.rejects(operation,new RegExp(['commit','begin'].includes(failure)?'acknowledgement lost':'insert failure'));
     }else{
       const result=await operation;
       assert.equal(result.already_saved,false);
@@ -488,11 +493,62 @@ test('uncertain purchase-receipt COMMIT preserves the original evidence; definit
   assert.ok(ambiguous.includes('bind')&&ambiguous.includes('COMMIT'));
   assert.ok(ambiguous.includes('ROLLBACK'),'rollback may be attempted but does not prove commit was undone');
   assert.ok(!ambiguous.includes('delete'),'original cannot be tombstoned after ambiguous COMMIT');
+  assert.ok(ambiguous.includes('release-unsafe'),'ambiguous COMMIT must destroy pooled client');
   const definite=await scenario('insert');
   assert.ok(definite.includes('ROLLBACK')&&definite.includes('delete'));
   assert.ok(!definite.includes('COMMIT'));
+  assert.ok(definite.includes('release'),'confirmed ROLLBACK allows connection reuse');
+  const unknownBegin=await scenario('begin');
+  assert.ok(unknownBegin.includes('release-unsafe'),'unknown BEGIN must evict pooled client');
+  const badRollback=await scenario('rollback');
+  assert.ok(badRollback.includes('release-unsafe'),'failed ROLLBACK must evict pooled client');
   const successful=await scenario('ok');
   assert.ok(successful.includes('COMMIT')&&!successful.includes('delete'));
+  assert.ok(successful.includes('release'));
+});
+
+
+test('receipt replay evicts a pooled client after uncertain BEGIN, COMMIT or ROLLBACK',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const crypto=(await import('node:crypto')).default;
+  const record=normalizeMerchantPurchaseDocument({...base(),links:[]});
+  const fingerprint=crypto.createHash('sha256').update(JSON.stringify({
+    kind:record.kind,issueDate:record.issueDate,currency:record.currency,amount:record.amount,
+    issuer:record.issuer,number:record.documentNumber,note:record.note,
+    links:[],fileName:record.fileName,fileDigest:''
+  })).digest('hex');
+  for(const failure of ['begin','commit','rollback','ok']){
+    let released=null;
+    const row={id:23,business_id:14,request_fingerprint:failure==='rollback'?'not-the-same':fingerprint,
+      document_kind:'purchase_receipt',issuer_name:'Local market',document_number:'',
+      issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'145.25',note:''};
+    const client={
+      query:async(sql)=>{
+        if(sql==='BEGIN'){
+          if(failure==='begin')throw new Error('BEGIN acknowledgement lost');
+          return{rowCount:0,rows:[]};
+        }
+        if(sql==='COMMIT'){
+          if(failure==='commit')throw new Error('COMMIT acknowledgement lost');
+          return{rowCount:0,rows:[]};
+        }
+        if(sql==='ROLLBACK'){
+          if(failure==='rollback')throw new Error('ROLLBACK acknowledgement lost');
+          return{rowCount:0,rows:[]};
+        }
+        if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+        if(sql.includes('SELECT * FROM merchant_purchase_documents'))return{rowCount:1,rows:[row]};
+        throw new Error('Unexpected replay SQL '+sql);
+      },
+      release:error=>{released=error||'healthy';}
+    };
+    const pool={query:async()=>({rowCount:1,rows:[row]}),connect:async()=>client};
+    const operation=merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{actorAccountId:9,record});
+    if(failure==='ok')assert.equal((await operation).already_saved,true);
+    else await assert.rejects(operation,/acknowledgement lost|different receipt/);
+    assert.equal(failure==='ok'?released==='healthy':released instanceof Error,true,
+      failure+' must release with the correct pool health state');
+  }
 });
 
 test('private Merchant purchase-document HTTP routes refuse stale conditional 304 and forbid caching',async()=>{

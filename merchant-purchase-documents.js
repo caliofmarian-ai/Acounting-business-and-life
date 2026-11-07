@@ -207,10 +207,11 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
     // The initial HTTP Merchant check may have happened before a concurrent grant
     // revocation. A replay also returns private document metadata: re-authorize
     // under a transaction-held grant lock, not just the initial unlocked lookup.
-    let replayClient=null;
+    let replayClient=null,replayTxStarted=false,replayCommitAttempted=false,replayConnectionUnsafe=false;
     try{
       replayClient=await pool.connect();
-      await replayClient.query('BEGIN');
+      try{await replayClient.query('BEGIN');replayTxStarted=true}
+      catch(e){replayConnectionUnsafe=true;throw e}
       await lockMerchantDocumentWriteAuthority(replayClient,actorAccountId,record.businessId);
       const current=await replayClient.query(
         'SELECT * FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',
@@ -218,22 +219,34 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
       );
       if(current.rowCount){
         if(!sameReceiptFingerprint(current.rows[0].request_fingerprint))throw error(409,'This request key already belongs to a different receipt');
+        replayCommitAttempted=true;
         await replayClient.query('COMMIT');
+        replayTxStarted=false;
         return{document:shape(current.rows[0]),already_saved:true};
       }
       // If the preliminary record disappeared, use the normal, guarded create path.
+      replayCommitAttempted=true;
       await replayClient.query('COMMIT');
+      replayTxStarted=false;
     }catch(e){
-      if(replayClient)await replayClient.query('ROLLBACK').catch(()=>{});
+      // COMMIT acknowledgement may be lost after a durable commit; an uncertain
+      // BEGIN or failed ROLLBACK can leave a transaction open. Evict the client.
+      if(replayCommitAttempted)replayConnectionUnsafe=true;
+      if(replayTxStarted){
+        try{await replayClient.query('ROLLBACK');replayTxStarted=false}
+        catch{replayConnectionUnsafe=true}
+      }
       throw e;
-    }finally{replayClient?.release()}
+    }finally{
+      replayClient?.release(replayConnectionUnsafe?new Error('UNSAFE_PURCHASE_RECEIPT_DB_CLIENT'):undefined);
+    }
   }
 
   await validatePurchaseLinks(pool,record.businessId,record.links);
   let evidence=null,client=null;
   // An error from COMMIT can mean the database committed but its acknowledgement
   // was lost. Never tombstone the only original of a possibly committed receipt.
-  let newReceiptInserted=false,commitAttempted=false;
+  let newReceiptInserted=false,commitAttempted=false,transactionStarted=false,connectionUnsafe=false;
   try{
     if(record.dataUrl){
       evidence=await storePrivateEvidence(pool,{
@@ -245,7 +258,8 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
       });
     }
     client=await pool.connect();
-    await client.query('BEGIN');
+    try{await client.query('BEGIN');transactionStarted=true}
+    catch(e){connectionUnsafe=true;throw e}
     await lockMerchantDocumentWriteAuthority(client,actorAccountId,record.businessId);
     await validatePurchaseLinks(client,record.businessId,record.links,{lockRows:true});
     const added=await client.query(`
@@ -267,7 +281,9 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
         [record.businessId,record.key]
       );
       if(!sameReceiptFingerprint(saved.rows[0]?.request_fingerprint))throw error(409,'This request key already belongs to a different receipt');
+      commitAttempted=true;
       await client.query('COMMIT');
+      transactionStarted=false;
       if(evidence){
         // ON CONFLICT resolved to a previously committed receipt. Failure to
         // delete this separate, unused upload cannot undo that committed
@@ -295,16 +311,23 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
     });
     commitAttempted=true;
     await client.query('COMMIT');
+    transactionStarted=false;
     return{document:shape(document),already_saved:false};
   }catch(e){
-    if(client)await client.query('ROLLBACK').catch(()=>{});
+    if(commitAttempted)connectionUnsafe=true;
+    if(transactionStarted){
+      try{await client.query('ROLLBACK');transactionStarted=false}
+      catch{connectionUnsafe=true}
+    }
     // COMMIT status is unknowable after a lost acknowledgement. Preserve scanned
     // evidence for reconciliation/replay rather than deleting a committed original.
     if(evidence&&!(newReceiptInserted&&commitAttempted)){
       await deletePrivateEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'failed_purchase_receipt_cleanup'}).catch(()=>{});
     }
     throw e;
-  }finally{client?.release()}
+  }finally{
+    client?.release(connectionUnsafe?new Error('UNSAFE_PURCHASE_RECEIPT_DB_CLIENT'):undefined);
+  }
 }
 
 export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity}){
