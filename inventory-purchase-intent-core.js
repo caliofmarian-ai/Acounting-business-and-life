@@ -174,8 +174,12 @@ function requireLosslessPurchaseSnapshot(value,depth=0,ancestors=new WeakSet()){
        Object.hasOwn(Object.prototype,'toJSON'))throw invalid();
     return;
   }
-  if(!Array.isArray(value)&&Object.getPrototypeOf(value)!==Object.prototype&&
-     Object.getPrototypeOf(value)!==null)throw invalid();
+  // Array.isArray also accepts Array subclasses and arrays with an altered
+  // prototype. Their inherited toJSON can silently erase lot/expense rows.
+  if(Array.isArray(value)){
+    if(Object.getPrototypeOf(value)!==Array.prototype)throw invalid();
+  }else if(Object.getPrototypeOf(value)!==Object.prototype&&
+           Object.getPrototypeOf(value)!==null)throw invalid();
   // JSON.stringify invokes inherited toJSON as well as own serializers.
   // Otherwise a prototype extension can silently strip a valid purchase's
   // stock, lot or expense fields even though every own field passed validation.

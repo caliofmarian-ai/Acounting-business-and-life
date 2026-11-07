@@ -307,6 +307,30 @@ test('inherited JSON serializers cannot rewrite a committed purchase evidence sn
   assert.equal(queries,0,'Inherited serializers must be rejected before any financial SQL');
 });
 
+test('response evidence rejects non-native Array prototypes that erase lot or expense rows',async()=>{
+  const ctx={businessId:1,accountId:2,intentKey:key,purchaseId:44};
+  let queries=0;
+  const noWrites={async query(){queries++;throw Error('Lossy financial response reached SQL')}};
+  for(const field of ['lot_allocations','expenses']){
+    const rows=[{lot_id:15,amount:'12.50'}];
+    const inherited=Object.create(Array.prototype);
+    Object.defineProperty(inherited,'toJSON',{value(){return []}});
+    Object.setPrototypeOf(rows,inherited);
+    const response={purchase:{id:44},[field]:rows};
+    assert.equal(rows.length,1,'the original source has a financial row');
+    assert.deepEqual(JSON.parse(JSON.stringify(response))[field],[],
+      'the inherited serializer can silently delete the row');
+    await assert.rejects(finishInventoryPurchaseIntent(noWrites,{...ctx,response}),
+      e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&e.status===409);
+  }
+  class CustomRows extends Array {}
+  await assert.rejects(finishInventoryPurchaseIntent(noWrites,{...ctx,
+    response:{purchase:{id:44},lot_allocations:new CustomRows({lot_id:15})}}),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT'&&e.status===409,
+    'subclassed arrays are not plain JSON response evidence');
+  assert.equal(queries,0,'lossy or non-native arrays fail before any SQL');
+});
+
 test('transaction executor commits one purchase, then replays without touching inventory',async()=>{
   const events=[];let committed=null;let draft=null;
   const client={async query(sql,args){
