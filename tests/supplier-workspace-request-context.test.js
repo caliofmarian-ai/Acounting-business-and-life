@@ -344,3 +344,55 @@ test('unrelated and obsolete unbind notifications preserve the still-selected Su
   assert.equal(h.workspace.innerHTML,html);
   assert.equal(h.workspace.classList.contains('hidden'),false);
 });
+
+test('initially unbound Supplier response cannot render private orders without a selected business',async()=>{
+  const h=supplierHarness();
+  h.accounting.activeBusinessId=null;
+  const pending=h.open('Orders');
+  h.requests[0].resolve([order('PRIVATE-WITHOUT-BINDING')]);
+  await pending;
+  assert.equal(h.workspace.innerHTML,'');
+  assert.equal(h.workspace.classList.contains('hidden'),true);
+  assert.equal(h.requests.length,1);
+  assert.equal(clearEvents(h),0);
+});
+
+test('malformed active Supplier IDs cannot authorize deferred data from a prior business',async()=>{
+  for(const invalid of [[11],['11'],' 11 ','011','11.0','11e0','1.1e1',new Number(11),true,11.5,Number.MAX_SAFE_INTEGER+1]){
+    const h=supplierHarness(),pending=h.open('Orders');
+    h.accounting.activeBusinessId=invalid;
+    h.requests[0].resolve([order('PRIVATE-OLD-BUSINESS')]);
+    await pending;
+    assert.equal(h.workspace.innerHTML,'',`bad business ID ${String(invalid)} must not paint Supplier data`);
+    assert.equal(h.workspace.classList.contains('hidden'),true);
+    assert.equal(clearEvents(h),0);
+  }
+});
+
+test('malformed current Supplier selection event removes already settled private information',async()=>{
+  const h=supplierHarness(),loaded=h.open('Orders');
+  h.requests[0].resolve([order('PRIVATE-SETTLED-A')]);await loaded;
+  assert.match(h.workspace.innerHTML,/PRIVATE-SETTLED-A/);
+  h.node('supModal').innerHTML='PRIVATE-SETTLED-MODAL';
+  h.node('supModalBg').classList.remove('hidden');
+  h.seedSupplierInventory([{sku:'PRIVATE-SETTLED-STOCK'}]);
+  h.business([11]);
+  assert.equal(h.workspace.innerHTML,'');
+  assert.equal(h.node('supModal').innerHTML,'');
+  assert.deepEqual([...h.supplierInventory()],[]);
+  assert.equal(h.workspace.classList.contains('hidden'),true);
+});
+
+test('canonical string Supplier ID and late legitimate hydration retain authorized data',async()=>{
+  for(const initial of [11,'11',null]){
+    const h=supplierHarness();
+    h.accounting.activeBusinessId=initial;
+    const pending=h.open('Orders');
+    h.accounting.activeBusinessId='11';
+    h.requests[0].resolve([order('CANONICAL-OWN-BUSINESS')]);
+    await pending;
+    assert.match(h.workspace.innerHTML,/CANONICAL-OWN-BUSINESS/);
+    assert.equal(h.workspace.classList.contains('hidden'),false);
+    assert.equal(clearEvents(h),1);
+  }
+});

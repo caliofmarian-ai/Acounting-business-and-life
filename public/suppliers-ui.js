@@ -670,9 +670,15 @@ function supplierProfileIsActive(){
   const state=window.BusinessLifeProfileState;
   return Boolean(ptok()&&state?.surface==='profile'&&state.activeRole==='supplier');
 }
+function supplierExactBusinessId(value){
+  if(typeof value==='number')return Number.isSafeInteger(value)&&value>0?value:null;
+  if(typeof value!=='string'||!/^[1-9]\d*$/.test(value))return null;
+  const id=Number(value);
+  return Number.isSafeInteger(id)?id:null;
+}
 function currentSupplierBusinessId(){
   const state=window.BusinessLifeAccounting?.getState?.();
-  return state?.role==='supplier'&&Number(state.activeBusinessId)>0?Number(state.activeBusinessId):null;
+  return state?.role==='supplier'?supplierExactBusinessId(state.activeBusinessId):null;
 }
 function invalidateSupplierWorkspace(){supplierWorkspaceGeneration+=1;supplierWorkspaceOwned=false}
 // Private Supplier panels and PO notes must not outlive the authenticated
@@ -703,15 +709,14 @@ function supplierWorkspaceRequestIsCurrent(request){
     &&supplierProfileIsActive()&&request.profileKey===supplierProfileContext()
     &&request.workspace===supWorkspace&&document.getElementById('supWorkspace')===supWorkspace
     &&!supWorkspace.classList.contains('hidden'));
-  // A pinned Supplier read cannot remain authorized after its business binding
-  // disappears. Without an event, the delayed response itself must purge the
-  // previous private panel, modal and cached Inventory.
-  if(sameSurface&&request.businessId&&!businessId){
+  // No private response may paint into an unbound or malformed Supplier
+  // workspace, even when the request began before accounting hydration.
+  if(sameSurface&&!businessId){
     clearSupplierPrivateSurface();
     return false;
   }
-  // Initial accounting hydration may legitimately establish the business
-  // after the request starts; it must not relax an already-pinned A binding.
+  // Initial accounting hydration may establish a canonical business before
+  // the response returns; a previously pinned A must still match exactly.
   return Boolean(sameSurface&&(!request.businessId||request.businessId===businessId));
 }
 function supplierWorkspaceLoading(section){
@@ -971,14 +976,12 @@ function observeSupplier(){
   document.addEventListener('abl:business-workspace-changed',event=>{
     const detail=event.detail,businessId=currentSupplierBusinessId();
     if(detail?.role!=='supplier'||!supplierProfileIsActive())return;
-    const signalledId=Number(detail.activeBusinessId);
-    if(!Number.isSafeInteger(signalledId)||signalledId<=0){
-      // An explicit Supplier business deselection revokes private panels even
-      // when the last request already settled. Ignore obsolete null events if
-      // accounting still has a valid selected Supplier business.
-      if(!businessId)clearSupplierPrivateSurface();
-      return;
-    }
+    const signalledId=supplierExactBusinessId(detail.activeBusinessId);
+    // An invalid current binding revokes settled Supplier panels, even if a
+    // stale event reports the previous valid ID. Ignore obsolete unbind events
+    // only when accounting still has a canonically selected business.
+    if(!businessId){clearSupplierPrivateSurface();return;}
+    if(!signalledId)return;
     if(signalledId===supplierWorkspaceBusinessId
       ||(businessId&&signalledId!==businessId))return;
     const visible=supplierWorkspaceOwned&&supWorkspace&&!supWorkspace.classList.contains('hidden');
