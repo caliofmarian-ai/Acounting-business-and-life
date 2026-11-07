@@ -985,6 +985,10 @@ test('HTTP purchase and inspection retire a pooled client when BEGIN acknowledge
             assert.equal(route,'purchase');
             return{rowCount:1,rows:[{intent_key:key}]};
           }
+          if(sql.includes('pg_advisory_xact_lock')){
+            assert.equal(route,'purchase');
+            return{rowCount:1,rows:[]};
+          }
           throw Error('Unexpected SQL on rejected purchase authority: '+sql);
         },
         release(...args){releases.push(args)}
