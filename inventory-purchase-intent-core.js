@@ -177,7 +177,9 @@ function requireLosslessPurchaseSnapshot(value,depth=0,ancestors=new WeakSet()){
   if(depth>32)throw invalid();
   if(value===null||typeof value==='string'||typeof value==='boolean')return;
   if(typeof value==='number'){
-    if(!Number.isFinite(value))throw invalid();
+    if(!Number.isFinite(value)||
+       (Number.isInteger(value)&&!Number.isSafeInteger(value))||
+       Object.is(value,-0))throw invalid();
     return;
   }
   if(typeof value!=='object')throw invalid();
@@ -243,7 +245,12 @@ function stableToHash(value,hash,budget,depth=0){
   }
   if(typeof value==='boolean'){write(JSON.stringify(value));return}
   if(typeof value==='number'){
-    if(!Number.isFinite(value))throw bad('Purchase payload contains an invalid number');
+    // JSON numbers above the exact IEEE-754 integer range can alias two
+    // different purchase quantities or monetary instructions. JSON also
+    // erases the sign of -0. Never key idempotency on that lossy encoding.
+    if(!Number.isFinite(value)||
+       (Number.isInteger(value)&&!Number.isSafeInteger(value))||
+       Object.is(value,-0))throw bad('Purchase payload contains a lossy or invalid number');
     write(JSON.stringify(value));return;
   }
   if(Array.isArray(value)){

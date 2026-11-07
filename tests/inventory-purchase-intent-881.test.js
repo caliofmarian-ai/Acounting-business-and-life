@@ -42,6 +42,24 @@ test('fingerprint streams bounded canonical bytes without changing existing inte
     e=>e.status===400&&/data-only/.test(e.message));
 });
 
+test('intent fingerprint rejects unsafe or sign-erasing JSON numbers before economic writes',()=>{
+  assert.match(inventoryPurchaseFingerprint({...payload,purchase_quantity:Number.MAX_SAFE_INTEGER}),/^[a-f0-9]{64}$/);
+  assert.match(inventoryPurchaseFingerprint({...payload,purchase_quantity:0}),/^[a-f0-9]{64}$/);
+  for(const number of [Number.MAX_SAFE_INTEGER+1,-0]){
+    for(const candidate of [
+      {...payload,purchase_quantity:number},
+      {...payload,expense:{amount:number}},
+      {...payload,lines:[{quantity:number}]}
+    ]){
+      assert.throws(()=>inventoryPurchaseFingerprint(candidate),
+        e=>e.code==='INVENTORY_PURCHASE_INTENT_INVALID'&&e.status===400);
+    }
+  }
+  assert.equal(JSON.parse('9007199254740993'),9007199254740992,
+    'native JSON parsing already rounds unsafe integer purchase values');
+  assert.equal(JSON.stringify(-0),'0','native JSON would erase signed zero');
+});
+
 test('fingerprint rejects non-enumerable economic instructions rather than silently omitting them',()=>{
   const approved={...payload};
   const baseline=inventoryPurchaseFingerprint(approved);
@@ -252,6 +270,8 @@ test('response snapshot rejects silently dropped or nullified financial evidence
   let queries=0;
   const noWrites={async query(){queries++;throw Error('Invalid response must not reach SQL')}};
   const badSnapshots=[
+    {purchase:{id:44},expense:{total:Number.MAX_SAFE_INTEGER+1}},
+    {purchase:{id:44},stock:{quantity:-0}},
     {purchase:{id:44},expense:{total:NaN}},
     {purchase:{id:44},inventory:{stock_balance:Infinity}},
     {purchase:{id:44},lot:{unit_cost:-Infinity}},
