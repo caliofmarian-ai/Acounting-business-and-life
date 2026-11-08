@@ -193,6 +193,13 @@ function verifiedPurchaseResponse(response,purchaseId,businessId){
   if(lot&&response.purchase.inventory_id!==undefined&&lot.inventory_id!==undefined)
     sameId(response.purchase.inventory_id,lot.inventory_id,'purchase/lot inventory link');
   if(transaction){
+    // A legacy transaction {id} has no asserted financial meaning. A receipt
+    // that claims expense economics MUST bind that expense to this purchase,
+    // otherwise a replay could certify unrelated private Money evidence.
+    if(['source','type','amount','account','payment_method']
+      .some(field=>transaction[field]!==undefined)&&transaction.source_id===undefined){
+      throw conflict('Purchase response financial expense is missing its purchase source link');
+    }
     sameId(transaction.source_id,purchaseId,'expense/purchase link');
     if(transaction.source!==undefined&&transaction.source!=='inventory_purchase')
       throw conflict('Purchase response includes an unrelated transaction source');

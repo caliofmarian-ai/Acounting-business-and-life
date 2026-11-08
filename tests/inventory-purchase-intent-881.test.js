@@ -1178,6 +1178,8 @@ test('original Merchant provenance and optional purchase/lot/expense links canno
     {...valid,purchase:{...valid.purchase,inventory_id:11}},
     {...valid,lot:{...valid.lot,inventory_id:11}},
     {...valid,transaction:{...valid.transaction,source_id:45}},
+    {...valid,transaction:{...valid.transaction,source_id:undefined}},
+    {...valid,transaction:{id:72,amount:'68.42'}},
     {...valid,transaction:{...valid.transaction,source:'order'}},
     {...valid,transaction:{...valid.transaction,type:'sale'}},
     {...valid,transaction:{...valid.transaction,business_id:'not-a-business'}},
@@ -1211,9 +1213,52 @@ test('original Merchant provenance and optional purchase/lot/expense links canno
   assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
     {...ctx,response:missingInventory}),missingInventory,
     'Legacy optional inventory snapshot can be omitted without breaking correct lot linkage');
+  const minimalTransaction={purchase:{id:44},transaction:{id:72}};
+  assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
+    {...ctx,response:minimalTransaction}),minimalTransaction,
+    'Historical transaction placeholders without financial fields remain supported');
   // Older purchase responses may intentionally omit optional lot/expense fields.
   assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
     {...ctx,response:{purchase:{id:44}}}),{purchase:{id:44}});
+});
+
+test('unlinked economic expense is rejected before SQL, on replay and inspection',async()=>{
+  const unlinked={purchase:{id:44,total_cost:'68.42',account:'cash'},
+    transaction:{id:72,source:'inventory_purchase',type:'business_expense',
+      amount:'68.42',account:'cash',payment_method:'cash'}};
+  const ctx={businessId:101,accountId:501,intentKey:key,purchaseId:44};
+  let writes=0;
+  await assert.rejects(finishInventoryPurchaseIntent({
+    async query(){writes++;throw Error('Unlinked expense reached SQL')}
+  },{...ctx,response:unlinked}),
+    e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+  assert.equal(writes,0);
+  const original={businessId:101,accountId:501,intentKey:key,payload};
+  const replay={async query(sql){
+    if(sql.includes('INSERT INTO inventory_purchase_intents'))return{rowCount:0,rows:[]};
+    if(sql.includes('SELECT payload_sha256,purchase_id,response_json'))return{rowCount:1,rows:[{
+      payload_sha256:inventoryPurchaseFingerprint(payload),purchase_id:44,response_json:unlinked
+    }]};
+    throw Error('Unexpected replay SQL');
+  }};
+  await assert.rejects(claimInventoryPurchaseIntent(replay,original),
+    e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+  let didCommit=false,didRollback=false;
+  const inspected={async query(sql){
+    if(sql.trim()==='BEGIN')return{rowCount:0,rows:[]};
+    if(sql.trim()==='ROLLBACK'){didRollback=true;return{rowCount:0,rows:[]}};
+    if(sql.trim()==='COMMIT'){didCommit=true;throw Error('Unlinked expense accepted')};
+    if(sql.includes('FROM inventory_purchase_intents'))return{rowCount:1,rows:[{
+      payload_sha256:inventoryPurchaseFingerprint(payload),purchase_id:44,response_json:unlinked
+    }]};
+    if(sql.includes('FROM inventory_purchases'))return{rowCount:1,rows:[{id:44}]};
+    throw Error('Unexpected inspection SQL');
+  }};
+  await assert.rejects(inspectInventoryPurchaseIntent(inspected,{
+    ...original,verifyCurrentMerchantAuthority:async()=>true
+  }),e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+  assert.equal(didCommit,false);
+  assert.equal(didRollback,true);
 });
 
 test('foreign Merchant response provenance is rejected on replay and inspection, without a new purchase',async()=>{
