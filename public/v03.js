@@ -1048,7 +1048,7 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
   status.appendChild(copy);
   if(toolMenu){
     // Recovery retries the open tool without reloading the page or its draft.
-    if((cached||state==='error')&&stockToolActive){
+    if(stockToolActive&&(state==='error'||(cached&&stockToolActive==='purchase'))){
       const retry=document.createElement('button');retry.type='button';retry.className='secondary';
       retry.textContent='Retry this tool';retry.onclick=()=>openStockTool(stockToolActive,{force:true});
       status.appendChild(retry);
