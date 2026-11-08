@@ -39,4 +39,5 @@ jobs:
         run: |
           node --check public/merchant-stock-csv-intake.js
           node --check tests/merchant-stock-csv-intake-v1.test.js
+          node --check qa-purchase-intent-881.js
           node --test tests/merchant-stock-csv-intake-v1.test.js
