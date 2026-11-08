@@ -421,7 +421,7 @@ test('Admin refund audit failure rolls back both reservation and key before COMM
   fail=false;steps.length=0;
   const accepted=await createRefundRequest({connect:async()=>client},input);
   assert.equal(accepted.__idempotent_replay,false);
-  assert.deepEqual(steps,['BEGIN','KEY','LOCK','AUTH','REPLAY','SUM','INSERT','AUDIT','COMMIT']);
+  assert.deepEqual(steps,['BEGIN','KEY','LOCK','AUTH','REPLAY','SUM','INSERT','AUDIT','AUTH','COMMIT']);
 });
 
 test('Delayed refund role revocation rejects same-key replay and preserves the original reservation',async()=>{
@@ -446,12 +446,57 @@ test('Delayed refund role revocation rejects same-key replay and preserves the o
   allowed=true;steps.length=0;
   const recovered=await createRefundRequest({connect:async()=>client},input);
   assert.equal(recovered.__idempotent_replay,true);
-  assert.deepEqual(steps,['BEGIN','KEY','LOCK','AUTH','REPLAY','COMMIT']);
+  assert.deepEqual(steps,['BEGIN','KEY','LOCK','AUTH','REPLAY','AUTH','COMMIT']);
   let connections=0;
   await assert.rejects(createRefundRequest({connect:async()=>{connections++}},{
     ...input,reauthorize:null
   }),e=>e?.status===403,'admin refund requests cannot omit delayed authorization');
   assert.equal(connections,0);
+});
+
+
+test('Admin grant expiry during refund audit blocks COMMIT and rolls back the financial reservation',async()=>{
+  const events=[];let valid=true,checks=0;
+  const client={async query(sql){
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)){events.push(sql);return{rows:[]}};
+    if(sql.includes('pg_advisory_xact_lock'))return{rows:[]};
+    if(sql.includes('FROM payment_intents WHERE'))return{rows:[{id:19,status:'succeeded',amount:'100.00',currency_code:'PHP'}]};
+    if(sql.includes('FROM refunds WHERE request_key=$1'))return{rowCount:0,rows:[]};
+    if(sql.includes('SUM(amount)'))return{rows:[{total:'0.00'}]};
+    if(sql.includes('INSERT INTO refunds('))return{rows:[{id:41,amount:'20.00',status:'requested'}]};
+    if(sql.includes('INSERT INTO admin_audit_events(')){valid=false;events.push('AUDIT');return{rows:[]}};
+    throw Error('Unexpected SQL: '+sql);
+  },release(){}};
+  await assert.rejects(createRefundRequest({connect:async()=>client},{
+    intentId:19,amount:20,requestedBy:7,idempotencyKey:'refund_expiry_after_audit_001',
+    adminAudit:{assignmentId:501,correlationId:'qa-expiry'},
+    reauthorize:async current=>{assert.equal(current,client);checks++;events.push('AUTH');
+      if(!valid)throw Object.assign(new Error('Grant expired during audit'),{status:403})}
+  }),e=>e?.status===403);
+  assert.equal(checks,2);
+  assert.deepEqual(events,['BEGIN','AUTH','AUDIT','AUTH','ROLLBACK']);
+});
+
+test('Admin session expiry during replay lookup refuses acknowledgement and ROLLBACKs',async()=>{
+  const events=[];let valid=true,checks=0;
+  const client={async query(sql){
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)){events.push(sql);return{rows:[]}};
+    if(sql.includes('pg_advisory_xact_lock'))return{rows:[]};
+    if(sql.includes('FROM payment_intents WHERE'))return{rows:[{id:19,status:'refunded',amount:'100.00',currency_code:'PHP'}]};
+    if(sql.includes('FROM refunds WHERE request_key=$1')){
+      valid=false;events.push('REPLAY');return{rowCount:1,rows:[{id:41,payment_intent_id:19,
+        amount:'20.00',currency_code:'PHP',reason:'review',requested_by_account_id:7}]};
+    }
+    throw Error('Unexpected SQL: '+sql);
+  },release(){}};
+  await assert.rejects(createRefundRequest({connect:async()=>client},{
+    intentId:19,amount:20,reason:'review',requestedBy:7,idempotencyKey:'refund_expiry_after_replay_001',
+    adminAudit:{assignmentId:501,correlationId:'qa-expiry'},
+    reauthorize:async current=>{assert.equal(current,client);checks++;events.push('AUTH');
+      if(!valid)throw Object.assign(new Error('Session expired during replay'),{status:403})}
+  }),e=>e?.status===403);
+  assert.equal(checks,2);
+  assert.deepEqual(events,['BEGIN','AUTH','REPLAY','AUTH','ROLLBACK']);
 });
 
 test('Admin HTTP refunds provide strict transactional audit and never append best-effort audit after COMMIT',async()=>{

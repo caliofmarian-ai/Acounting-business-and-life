@@ -633,6 +633,9 @@ export async function createRefundRequest(pool,{intentId,amount,reason='',reques
         throw Object.assign(new Error('Refund key belongs to different details'),{
           status:409,code:'REFUND_REQUEST_KEY_CONFLICT'
         });
+      // A delayed replay read can outlive a time-limited grant or session.
+      // Validate current authority again just before acknowledging its result.
+      if(adminAudit!==null)await reauthorize(client);
       await client.query('COMMIT');
       return {...previous,__idempotent_replay:true};
     }
@@ -663,6 +666,9 @@ export async function createRefundRequest(pool,{intentId,amount,reason='',reques
         normalizedReason,clean(adminAudit.correlationId,120)
       ]);
     }
+    // Audit triggers and SQL can cross a wall-clock grant expiry. Assignment
+    // and grant rows stay locked, but time can still pass while they are held.
+    if(adminAudit!==null)await reauthorize(client);
     await client.query('COMMIT');
     return {...q.rows[0],__idempotent_replay:false};
   }catch(error){
