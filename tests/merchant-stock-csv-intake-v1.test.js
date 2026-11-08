@@ -222,8 +222,8 @@ test('paid Stock receipt proves exactly converted quantity in purchase and lot',
     };
     assert.equal(verifyPaidStockIntakeReceipt(good,merchant,row,'cash'),good);
     for(const mutate of [
-      r=>{r.purchase.base_quantity='0.001'},
-      r=>{r.lot.quantity_received_base='0.001'},
+      r=>{r.purchase.base_quantity='0.002'},
+      r=>{r.lot.quantity_received_base='0.002'},
       r=>{r.purchase.base_unit='wrong'},
       r=>{r.lot.base_unit='wrong'}
     ]){
