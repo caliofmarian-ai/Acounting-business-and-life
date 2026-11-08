@@ -148,10 +148,10 @@ test('a saved purchase must prove exact Merchant, stock identity, paid expense a
   const good={
     inventory:{id:201,business_id:123,item:'Fresh rice'},
     purchase:{id:301,business_id:123,inventory_id:201,purchase_quantity:'2.0000',
-      purchase_unit:'kg',total_cost:'120.00',account:'cash'},
+      purchase_unit:'kg',base_quantity:'2000.000',base_unit:'g',total_cost:'120.00',account:'cash'},
     transaction:{id:401,business_id:123,source:'inventory_purchase',source_id:301,
       type:'business_expense',amount:'120.00',payment_method:'cash',account:'cash'},
-    lot:{id:501,business_id:123,inventory_id:201}
+    lot:{id:501,business_id:123,inventory_id:201,base_unit:'g',quantity_received_base:'2000.000'}
   };
   assert.equal(verifyPaidStockIntakeReceipt(good,merchant,row,'cash'),good);
   assert.ok(verifyPaidStockIntakeReceipt({...good,lot:null},merchant,row,'cash'),
@@ -173,6 +173,12 @@ test('a saved purchase must prove exact Merchant, stock identity, paid expense a
     x=>{x.inventory.item='Other Merchant beans'},
     x=>{x.purchase.purchase_quantity='3.0000'},
     x=>{x.purchase.purchase_unit='g'},
+    x=>{x.purchase.base_quantity='1999.999'},
+    x=>{x.purchase.base_quantity='2e3'},
+    x=>{x.purchase.base_unit='ml'},
+    x=>{x.lot.quantity_received_base='1999.999'},
+    x=>{x.lot.quantity_received_base='2000.0001'},
+    x=>{x.lot.base_unit='unit'},
     x=>{x.purchase.total_cost='119.99'},
     x=>{x.transaction.amount='119.99'},
     x=>{x.transaction.amount='120.001'},
@@ -197,6 +203,38 @@ test('a saved purchase must prove exact Merchant, stock identity, paid expense a
   assert.ok(check>0&&saved>check,'never mark a paid batch saved before validating the returned ledger');
 });
 
+
+test('paid Stock receipt proves exactly converted quantity in purchase and lot',()=>{
+  const merchant={accountId:11,businessId:123,businessName:'Synthetic PH Merchant'};
+  for(const [quantity,unit,base,baseUnit] of [
+    ['2','kg','2000.000','g'],['0.0001','kg','0.100000','g'],
+    ['1.5','L','1500.000','ml'],['0.001','g','0.001','g'],
+    ['2.5','unit','2.500','unit']
+  ]){
+    const row={item:'Sample',quantity,unit,total:120};
+    const good={
+      inventory:{id:201,business_id:123,item:'Sample'},
+      purchase:{id:301,business_id:123,inventory_id:201,purchase_quantity:quantity,
+        purchase_unit:unit,base_quantity:base,base_unit:baseUnit,total_cost:'120.00',account:'cash'},
+      transaction:{id:401,business_id:123,source:'inventory_purchase',source_id:301,
+        type:'business_expense',amount:'120.00',payment_method:'cash',account:'cash'},
+      lot:{id:501,business_id:123,inventory_id:201,base_unit:baseUnit,quantity_received_base:base}
+    };
+    assert.equal(verifyPaidStockIntakeReceipt(good,merchant,row,'cash'),good);
+    for(const mutate of [
+      r=>{r.purchase.base_quantity='0.001'},
+      r=>{r.lot.quantity_received_base='0.001'},
+      r=>{r.purchase.base_unit='wrong'},
+      r=>{r.lot.base_unit='wrong'}
+    ]){
+      const mismatch=structuredClone(good);mutate(mismatch);
+      assert.throws(()=>verifyPaidStockIntakeReceipt(mismatch,merchant,row,'cash'),
+        /Saved purchase evidence did not match/,quantity+' '+unit);
+    }
+  }
+  assert.match(js,/stockIntakeReceivedBaseMilli\(purchase\.base_quantity\)/);
+  assert.match(js,/stockIntakeReceivedBaseMilli\(lot\.quantity_received_base\)/);
+});
 
 test('historical paid expense date requires exact PHP-noon TIMESTAMPTZ and unchanged linked money evidence',()=>{
   const context={accountId:11,businessId:123,businessName:'Verified PH Merchant'};

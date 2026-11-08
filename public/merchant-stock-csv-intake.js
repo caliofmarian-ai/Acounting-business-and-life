@@ -58,6 +58,31 @@ export function stockIntakeScopedRows(rows,context,source){
   }
   return rows;
 }
+// A paid receipt must prove the same physical base quantity in the saved
+// purchase and lot as the operator reviewed, not only the paid amount.
+// PostgreSQL Inventory is NUMERIC(12,3) in base g/ml/unit while entry is 4dp.
+export function stockIntakeExpectedPhysicalBase(row){
+  const quantity=parseStockQuantity(row?.quantity),unit=row?.unit;
+  if(quantity===null||!stockIntakeBaseQuantityExact(quantity,unit))return null;
+  const match=/^(\d+)(?:\.(\d{1,4}))?$/.exec(String(quantity));
+  if(!match)return null;
+  const tenThousandths=BigInt(match[1])*10000n+
+    BigInt((match[2]||'').padEnd(4,'0')||'0');
+  const large=unit==='kg'||unit==='L';
+  if(!large&&tenThousandths%10n!==0n)return null;
+  const milli=large?tenThousandths*100n:tenThousandths/10n;
+  if(milli<1n||milli>999999999999n)return null;
+  return{unit:unit==='kg'?'g':unit==='L'?'ml':unit,quantityMilli:milli};
+}
+function stockIntakeReceivedBaseMilli(value){
+  if(typeof value!=='string'&&(typeof value!=='number'||!Number.isFinite(value)))return null;
+  const match=/^(0|[1-9]\d{0,8})(?:\.(\d{1,6}))?$/.exec(String(value));
+  if(!match)return null;
+  const micros=BigInt(match[1])*1000000n+
+    BigInt((match[2]||'').padEnd(6,'0')||'0');
+  if(micros%1000n!==0n)return null;
+  return micros/1000n;
+}
 // An HTTP 201 is not enough to establish paid Stock/Money evidence. Check the
 // saved rows and their canonical links before marking the reviewed row SAVED.
 // A discrepancy after dispatch is UNCERTAIN, never a reason to POST again.
@@ -80,6 +105,7 @@ export function verifyPaidStockIntakeReceipt(result,context,row,paidFrom){
   const businessId=id(context?.businessId),inventoryId=id(inventory?.id),
     purchaseId=id(purchase?.id),expenseId=id(transaction?.id);
   const paidCents=cents(row?.total);
+  const physical=stockIntakeExpectedPhysicalBase(row);
   if(!Number.isSafeInteger(context?.accountId)||context.accountId<1||
      !businessId||!inventoryId||!purchaseId||!expenseId||
      [inventory,purchase,transaction].some(entry=>
@@ -96,10 +122,14 @@ export function verifyPaidStockIntakeReceipt(result,context,row,paidFrom){
      parseStockQuantity(row?.quantity)===null||
      Number(purchase.purchase_quantity)!==Number(row.quantity)||
      purchase.purchase_unit!==row.unit||
+     !physical||purchase.base_unit!==physical.unit||
+     stockIntakeReceivedBaseMilli(purchase.base_quantity)!==physical.quantityMilli||
      paidCents===null||cents(purchase.total_cost)!==paidCents||
      cents(transaction.amount)!==paidCents||
      (lot!=null&&(!lot||typeof lot!=='object'||Array.isArray(lot)||
-       !id(lot.id)||id(lot.business_id)!==businessId||id(lot.inventory_id)!==inventoryId))
+       !id(lot.id)||id(lot.business_id)!==businessId||id(lot.inventory_id)!==inventoryId||
+       lot.base_unit!==physical.unit||
+       stockIntakeReceivedBaseMilli(lot.quantity_received_base)!==physical.quantityMilli))
   )fail();
   return result;
 }
