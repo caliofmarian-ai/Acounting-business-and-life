@@ -1,6 +1,7 @@
 import {createInventoryWriteController} from '../public/inventory-write-context.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
@@ -59,7 +60,7 @@ function harness({businessId=1,legacy={}}={}){
   let authenticated=true,allergenWait=null,locationWait=null,logoutCalls=0;
   const window={scrollTo(){},ABLSession:{authenticated:()=>authenticated,clearReadableSession(){authenticated=false}},BusinessLifeProfileState:{surface:'profile',activeRole:'merchant',accountId:1,navigationEpoch:1},BusinessLifeAccounting:{getState:()=>accounting}};
   const nestedCall=name=>(...args)=>{nested.push({name,args});return Promise.resolve([])};
-  const context={createInventoryWriteController,window,document:ui.document,console:{...console,error:(...args)=>consoleErrors.push(args)},Date,Intl,Map,WeakMap,JSON,Number,Error,TypeError,Promise,$:ui.node,
+  const context={createInventoryWriteController,window,document:ui.document,crypto:{randomUUID},console:{...console,error:(...args)=>consoleErrors.push(args)},Date,Intl,Map,WeakMap,JSON,Number,Error,TypeError,Promise,$:ui.node,
     localStorage:{get length(){return storage.size},key:index=>[...storage.keys()][index],getItem:key=>storage.get(key)??null,setItem(key,value){writes.push({key,value});storage.set(key,value)},removeItem:key=>storage.delete(key)},
     fetch:(path,options)=>new Promise((resolve,reject)=>requests.push({path,options,resolve,reject})),
     logout(){logoutCalls+=1;authenticated=false;if(context.readApi?.invalidate)context.readApi.invalidate()},
@@ -537,6 +538,79 @@ for(const [form,message] of [
     });
   }
 }
+test('Stock purchase reuses an unchanged intent after ambiguous replies and renews it after confirmation',async()=>{
+  const h=harness(),deck=new h.Element('div','stockToolDeck'),panel=new h.Element('details','stockTool-purchase');
+  deck.className='stockToolDeck';panel.className='stockTool';deck.appendChild(panel);h.view.appendChild(deck);
+  const opened=h.context.openStockTool('purchase');
+  await h.respond(0,inventoryRows(1));await opened;
+  Object.assign(h.context,{
+    loadProducts:async()=>{},invalidateMerchantToday(){},
+    syncInventoryRoleOptions(){},updateStockStorageHint(){},stockPurchasePreview(){}
+  });
+  const fillDraft=()=>{
+    for(const [field,value] of Object.entries({
+      stockItem:'Rice',stockInventoryType:'ingredient',stockInventoryDomain:'food',
+      stockStockRole:'ingredient',stockStorageCondition:'other',stockStorageArea:'other',
+      stockPurchaseQty:1,stockPurchaseUnit:'kg',stockTotalCost:0,stockAccount:'cash',
+      stockReorderQty:0,stockTargetQty:0,stockReorderUnit:'g'
+    }))h.node(field).value=value;
+    h.node('stockStorageSegregated').checked=false;
+  };
+  fillDraft();
+  const submit=h.installMutation('stockForm'),first=submit();
+  const body=index=>JSON.parse(h.requests[index].options.body);
+  const original=body(1);
+  assert.match(original.purchase_intent_key,/^[0-9a-f-]{36}$/);
+  await submit();assert.equal(h.requests.length,2,'double submit must not send a second request');
+  await h.reject(1);await first;
+  assert.equal(h.mutationsDisabled(),true);
+  assert.match(h.status(),/submit the unchanged purchase in this page/i);
+  const reloadButton=h.node('inventoryReadStatus').children.find(child=>child.tagName==='BUTTON');
+  assert.equal(reloadButton?.textContent,'Retry this tool');
+  assert.equal(h.node('inventoryReadContent').contains(reloadButton),false);
+  const reopened=reloadButton.onclick();
+  assert.equal(h.requests[2].path,'/api/inventory');
+  await h.respond(2,inventoryRows(1));await reopened;
+  assert.equal(h.mutationsDisabled(),false);
+  assert.match(h.node('stockMessage').textContent,/retry this unchanged draft/i);
+  const unclear=submit();
+  assert.deepEqual(body(3),original);
+  await h.respond(3,{unexpected:true});await unclear;
+  assert.match(h.node('stockMessage').textContent,/Could not confirm the purchase/);
+  h.context.loadStock=async()=>{}; // The next successful purchase triggers a separate refresh.
+  const retry=submit();
+  assert.deepEqual(body(4),original);
+  await h.respond(4,{inventory:{unit_cost:0,unit:'g'},conversion:{stored:'1000 g'}},201);await retry;
+  assert.equal(h.node('stockForm').resets,1);
+  fillDraft();
+  const next=submit();
+  assert.notEqual(body(5).purchase_intent_key,original.purchase_intent_key);
+  assert.deepEqual({...body(5),purchase_intent_key:original.purchase_intent_key},original);
+  await h.respond(5,{error:'Controlled rejection'},409);await next;
+  assert.equal(h.writes.length,0,'purchase intent and draft remain page-local');
+});
+
+test('Stock purchase abandons its intent on deliberate edits or a different Merchant business',async()=>{
+  const h=harness();h.api.confirm();
+  const form=h.node('stockForm'),name=h.node('stockItem');
+  form.appendChild(name);name.value='Rice';
+  const submit=h.installMutation('stockForm'),first=submit();
+  const key=index=>JSON.parse(h.requests[index].options.body).purchase_intent_key;
+  await h.respond(0,{error:'Unknown save outcome'},500);await first;
+  for(const value of ['Corn','Rice']){
+    name.value=value;
+    h.document.dispatchEvent({type:'input',target:name});
+  }
+  const edited=submit();
+  assert.notEqual(key(1),key(0),'reverting an edit does not resurrect an old intent');
+  await h.respond(1,{error:'Unknown save outcome'},500);await edited;
+  h.switchBusiness(2);h.api.confirm();
+  const switched=submit();
+  assert.notEqual(key(2),key(1));
+  assert.equal(h.requests[2].options.headers['x-abl-inventory-origin-business'],'2');
+  await h.respond(2,{error:'Controlled rejection'},409);await switched;
+});
+
 test('Inventory pending operation rejects duplicate submit; current storage save refreshes once',async()=>{
   const h=harness();h.api.confirm();h.node('storageInventoryId').value='10';
   let refreshed=0;h.context.loadStock=async()=>{refreshed++};h.context.invalidateMerchantToday=()=>{};
