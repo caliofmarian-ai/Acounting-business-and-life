@@ -14,6 +14,9 @@ async function removeFixtures(pool,businesses){
       if(owned.rows[0]?.name!==name)throw new Error('Purchase intent QA cleanup business ownership mismatch');
     }
     const ids=businesses.map(({id})=>id);
+    // Historical-date QA produces an audit row; remove ONLY synthetic
+    // business evidence before the business FK owner is deleted.
+    await client.query('DELETE FROM audit_events WHERE business_id=ANY($1::bigint[])',[ids]);
     const intentTable=await client.query("SELECT to_regclass('inventory_purchase_intents') AS name");
     if(intentTable.rows[0]?.name){
       await client.query('DELETE FROM inventory_purchase_intents WHERE business_id=ANY($1::bigint[])',[ids]);
