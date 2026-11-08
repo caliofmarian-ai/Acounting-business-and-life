@@ -192,6 +192,33 @@ async function resetStaleQaCredentialEvidence({pool,providerAccountId}){
   return cleaned.rowCount;
 }
 
+// Match the credential review route's actual territory for existing company_test fixtures.
+// Never change profile authorizations or widen an admin permission to make QA pass.
+export async function resolveCredentialQaTerritories({pool,providerAccountId,credentialId,pilotTerritoryId,secondaryTerritoryId}){
+  const target=await pool.query(`
+    SELECT COALESCE(
+      (SELECT pa.territory_id FROM profile_authorizations pa
+        WHERE pa.account_id=pc.account_id AND pa.role='service_provider'
+          AND pa.status='active' AND pa.territory_id IS NOT NULL
+        ORDER BY pa.id DESC LIMIT 1),
+      (SELECT app.territory_id FROM profile_applications app
+        WHERE app.account_id=pc.account_id AND app.role='service_provider'
+          AND app.status NOT IN ('rejected','revoked')
+        ORDER BY app.id DESC LIMIT 1)
+    ) target_territory_id
+    FROM profile_credentials pc JOIN accounts a ON a.id=pc.account_id
+    WHERE pc.id=$1 AND pc.account_id=$2 AND a.account_mode='company_test'
+  `,[Number(credentialId),Number(providerAccountId)]);
+  if(target.rowCount!==1)throw new Error('Controlled company_test credential missing for territory QA.');
+  const reviewTerritoryId=Number(target.rows[0].target_territory_id);
+  const pilot=Number(pilotTerritoryId),secondary=Number(secondaryTerritoryId);
+  if(!Number.isSafeInteger(reviewTerritoryId)||reviewTerritoryId<1)throw new Error('Controlled credential has no authoritative review territory.');
+  if(!Number.isSafeInteger(pilot)||pilot<1||!Number.isSafeInteger(secondary)||secondary<1||pilot===secondary)throw new Error('Credential QA needs distinct pilot and secondary territories.');
+  const outsideTerritoryId=reviewTerritoryId===secondary?pilot:secondary;
+  if(outsideTerritoryId===reviewTerritoryId)throw new Error('Credential QA cannot establish out-of-scope territory.');
+  return{reviewTerritoryId,outsideTerritoryId,reviewTargetMatchesPilot:reviewTerritoryId===pilot};
+}
+
 async function verifyCredentialAdminScope({
   pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail,territoryId,jobId,
   requestJson,expectStatus
@@ -222,9 +249,10 @@ async function verifyCredentialAdminScope({
   const otherTerritoryId=await ensureSecondaryServiceTerritory({
     pool,base,adminToken:admin.token,requestJson,expectStatus
   });
-  if(otherTerritoryId===Number(territoryId)){
-    throw new Error('Credential scope test requires two distinct QA territories.');
-  }
+  const {reviewTerritoryId,outsideTerritoryId,reviewTargetMatchesPilot}=await resolveCredentialQaTerritories({
+    pool,providerAccountId:provider.accountId,credentialId,
+    pilotTerritoryId:territoryId,secondaryTerritoryId:otherTerritoryId
+  });
 
   await pool.query(
     "UPDATE platform_admin_assignments SET status='revoked',updated_at=NOW() WHERE account_id=$1 AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin'",
@@ -237,7 +265,7 @@ async function verifyCredentialAdminScope({
     body:{
       target_email:territoryAdminEmail,
       admin_role:'territory_admin',
-      territory_id:otherTerritoryId,
+      territory_id:outsideTerritoryId,
       permissions:['credential.verify'],
       reason:'Controlled QA out-of-scope credential authority'
     }
@@ -257,7 +285,7 @@ async function verifyCredentialAdminScope({
     body:{
       target_email:territoryAdminEmail,
       admin_role:'territory_admin',
-      territory_id:Number(territoryId),
+      territory_id:reviewTerritoryId,
       permissions:['credential.verify'],
       reason:'Controlled QA in-scope credential authority'
     }
@@ -269,6 +297,7 @@ async function verifyCredentialAdminScope({
     token:territoryAdmin.token,
     body:{verification_status:'verified'}
   });
+  if(verified.status!==200)throw new Error('In-scope credential verification HTTP '+Number(verified.status||0)+' code '+clean(verified.json?.code||'none',40));
   expectStatus(verified,200,'In-scope credential verification');
 
   const evidence=await pool.query(
@@ -286,7 +315,7 @@ async function verifyCredentialAdminScope({
     [String(credentialId),territoryAdmin.accountId]
   );
   if(!audit.rowCount||audit.rows[0].permission_code!=='credential.verify'
-    ||Number(audit.rows[0].territory_id)!==Number(territoryId)
+    ||Number(audit.rows[0].territory_id)!==Number(reviewTerritoryId)
     ||!audit.rows[0].assignment_id){
     throw new Error('Credential verification audit evidence is incomplete.');
   }
@@ -305,7 +334,8 @@ async function verifyCredentialAdminScope({
     auditId:Number(audit.rows[0].id),
     ordinaryDenied:true,
     outOfScopeDenied:true,
-    inScopeAllowed:true
+    inScopeAllowed:true,
+    reviewTargetMatchesPilot
   };
 }
 
@@ -801,6 +831,7 @@ export async function runServiceProviderExperienceAcceptance({
     credential_ordinary_user_denied:credentialScope.ordinaryDenied,
     credential_out_of_scope_denied:credentialScope.outOfScopeDenied,
     credential_in_scope_allowed:credentialScope.inScopeAllowed,
+    credential_review_target_matches_pilot:credentialScope.reviewTargetMatchesPilot,
     finance_commercial_value:true,
     service_provider_net_allocations:providerNetCount,
     provider_income_settlement:providerNetCount>0?'TRACKED':'HOLD_NO_SERVICE_PROVIDER_NET',

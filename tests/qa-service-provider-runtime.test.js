@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {resolveCredentialQaTerritories} from '../qa-service-provider-acceptance.js';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const qa=read('qa-acceptance.js');
@@ -70,7 +71,8 @@ test('credential authority proves ordinary denial, territory denial, in-scope al
   assert.match(service,/permissions:\['credential\.verify'\]/);
   assert.match(service,/event_code='service_credential\.reviewed'/);
   assert.match(service,/permission_code!=='credential\.verify'/);
-  assert.match(service,/territory_id\)!==Number\(territoryId\)/);
+  assert.match(service,/territory_id\)!==Number\(reviewTerritoryId\)/);
+  assert.match(service,/In-scope credential verification HTTP/);
   assert.match(service,/verified_by_account_id/);
   assert.match(service,/verified_at/);
 });
@@ -94,4 +96,27 @@ test('Local Services 90-day promotion and notifications/support/settings/session
   assert.match(service,/\/api\/settings\/finance/);
   assert.match(service,/\/api\/support\/tickets/);
   assert.match(service,/Service Provider Experience final re-login/);
+});
+
+test('credential QA targets canonical active authorization across historical controlled territories',async()=>{
+  const check=async(target,pilot,secondary)=>{
+    const pool={async query(sql,params){
+      assert.match(sql,/pa\\.status='active'/);
+      assert.match(sql,/a\\.account_mode='company_test'/);
+      assert.deepEqual(params,[14,13]);
+      return{rowCount:1,rows:[{target_territory_id:target}]};
+    }};
+    return resolveCredentialQaTerritories({
+      pool,providerAccountId:13,credentialId:14,pilotTerritoryId:pilot,secondaryTerritoryId:secondary
+    });
+  };
+  assert.deepEqual(await check(1,1,2),{reviewTerritoryId:1,outsideTerritoryId:2,reviewTargetMatchesPilot:true});
+  assert.deepEqual(await check(2,1,2),{reviewTerritoryId:2,outsideTerritoryId:1,reviewTargetMatchesPilot:false});
+  assert.deepEqual(await check(3,1,2),{reviewTerritoryId:3,outsideTerritoryId:2,reviewTargetMatchesPilot:false});
+  await assert.rejects(check(null,1,2),/no authoritative review territory/);
+  await assert.rejects(check(1,1,1),/distinct pilot and secondary/);
+  await assert.rejects(resolveCredentialQaTerritories({
+    pool:{async query(){return{rowCount:0,rows:[]}}},
+    providerAccountId:13,credentialId:14,pilotTerritoryId:1,secondaryTerritoryId:2
+  }),/company_test credential missing/);
 });
