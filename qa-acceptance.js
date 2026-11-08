@@ -1,6 +1,7 @@
 import {INVENTORY_ORIGIN_841_WAVE,runInventoryOrigin841Acceptance} from './qa-inventory-origin-841.js';
 import {PREPARED_REMOVAL_877_WAVE,runPreparedRemoval877Acceptance} from './qa-prepared-removal-877.js';
 import {PURCHASE_DOCUMENTS_856_WAVE,runPurchaseDocuments856Acceptance} from './qa-purchase-documents-856.js';
+import {PRICE_COMPARISON_16_WAVE,runPriceComparison16Acceptance} from './qa-price-comparison-16.js';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
@@ -87,6 +88,7 @@ ACCEPTANCE_WAVES.add(PROFILE_FINANCE_MONEY_871_WAVE);
 ACCEPTANCE_WAVES.add(INVENTORY_ORIGIN_841_WAVE);
 ACCEPTANCE_WAVES.add(PREPARED_REMOVAL_877_WAVE);
 ACCEPTANCE_WAVES.add(PURCHASE_DOCUMENTS_856_WAVE);
+ACCEPTANCE_WAVES.add(PRICE_COMPARISON_16_WAVE);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -6415,7 +6417,11 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===PURCHASE_DOCUMENTS_856_WAVE
+    const result=config.wave===PRICE_COMPARISON_16_WAVE
+       ?await runPriceComparison16Acceptance({pool,base,secret:config.secret,
+         aliases:{merchant:MERCHANT_ALIAS,customer:CUSTOMER_ALIAS},
+         helpers:{requestJson,qaAccountSession,ensureActiveRole}})
+       :config.wave===PURCHASE_DOCUMENTS_856_WAVE
        ?await runPurchaseDocuments856Acceptance({pool,base,secret:config.secret,
          aliases:{merchant:MERCHANT_ALIAS,customer:CUSTOMER_ALIAS},
          helpers:{requestJson,requestBinary,expectStatus,qaAccountSession,ensureActiveRole}})
