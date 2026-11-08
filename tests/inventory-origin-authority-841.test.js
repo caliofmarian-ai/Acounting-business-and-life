@@ -111,7 +111,8 @@ test('normal workspace read still uses preference; valid authorized origin bypas
 test('all registered Inventory route groups use central accountingContext',()=>{
   assert.match(source,/const originBusinessId=inventoryMutationOrigin\(req\)/);
   assert.match(source,/selected=boundInventoryOrigin\(bindings,originBusinessId\)/);
-  assert.match(server,/app.post\('\/api\/inventory\/purchase',jsonBody,async\(req,res,next\)=>\{\s*try\{\s*const ctx=await accountingContext\(req\)/);
+  const purchase=server.slice(server.indexOf("app.post('/api/inventory/purchase'"),server.indexOf("app.put('/api/inventory/:id/reorder-settings'"));
+  assert.match(purchase,/const ctx=await accountingContext\(req\);\s*if\(ctx.role!=='merchant'\)/);
   for(const file of ['inventory-count-sessions.js','inventory-locations.js','inventory-identifiers.js']){
     const source=readFileSync(new URL('../'+file,import.meta.url),'utf8');
     assert.match(source,/const ctx=await accountingContext\(req\)/);

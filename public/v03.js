@@ -322,6 +322,7 @@ const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;
 // Sensitive read evidence is page-local; legacy unscoped browser storage is never trusted.
 let merchantReadGeneration=0;
 let merchantReadLastContext=null;
+let pendingStockPurchase=null;
 const merchantReadCache=new Map(),merchantReadRequests=new Map();
 function clearLegacyMerchantCache(){
   try{for(let n=localStorage.length-1;n>=0;n--){const key=localStorage.key(n);if(key?.startsWith('abl_cache_'))localStorage.removeItem(key)}}catch{}
@@ -342,6 +343,7 @@ function sameMerchantReadIdentity(a,b){return Boolean(a&&b&&a.accountId===b.acco
 function staleMerchantRead(){return Object.assign(new Error('The Merchant context changed. Open this section again.'),{staleMerchantRead:true})}
 function invalidateMerchantReads(){
   inventoryWrites.invalidate();
+  pendingStockPurchase=null;
   merchantReadGeneration+=1;merchantReadCache.clear();merchantReadRequests.clear();
   merchantReadLastContext=merchantReadContext();
   inventoryLoadGeneration+=1;inventory=[];products=[];transactions=[];restockSuggestions=[];stockAdjustmentLots=[];preparedRemovalPendingKey=null;
@@ -370,6 +372,11 @@ const inventoryWrites=createInventoryWriteController({
 const beginInventoryWrite=root=>inventoryWrites.begin(root);
 document.addEventListener('abl:feature-workspace',()=>inventoryWrites.invalidate());
 document.addEventListener('abl:merchant-local-view',()=>inventoryWrites.invalidate());
+for(const type of ['input','change','reset']){
+  document.addEventListener(type,event=>{
+    if(pendingStockPurchase?.form.contains(event.target))pendingStockPurchase=null;
+  },true);
+}
 // Invalidate at the START of a selector transition, before its PATCH can settle.
 document.addEventListener('change',event=>{
   if(event.target?.id==='businessWorkspaceSelect')invalidateMerchantReads();
@@ -807,6 +814,7 @@ async function useInventoryForReceiving(item){
     await openStockTool('purchase'); // Reveal the purchase tool before pre-filling it.
     if(!stillAuthorized()||stockToolActive!=='purchase')return;
   }
+  pendingStockPurchase=null;
   if($('stockInventoryId'))$('stockInventoryId').value=String(item.id||'');
   if($('stockItem'))$('stockItem').value=item.item||'';
   if($('stockInventoryType'))$('stockInventoryType').value=item.inventory_type||'ingredient';
@@ -1034,10 +1042,13 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
     ?'Connection unavailable. Showing last confirmed Inventory from '+new Date(savedAt).toLocaleString('en-PH',{timeZone:'Asia/Manila'})+' (Philippine time). Stock changes are disabled.'
     :state==='error'?'Inventory could not be loaded. '+(error?.message||'Try again.')
     :state==='partial'?'Inventory items loaded. Checking storage locations, lots and stock controls…':state==='loading'?'Loading Inventory for the current business…':'Inventory for the current business has not loaded.';
+  if((cached||state==='error')&&stockToolActive==='purchase'&&pendingStockPurchase){
+    copy.textContent+=' If saving was interrupted, reconnect with Retry this tool and submit the unchanged purchase in this page.';
+  }
   status.appendChild(copy);
   if(toolMenu){
-    // No second 'Load Inventory' button: each summary is the load action.
-    if(state==='error'&&stockToolActive){
+    // Recovery retries the open tool without reloading the page or its draft.
+    if(stockToolActive&&(state==='error'||(cached&&stockToolActive==='purchase'))){
       const retry=document.createElement('button');retry.type='button';retry.className='secondary';
       retry.textContent='Retry this tool';retry.onclick=()=>openStockTool(stockToolActive,{force:true});
       status.appendChild(retry);
@@ -1775,7 +1786,89 @@ $('restockSettingsForm')?.addEventListener('submit',async e=>{
   }catch(error){if(!write.isCurrent())return;if(out)out.textContent=error.message}
 }finally{write.finish()}
 });
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();const write=beginInventoryWrite($('stockForm'));if(!write)return;try{$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({inventory_id:$('stockInventoryId').value?Number($('stockInventoryId').value):null,item:$('stockItem').value,inventory_type:$('stockInventoryType').value,inventory_domain:$('stockInventoryDomain').value,stock_role:$('stockStockRole').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,target_quantity:Number($('stockTargetQty').value||0),target_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});if(!write.accept())return;const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockInventoryId').value='';$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockTargetQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockInventoryDomain').value='food';syncInventoryRoleOptions('ingredient');$('stockStockRole').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);if(!write.isCurrent())return;invalidateMerchantToday()}catch(err){if(!write.isCurrent())return;$('stockMessage').textContent=err.message}}finally{write.finish()}
+$('stockForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const form=$('stockForm'),message=$('stockMessage'),write=beginInventoryWrite(form);
+  if(!write)return;
+  try{
+    const context=merchantReadContext();
+    if(!context?.businessId)throw new Error('Reopen your Merchant business to confirm this Inventory change.');
+    const draft={
+      inventory_id:$('stockInventoryId').value?Number($('stockInventoryId').value):null,
+      item:$('stockItem').value,
+      inventory_type:$('stockInventoryType').value,
+      inventory_domain:$('stockInventoryDomain').value,
+      stock_role:$('stockStockRole').value,
+      storage_condition:$('stockStorageCondition').value,
+      storage_area_type:$('stockStorageArea').value,
+      storage_location_label:$('stockStorageLocation').value,
+      storage_segregated:$('stockStorageSegregated').checked,
+      purchase_quantity:Number($('stockPurchaseQty').value),
+      purchase_unit:$('stockPurchaseUnit').value,
+      total_cost:Number($('stockTotalCost').value),
+      reorder_quantity:Number($('stockReorderQty').value||0),
+      reorder_unit:$('stockReorderUnit').value,
+      target_quantity:Number($('stockTargetQty').value||0),
+      target_unit:$('stockReorderUnit').value,
+      lot_code:$('stockLotCode').value,
+      expires_at:$('stockExpiry').value,
+      account:$('stockAccount').value,
+      note:$('stockNote').value,
+      record_expense:true
+    };
+    // A lost response may follow a committed purchase. Retry this unchanged
+    // form in its original context with the same key until it is confirmed.
+    const signature=JSON.stringify(draft);
+    if(!pendingStockPurchase||pendingStockPurchase.form!==form||
+      pendingStockPurchase.signature!==signature||!merchantReadIsCurrent(pendingStockPurchase.context)){
+      pendingStockPurchase={form,context,signature,key:crypto.randomUUID()};
+    }
+    const intent=pendingStockPurchase;
+    message.textContent='Saving purchase…';
+    const result=await api('/api/inventory/purchase',{
+      method:'POST',body:JSON.stringify({...draft,purchase_intent_key:intent.key})
+    },{isCurrent:()=>write.isCurrent()&&pendingStockPurchase===intent});
+    if(!write.accept())return;
+    if(!result?.conversion?.stored||!result.inventory){
+      throw new Error('Could not confirm the purchase. Try again without changing the draft.');
+    }
+    pendingStockPurchase=null;
+    const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';
+    message.textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;
+    form.reset();
+    $('stockInventoryId').value='';
+    $('stockPurchaseQty').value=1;
+    $('stockPurchaseUnit').value='kg';
+    $('stockTotalCost').value=0;
+    $('stockAccount').value='cash';
+    $('stockReorderQty').value=0;
+    $('stockTargetQty').value=0;
+    $('stockReorderUnit').value='g';
+    $('stockLotCode').value='';
+    $('stockExpiry').value='';
+    $('stockInventoryType').value='ingredient';
+    $('stockInventoryDomain').value='food';
+    syncInventoryRoleOptions('ingredient');
+    $('stockStockRole').value='ingredient';
+    $('stockStorageCondition').value='other';
+    $('stockStorageArea').value='other';
+    $('stockStorageLocation').value='';
+    $('stockStorageSegregated').checked=false;
+    $('stockCategoryPicker').value='';
+    $('stockItemPicker').replaceChildren(new Option('Choose a category first',''));
+    $('stockItemPicker').disabled=true;
+    updateStockStorageHint();
+    stockPurchasePreview();
+    await Promise.all([loadStock(),loadProducts()]);
+    if(!write.isCurrent())return;
+    invalidateMerchantToday();
+  }catch(error){
+    if(write.isCurrent()&&!error.staleMerchantRead){
+      message.textContent=error.merchantTransportFailure
+        ?'Could not confirm the purchase. Reconnect and retry this unchanged draft in this page.'
+        :error.message;
+    }
+  }finally{write.finish()}
 });
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});

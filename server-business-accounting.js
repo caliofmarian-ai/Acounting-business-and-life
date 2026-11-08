@@ -14,6 +14,9 @@ import {authHardeningFetch} from './server-auth-hardening.js';
 import {readOrderDetail} from './orders-read-core.js';
 import { ensureLegacyAccountingBaseSchema } from './accounting-base-schema.js';
 import {inventoryMutationOrigin,boundInventoryOrigin} from './inventory-origin-core.js';
+import {INVENTORY_PURCHASE_INTENT_SCHEMA,executeInventoryPurchaseIntent,lockInventoryPurchaseBusiness} from './inventory-purchase-intent-core.js';
+import {verifyV2SessionTokenSignature} from './auth-session-core.js';
+import {sessionCredentialFromHeaders} from './session-cookie-core.js';
 import { inventoryLotExpiryStatus,planPhysicalStockReduction } from './inventory-lot-core.js';
 import {inventoryStorageDefaults,requireValidInventoryStorage} from './inventory-storage-core.js';
 import { planInventoryFefo,applyLotAllocations,canUseSupplyLots,inventoryLotRows,applyPhysicalLotReductions,inventoryAvailabilityRows } from './inventory-lot-runtime.js';
@@ -357,6 +360,7 @@ async function initAccountingTenancyDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`SELECT pg_advisory_xact_lock(hashtext('abl:inventory:purchase:intent-schema:v1'));\n${INVENTORY_PURCHASE_INTENT_SCHEMA}`);
   await ensureInventoryIdentifierSchema(pool);
   await ensureInventoryLocationSchema(pool);
   await ensureInventoryCountSessionSchema(pool);
@@ -805,36 +809,58 @@ app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
   res.status(201).json(rows[0])
 }catch(e){next(e)}});
 
+async function verifyInventoryPurchaseMerchant(client,{businessId,accountId},token){
+  const session=verifyV2SessionTokenSignature(TOKEN_SECRET,token);
+  if(!session||String(session.accountId)!==String(accountId))return false;
+  const grant=await client.query(`
+    SELECT 1 FROM accounts a
+    JOIN profiles p ON p.account_id=a.id AND p.role='merchant' AND p.enabled=TRUE
+    JOIN profile_business_bindings pb ON pb.account_id=a.id AND pb.role=p.role
+      AND pb.business_id=$2 AND pb.status='active'
+    JOIN business_memberships bm ON bm.account_id=a.id AND bm.business_id=pb.business_id AND bm.active=TRUE
+    WHERE a.id=$1 AND a.active_role='merchant' AND a.auth_status NOT IN ('suspended','closed')
+      AND (a.account_mode='company_test' OR a.email_verified_at IS NOT NULL)
+    FOR SHARE OF a,p,pb,bm
+  `,[accountId,businessId]);
+  if(grant.rowCount!==1)return false;
+  // Lock the account before its session, as account closure does.
+  const activeSession=await client.query(`
+    SELECT 1 FROM account_sessions WHERE session_id=$1 AND account_id=$2
+      AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR SHARE
+  `,[session.sessionId,accountId]);
+  return activeSession.rowCount===1;
+}
+
 app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
+  res.set('Cache-Control','private, no-store');
   try{
+    const {purchase_intent_key: intentKey,...instructions}=req.body??{};
     const ctx=await accountingContext(req);
     if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
-    let itemName=clean(req.body?.item,100);
-    const requestedInventoryId=req.body?.inventory_id==null||req.body?.inventory_id===''?null:Number(req.body.inventory_id);
+    let itemName=clean(instructions.item,100);
+    const requestedInventoryId=instructions.inventory_id==null||instructions.inventory_id===''?null:Number(instructions.inventory_id);
     if(requestedInventoryId!=null&&!Number.isInteger(requestedInventoryId))return res.status(400).json({error:'Choose a valid Inventory item.'});
     if(!itemName&&requestedInventoryId==null)return res.status(400).json({error:'Item is required'});
-    const requestedLegacyType=normalizeInventoryType(req.body?.inventory_type);
-    const classificationExplicit=inventoryClassificationInputProvided(req.body||{});
-    const expiryAt=inventoryExpiryTimestamp(req.body?.expires_at);
-    const supplierLotCode=clean(req.body?.lot_code,90);
-    const account=clean(req.body?.account||'cash',30);
+    const requestedLegacyType=normalizeInventoryType(instructions.inventory_type);
+    const classificationExplicit=inventoryClassificationInputProvided(instructions);
+    const expiryAt=inventoryExpiryTimestamp(instructions.expires_at);
+    const supplierLotCode=clean(instructions.lot_code,90);
+    const account=clean(instructions.account||'cash',30);
     if(!ACCOUNTS.has(account))return res.status(400).json({error:'Choose where the purchase was paid from'});
     let purchase;
     try{
       purchase=deriveStockPurchase({
-        purchase_quantity:req.body?.purchase_quantity,
-        purchase_unit:req.body?.purchase_unit,
-        total_cost:req.body?.total_cost,
-        reorder_quantity:req.body?.reorder_quantity||0,
-        reorder_unit:req.body?.reorder_unit||req.body?.purchase_unit,
-        target_quantity:req.body?.target_quantity||0,
-        target_unit:req.body?.target_unit||req.body?.reorder_unit||req.body?.purchase_unit
+        purchase_quantity:instructions.purchase_quantity,
+        purchase_unit:instructions.purchase_unit,
+        total_cost:instructions.total_cost,
+        reorder_quantity:instructions.reorder_quantity||0,
+        reorder_unit:instructions.reorder_unit||instructions.purchase_unit,
+        target_quantity:instructions.target_quantity||0,
+        target_unit:instructions.target_unit||instructions.reorder_unit||instructions.purchase_unit
       });
     }catch(error){return res.status(400).json({error:error.message})}
 
-    const client=await pool.connect();
-    try{
-      await client.query('BEGIN');
+    const createPurchase=async client=>{
       const current=requestedInventoryId==null
         ?await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND LOWER(item)=LOWER($2) FOR UPDATE`,[ctx.business.id,itemName])
         :await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND id=$2 FOR UPDATE`,[ctx.business.id,requestedInventoryId]);
@@ -844,10 +870,10 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
       let classification;
       try{
         classification=classificationExplicit
-          ?normalizeInventoryClassification(req.body||{},{inventoryType:requestedLegacyType})
+          ?normalizeInventoryClassification(instructions,{inventoryType:requestedLegacyType})
           :existing?.inventory_domain&&existing?.stock_role
             ?normalizeInventoryClassification({inventory_domain:existing.inventory_domain,stock_role:existing.stock_role},{inventoryType:existing.inventory_type})
-            :normalizeInventoryClassification(req.body||{},{inventoryType:existing?.inventory_type||requestedLegacyType});
+            :normalizeInventoryClassification(instructions,{inventoryType:existing?.inventory_type||requestedLegacyType});
       }catch(error){throw Object.assign(error,{status:400})}
       const inventoryType=classificationExplicit
         ?compatibilityInventoryType(classification,requestedLegacyType)
@@ -862,10 +888,10 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         inventoryType,
         inventoryDomain:classification.inventory_domain,
         stockRole:classification.stock_role,
-        storageCondition:req.body?.storage_condition??fallback.storage_condition??defaults.storage_condition,
-        storageAreaType:req.body?.storage_area_type??fallback.storage_area_type??defaults.storage_area_type,
-        storageLocationLabel:req.body?.storage_location_label??fallback.storage_location_label??defaults.storage_location_label,
-        storageSegregated:req.body?.storage_segregated??fallback.storage_segregated??defaults.storage_segregated
+        storageCondition:instructions.storage_condition??fallback.storage_condition??defaults.storage_condition,
+        storageAreaType:instructions.storage_area_type??fallback.storage_area_type??defaults.storage_area_type,
+        storageLocationLabel:instructions.storage_location_label??fallback.storage_location_label??defaults.storage_location_label,
+        storageSegregated:instructions.storage_segregated??fallback.storage_segregated??defaults.storage_segregated
       });
 
       let inventoryRow;
@@ -934,7 +960,7 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
           business_id,inventory_id,purchase_quantity,purchase_unit,base_quantity,base_unit,total_cost,account,note
         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
         RETURNING *
-      `,[ctx.business.id,inventoryRow.id,purchase.purchase_quantity,purchase.purchase_unit,purchase.base_quantity,purchase.base_unit,purchase.total_cost,account,clean(req.body?.note,300)]);
+      `,[ctx.business.id,inventoryRow.id,purchase.purchase_quantity,purchase.purchase_unit,purchase.base_quantity,purchase.base_unit,purchase.total_cost,account,clean(instructions.note,300)]);
 
       let lot=null;
       if(await canUseSupplyLots(client)){
@@ -958,21 +984,22 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
           purchase.purchase_quantity>0?purchase.base_quantity/purchase.purchase_quantity:null,
           purchase.purchase_quantity,expiryAt,
           inventoryRow.storage_condition,inventoryRow.storage_area_type,inventoryRow.storage_location_label,inventoryRow.storage_segregated,
-          clean(req.body?.note,1000),ctx.me.account.id
+          clean(instructions.note,1000),ctx.me.account.id
         ]);
         lot=lotInsert.rows[0];
       }
 
       let transaction=null;
-      if(purchase.total_cost>0&&req.body?.record_expense!==false){
+      if(purchase.total_cost>0&&instructions.record_expense!==false){
         const tx=await client.query(`
           INSERT INTO transactions(
             business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at
           ) VALUES($1,'business_expense','Stock purchase',$2,$3,$3,$4,'inventory_purchase',$5,NOW())
           RETURNING *
-        `,[ctx.business.id,purchase.total_cost,account,clean(`${itemName} · ${purchase.purchase_quantity} ${purchase.purchase_unit}${req.body?.note?' · '+req.body.note:''}`,250),purchaseRecord.rows[0].id]);
+        `,[ctx.business.id,purchase.total_cost,account,clean(`${itemName} · ${purchase.purchase_quantity} ${purchase.purchase_unit}${instructions.note?' · '+instructions.note:''}`,250),purchaseRecord.rows[0].id]);
         transaction=tx.rows[0];
         await client.query(`UPDATE inventory_purchases SET transaction_id=$1 WHERE id=$2`,[transaction.id,purchaseRecord.rows[0].id]);
+        purchaseRecord.rows[0].transaction_id=transaction.id;
       }
 
       await reconcileInventoryLocationBalance(client,{
@@ -982,8 +1009,7 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         businessId:ctx.business.id,inventoryId:Number(inventoryRow.id),lotId:Number(lot.id),actorAccountId:ctx.me.account.id
       });
 
-      await client.query('COMMIT');
-      res.status(201).json({
+      return {
         inventory:inventoryRow,
         purchase:purchaseRecord.rows[0],
         lot,
@@ -993,11 +1019,45 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
           stored:`${purchase.base_quantity} ${purchase.base_unit}`,
           unit_cost:purchase.base_unit_cost
         }
-      });
+      };
+    };
+
+    const client=await pool.connect();
+    let discardClient=false;
+    try{
+      const businessId=ctx.business.id,accountId=ctx.me.account.id;
+      let response;
+      if(intentKey!==undefined){
+        const {token}=sessionCredentialFromHeaders(req.headers);
+        const result=await executeInventoryPurchaseIntent(client,{
+          businessId,accountId,intentKey,payload:instructions,
+          verifyCurrentMerchantAuthority:(tx,origin)=>verifyInventoryPurchaseMerchant(tx,origin,token)
+        },async tx=>{
+          const response=await createPurchase(tx);
+          return {purchaseId:response.purchase.id,response};
+        });
+        response=result.response;
+      }else{
+        // Older clients have no durable replay key. They still take the same
+        // lock before looking up an item so first-time receiving cannot race.
+        try{
+          await client.query('BEGIN');
+          await lockInventoryPurchaseBusiness(client,businessId);
+          response=await createPurchase(client);
+          await client.query('COMMIT');
+        }catch(error){
+          await client.query('ROLLBACK').catch(()=>{discardClient=true});
+          throw error;
+        }
+      }
+      res.status(201).json(response);
     }catch(error){
-      await client.query('ROLLBACK').catch(()=>{});
+      if(error?.code?.startsWith('INVENTORY_PURCHASE_INTENT_')){
+        discardClient=error.status===503;
+        return res.status(error.status).json({error:error.message,code:error.code});
+      }
       throw error;
-    }finally{client.release()}
+    }finally{client.release(discardClient)}
   }catch(error){next(error)}
 });
 
