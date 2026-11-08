@@ -1,4 +1,5 @@
 import {INVENTORY_ORIGIN_841_WAVE,runInventoryOrigin841Acceptance} from './qa-inventory-origin-841.js';
+import {PREPARED_REMOVAL_877_WAVE,runPreparedRemoval877Acceptance} from './qa-prepared-removal-877.js';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
@@ -83,6 +84,7 @@ ACCEPTANCE_WAVES.add(KNOWLEDGE_CENTER_WAVE);
 ACCEPTANCE_WAVES.add(INVENTORY_LOCATION_READ_862_WAVE);
 ACCEPTANCE_WAVES.add(PROFILE_FINANCE_MONEY_871_WAVE);
 ACCEPTANCE_WAVES.add(INVENTORY_ORIGIN_841_WAVE);
+ACCEPTANCE_WAVES.add(PREPARED_REMOVAL_877_WAVE);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -6411,7 +6413,10 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===INVENTORY_ORIGIN_841_WAVE
+    const result=config.wave===PREPARED_REMOVAL_877_WAVE
+       ?await runPreparedRemoval877Acceptance({pool,base,secret:config.secret,
+         aliases:{merchant:MERCHANT_ALIAS},helpers:{requestJson,expectStatus,qaAccountSession,ensureActiveRole}})
+       :config.wave===INVENTORY_ORIGIN_841_WAVE
        ?await runInventoryOrigin841Acceptance({pool,base,secret:config.secret,
          aliases:{merchant:MERCHANT_ALIAS},helpers:{requestJson,expectStatus,qaAccountSession,ensureActiveRole}})
        :config.wave===PROFILE_FINANCE_MONEY_871_WAVE

@@ -583,3 +583,72 @@ for(const type of ['abl:feature-workspace','abl:merchant-local-view']){
     assert.equal(h.node('storageMessage').textContent,'Returned draft');assert.equal(h.requests.length,1);
   });
 }
+
+function preparedRemovalMutationHarness(){
+  const h=harness();
+  // Execute the literal v03 submit callback, not a rewritten behavioral mock.
+  // Synthetic Merchant session, document, DOM, gateway and recorded responses.
+  vm.runInContext('let preparedRemovalPendingKey=null;',h.context);
+  h.context.preparedRemovalReasons={damaged:'Damaged prepared food'};
+  h.context.crypto={randomUUID:()=> 'test-removal-123456789012'};
+  h.context.confirm=()=>true;
+  h.node('preparedRemovalProduct').value='11';
+  h.node('preparedRemovalQty').value='2';
+  h.node('preparedRemovalReason').value='damaged';
+  h.node('preparedRemovalNote').value='Synthetic portion removal';
+  h.api.confirm();
+  const submit=h.installMutation('preparedRemovalForm');
+  return{...h,submit,key:()=>vm.runInContext('preparedRemovalPendingKey',h.context)};
+}
+
+test('prepared-removal completion from business A never rewrites a later B form, key or refresh',async()=>{
+  const h=preparedRemovalMutationHarness(),pending=h.submit();
+  assert.equal(h.requests.length,1,'one authorized original POST');
+  assert.equal(h.requests[0].path,'/api/prepared-product-removals');
+  assert.equal(JSON.parse(h.requests[0].options.body).business_id,1);
+  h.switchBusiness(2);
+  h.node('preparedRemovalMessage').textContent='Business B draft';
+  h.node('preparedRemovalQty').value='3';
+  vm.runInContext("preparedRemovalPendingKey='B-original-intent-key';",h.context);
+  await h.respond(0,{removal:{quantity:2,estimated_cost:136.84},already_recorded:false});
+  await pending;
+  assert.equal(h.node('preparedRemovalMessage').textContent,'Business B draft');
+  assert.equal(h.node('preparedRemovalQty').value,'3');
+  assert.equal(h.key(),'B-original-intent-key');
+  assert.equal(h.node('preparedRemovalForm').resets||0,0);
+  assert.equal(h.requests.length,1,'no Stock refresh initiated for B');
+  assert.equal(h.node('preparedRemovalSubmit').disabled,false,'B submit remains usable');
+});
+
+test('prepared-removal late 401 from old business cannot log out a replacement session',async()=>{
+  const h=preparedRemovalMutationHarness(),pending=h.submit();
+  assert.equal(h.requests.length,1);
+  h.switchBusiness(2);
+  h.node('preparedRemovalMessage').textContent='Business B active';
+  await h.respond(0,{error:'Old Merchant session expired'},401);
+  await pending;
+  assert.equal(h.logoutCalls(),0,'stale HTTP 401 must not log out business B');
+  assert.equal(h.node('preparedRemovalMessage').textContent,'Business B active');
+});
+
+test('prepared-removal same-business success keeps one idempotency key and refreshes once',async()=>{
+  const h=preparedRemovalMutationHarness();
+  vm.runInContext('loadStock=async()=>{globalThis.removalStockRefreshes=(globalThis.removalStockRefreshes||0)+1;}',h.context);
+  h.context.loadProducts=async()=>{h.context.productRefreshes=(h.context.productRefreshes||0)+1};
+  h.context.loadPreparedRemovals=async()=>{h.context.removalRefreshes=(h.context.removalRefreshes||0)+1};
+  h.context.invalidateMerchantToday=()=>{};
+  h.context.updatePreparedRemovalPreview=()=>{};
+  const pending=h.submit();
+  const duplicate=h.submit();await duplicate;
+  assert.equal(h.requests.length,1,'duplicate submit suppressed while in flight');
+  const sent=JSON.parse(h.requests[0].options.body);
+  assert.equal(sent.idempotency_key,'test-removal-123456789012');
+  await h.respond(0,{removal:{quantity:2,estimated_cost:136.84},already_recorded:false});
+  await pending;
+  assert.match(h.node('preparedRemovalMessage').textContent,/Recorded:/);
+  assert.equal(h.key(),null);
+  assert.equal(h.node('preparedRemovalForm').resets,1);
+  assert.equal(vm.runInContext('removalStockRefreshes',h.context),1);
+  assert.equal(h.context.productRefreshes,1);
+  assert.equal(h.context.removalRefreshes,1);
+});

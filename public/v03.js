@@ -1835,34 +1835,47 @@ $('preparedRemovalForm')?.addEventListener('submit',async event=>{
   event.preventDefault();
   const form=$('preparedRemovalForm'),message=$('preparedRemovalMessage'),button=$('preparedRemovalSubmit');
   if(button?.disabled)return;
-  const context=merchantReadContext();
-  if(!context?.businessId){message.textContent='Reopen your Merchant business to confirm this Inventory change.';return}
-  const productId=Number($('preparedRemovalProduct').value),quantity=Number($('preparedRemovalQty').value);
-  const reason=$('preparedRemovalReason').value;
-  if(!confirm('Remove '+num(quantity,4)+' prepared portion(s) from Inventory as '+(preparedRemovalReasons[reason]||reason)+'? No cash or sale will be recorded.'))return;
-  if(!preparedRemovalPendingKey)preparedRemovalPendingKey=crypto.randomUUID();
-  if(button)button.disabled=true;
-  if(message)message.textContent='Recording removal and ingredient cost…';
+  // Reuse the origin-bound Inventory controller for non-sale prepared portions.
+  // It serializes duplicate submits and revokes stale UI authority on edit,
+  // business/session/profile changes or navigation. The server write itself
+  // still completes in its original Merchant business.
+  const write=beginInventoryWrite(form);
+  if(!write)return;
   try{
-    const result=await api('/api/prepared-product-removals',{method:'POST',body:JSON.stringify({
-      business_id:context.businessId,product_id:productId,quantity,reason,
-      idempotency_key:preparedRemovalPendingKey,note:$('preparedRemovalNote').value
-    })});
-    const saved=result.removal;
-    if(message)message.textContent=(result.already_recorded?'Already recorded: ':'Recorded: ')+
-      num(saved.quantity,4)+' portion(s), '+money(saved.estimated_cost)+
-      ' ingredient cost, no sale or cash movement.';
-    preparedRemovalPendingKey=null;
-    form.reset();
-    $('preparedRemovalQty').value=1;
-    await Promise.all([loadStock(),loadProducts(),loadPreparedRemovals()]);
-    invalidateMerchantToday();
-    updatePreparedRemovalPreview();
-  }catch(error){
-    if(message)message.textContent=error.data?.shortages?.length
-      ?'Insufficient ingredients: '+error.data.shortages.map(s=>s.item+' needs '+num(s.required,4)+' '+s.unit+'; usable '+num(s.available,4)).join(' • ')
-      :error.message;
-  }finally{if(button)button.disabled=false}
+    const context=merchantReadContext();
+    if(!context?.businessId){if(write.isCurrent()&&message)message.textContent='Reopen your Merchant business to confirm this Inventory change.';return}
+    const productId=Number($('preparedRemovalProduct').value),quantity=Number($('preparedRemovalQty').value);
+    const reason=$('preparedRemovalReason').value;
+    if(!confirm('Remove '+num(quantity,4)+' prepared portion(s) from Inventory as '+(preparedRemovalReasons[reason]||reason)+'? No cash or sale will be recorded.'))return;
+    if(!preparedRemovalPendingKey)preparedRemovalPendingKey=crypto.randomUUID();
+    const originatingKey=preparedRemovalPendingKey;
+    if(message&&write.isCurrent())message.textContent='Recording removal and ingredient cost…';
+    try{
+      const result=await api('/api/prepared-product-removals',{method:'POST',body:JSON.stringify({
+        business_id:context.businessId,product_id:productId,quantity,reason,
+        idempotency_key:originatingKey,note:$('preparedRemovalNote').value
+      })},{isCurrent:()=>write.isCurrent()});
+      // A completed A write must not render, clear the new B form/key, or
+      // start B refreshes. A late 401 also cannot log out the new session.
+      if(!write.accept())return;
+      const saved=result.removal;
+      if(message)message.textContent=(result.already_recorded?'Already recorded: ':'Recorded: ')+
+        num(saved.quantity,4)+' portion(s), '+money(saved.estimated_cost)+
+        ' ingredient cost, no sale or cash movement.';
+      preparedRemovalPendingKey=null;
+      form.reset();
+      $('preparedRemovalQty').value=1;
+      await Promise.all([loadStock(),loadProducts(),loadPreparedRemovals()]);
+      if(!write.isCurrent())return;
+      invalidateMerchantToday();
+      updatePreparedRemovalPreview();
+    }catch(error){
+      if(!write.isCurrent())return;
+      if(message)message.textContent=error.data?.shortages?.length
+        ?'Insufficient ingredients: '+error.data.shortages.map(s=>s.item+' needs '+num(s.required,4)+' '+s.unit+'; usable '+num(s.available,4)).join(' • ')
+        :error.message;
+    }
+  }finally{write.finish()}
 });
 
 function openEdit(tx){$('editId').value=tx.id;$('editType').value=tx.type;$('editAmount').value=Number(tx.amount);$('editAccount').value=tx.account||'cash';$('editCategory').value=tx.category||'';$('editNote').value=tx.note||'';$('editReason').value='';$('editMessage').textContent='';$('editDialog').showModal()}
