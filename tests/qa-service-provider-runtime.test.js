@@ -101,8 +101,8 @@ test('Local Services 90-day promotion and notifications/support/settings/session
 test('credential QA targets canonical active authorization across historical controlled territories',async()=>{
   const check=async(target,pilot,secondary)=>{
     const pool={async query(sql,params){
-      assert.match(sql,/pa\\.status='active'/);
-      assert.match(sql,/a\\.account_mode='company_test'/);
+      assert.match(sql,/pa\.status='active'/);
+      assert.match(sql,/a\.account_mode='company_test'/);
       assert.deepEqual(params,[14,13]);
       return{rowCount:1,rows:[{target_territory_id:target}]};
     }};
