@@ -729,7 +729,11 @@ try{
           'INSERT INTO synthetic_expenses(purchase_id,amount,account) VALUES($1,$2,$3) RETURNING *',
           [purchase.id,body.cost,body.account])).rows[0];
         return {purchaseId:purchase.id,
-          response:{inventory:{id:inventoryId},purchase,lot,transaction:expense}};
+          response:{inventory:{id:inventoryId},purchase,lot,
+            // The synthetic expense table records purchase_id; expose the
+            // real source FK under the canonical expense response contract.
+            transaction:{...expense,source:'inventory_purchase',
+              source_id:expense.purchase_id,type:'business_expense'}}};
       }
     });
     app.post('/qa/inventory/purchase',handlers.purchase);
@@ -763,6 +767,8 @@ try{
         'concurrent same-key HTTP posts return first 201 and replay 200');
       eq(String(first.body.purchase.id),String(duplicate.body.purchase.id),
         'HTTP replay returns original purchase identity');
+      eq(String(first.body.transaction.source_id),String(first.body.purchase.id),
+        'HTTP committed expense evidence links to its original purchase');
       const counts=async item=>{
         const q=await pool.query(
           'SELECT i.quantity,count(p.id)::int purchases,'+
