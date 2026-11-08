@@ -171,8 +171,8 @@ export function verifyPaidStockIntakeExpenseDatePatch(updated,original,context,a
   return updated;
 }
 
-// Forward-compatible #881 purchase key: one secure, literal key per approved row.
-// #882 is NOT installed in HTTP yet; this header does not enable safe retry.
+// #881 purchase key: one secure, literal key per approved row.
+// Interrupted writes still require Stock and Money reconciliation before retry.
 export function stockIntakePurchaseIntentKey(row,randomUUID=()=>globalThis.crypto?.randomUUID?.()){
   if(!row||typeof row!=='object'||!['pending','posting'].includes(row.result))
     throw new Error('A reviewed pending stock purchase is required for a stable intent key.');
@@ -794,7 +794,7 @@ if(hasDocument){
       let purchaseDispatched=false;
       try{
         await assertLiveContext();
-        if(!requireCurrent())break;
+        if(!requireCurrent()||state.stop)break;
         if(!sameContext(originalContext,state.context))throw new Error('Merchant context changed.');
         if(!initialBatchChecked){
           // Check ALL approved items before submitting even the first expense.
@@ -806,16 +806,14 @@ if(hasDocument){
         if(!validStockIntakeRow(row))throw new Error('Stock quantity, unit, category, cost or review confirmation is not valid.');
         const classification=stockIntakeClassification(row.classificationCode);
         if(!classification)throw new Error('Choose and verify the Inventory category before posting.');
-        // Bind the approved row to one fresh secure intent before HTTP dispatch.
-        // This is NOT a retry permission until #882 server integration is complete.
+        // Bind the approved row to one secure intent before HTTP dispatch.
         const intentKey=stockIntakePurchaseIntentKey(row);
-        const purchaseHeaders=Object.freeze({...purchaseOriginHeaders,
-          'x-abl-inventory-purchase-intent-key':intentKey});
         row.result='posting';renderRows();
         // From this point an interrupted response is uncertain; never auto-retry.
         purchaseDispatched=true;
         // Canonical atomic purchase + linked expense. This records an existing payment; no funds transfer occurs.
-        const result=await api('/api/inventory/purchase',{method:'POST',headers:purchaseHeaders,body:JSON.stringify({
+        const result=await api('/api/inventory/purchase',{method:'POST',headers:purchaseOriginHeaders,body:JSON.stringify({
+          purchase_intent_key:intentKey,
           item:row.item,...classification,
           purchase_quantity:row.quantity,purchase_unit:row.unit,total_cost:CENTS(row.total),
           account:paidFrom,record_expense:true,
@@ -858,7 +856,7 @@ if(hasDocument){
         renderRows();
       }catch(error){
         if(!requireCurrent())break;
-        // No automatic retry: the server endpoint has no request-key idempotency.
+        // No automatic retry: a request key alone cannot confirm an interrupted write.
         if(error?.paidBatchConflict){
           const conflictRow=error.conflictRow||row;
           conflictRow.result='error';
@@ -906,7 +904,7 @@ if(hasDocument){
   });
   $('purchaseDate').max=localDatePH();
   $('post').addEventListener('click',saveSelected);
-  $('stop').addEventListener('click',()=>{state.stop=true;message('results','Stopping after the active purchase request finishes. No next item will be sent.','error')});
+  $('stop').addEventListener('click',()=>{state.stop=true;message('results','Stop requested. Any purchase already sent can finish. Pending items stay unposted.','error')});
   $('selectSafe').addEventListener('click',()=>{
     let changed=false;
     state.rows.forEach(r=>{

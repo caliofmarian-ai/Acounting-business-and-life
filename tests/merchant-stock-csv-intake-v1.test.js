@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
 import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
@@ -557,7 +558,7 @@ test('auth-expired and pagehide dispatches block stale POST and date correction 
   assert.ok(js.includes("const csrfAtStart=window.ABLSession?.csrfToken?.()||'';"));
   assert.ok(js.includes('if(!requireCurrent())break;'));
   assert.ok(js.includes("if(!requireCurrent()){state.busy=false;updateControls();return;}"));
-  assert.match(js,/await assertLiveContext\(\);\s*if\(!requireCurrent\(\)\)break;/);
+  assert.match(js,/await assertLiveContext\(\);\s*if\(!requireCurrent\(\)\|\|state\.stop\)break;/);
   assert.match(js,/await assertMerchantContext\(\);\s*if\(!requireCurrent\(\)\)break;/);
   assert.match(js,/\}catch\(error\)\{\s*if\(!requireCurrent\(\)\)break;/);
   assert.ok(js.includes("        })});\n        if(!requireCurrent())break;\n        if(!await postWriteMerchantAuthorityIsCurrent("));
@@ -683,7 +684,7 @@ test('the shipped paid CSV purchase POST carries origin captured before asynchro
   assert.ok(snapshot>=0&&header>snapshot&&preflight>header&&dispatch>preflight,
     'capture originating business before asynchronous account/business/Inventory rechecks');
   const purchase=handler.slice(dispatch,dispatch+480);
-  assert.match(purchase,/method:'POST',headers:purchaseHeaders,body:JSON\.stringify\(/);
+  assert.match(purchase,/method:'POST',headers:purchaseOriginHeaders,body:JSON\.stringify\(/);
   assert.match(handler,/if\(!sameContext\(originalContext,state\.context\)\)/);
   assert.doesNotMatch(purchase,/workspace\.active_business_id|state\.context\.businessId|req\.body\.business_id/,
     'never retarget purchase from mutable selection or CSV-provided data');
@@ -732,10 +733,43 @@ test('actual CSV purchase includes reviewed origin and secure per-row intent but
   const key=handler.indexOf('const intentKey=stockIntakePurchaseIntentKey(row)');
   const dispatch=handler.indexOf("const result=await api('/api/inventory/purchase'");
   assert.ok(origin>=0&&preflight>origin&&key>preflight&&dispatch>key);
-  assert.match(handler,/const purchaseHeaders=Object\.freeze\(\{\.\.\.purchaseOriginHeaders,\s*'x-abl-inventory-purchase-intent-key':intentKey\}\)/);
-  assert.match(handler,/method:'POST',headers:purchaseHeaders,body:JSON\.stringify\(/);
+  assert.match(handler,/method:'POST',headers:purchaseOriginHeaders,body:JSON\.stringify\(\{\s*purchase_intent_key:intentKey,/);
+  assert.doesNotMatch(handler,/x-abl-inventory-purchase-intent-key/);
   assert.match(handler,/row\.result='uncertain'/);
   assert.match(js,/delete row\.purchaseIntentKey/);
+});
+
+test('Stop while Stock preflight is pending keeps the approved item unposted',async()=>{
+  const start=js.indexOf('  async function saveSelected(){');
+  const end=js.indexOf("  document.addEventListener('abl:auth-expired'",start);
+  const context={accountId:11,businessId:31,businessName:'Synthetic Merchant'};
+  const [row]=parseStockIntakeCsv(example);
+  row.classificationCode='food_ingredient';
+  row.selected=true;
+  const state={context,inventory:[],rows:[row],busy:false,stop:false,accountId:11,
+    resultLog:[],csvReadRevision:0,contextReadRevision:0};
+  const fields={post:{disabled:false},purchaseAccount:{value:'cash'},purchaseDate:{value:'2026-11-08'}};
+  const sent=[];
+  let finish;
+  const preflight=new Promise(resolve=>{finish=resolve});
+  const saveSelected=runInNewContext('('+js.slice(start,end)+')',{
+    state,$:id=>fields[id],window:{ABLSession:{csrfToken:()=>'test-csrf'}},
+    stockIntakeOriginHeaders,intakeOperationIsCurrent,validStockIntakeRow,
+    guardNewPaidStockIntakeBatch,guardNewPaidStockIntakeRow,stockIntakeClassification,
+    stockIntakePurchaseIntentKey:row=>stockIntakePurchaseIntentKey(row,()=> 'valid_stable_key_12345'),
+    assertLiveContext:()=>preflight,sameContext:(a,b)=>a?.businessId===b?.businessId,
+    api:async path=>{sent.push(path);throw Error('unexpected durable request')},
+    updateControls(){},renderRows(){},message(){},CENTS:Number
+  });
+  const saving=saveSelected();
+  assert.equal(state.busy,true,'approved item is still in the asynchronous preflight');
+  state.stop=true;
+  finish();
+  await saving;
+  assert.deepEqual(sent,[]);
+  assert.equal(row.result,'pending');
+  assert.equal(row.purchaseIntentKey,undefined);
+  assert.equal(state.busy,false);
 });
 
 test('defensive paid stock row guard rejects sub-unit mutations and implicit object coercion',()=>{
