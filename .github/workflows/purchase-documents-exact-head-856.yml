@@ -1,0 +1,57 @@
+name: Purchase Document Numeric Precision — exact head #856
+
+on:
+  pull_request:
+    paths:
+      - merchant-purchase-documents.js
+      - public/purchase-documents-ui.js
+      - tests/purchase-documents-ui-intent-856.test.js
+      - tests/purchase-documents-v1.test.js
+      - scripts/purchase-documents-postgres-856.mjs
+      - .github/workflows/purchase-documents-exact-head-856.yml
+permissions:
+  contents: read
+jobs:
+  isolated-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: receipts856
+          POSTGRES_PASSWORD: ci_receipts856_only
+          POSTGRES_DB: abl_receipts_856_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U receipts856 -d abl_receipts_856_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      RECEIPTS_856_ISOLATED: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: receipts856
+      PGPASSWORD: ci_receipts856_only
+      PGDATABASE: abl_receipts_856_ci
+      PAYMONGO_LIVE_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify literal PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Syntax check
+        run: node --check merchant-purchase-documents.js && node --check public/purchase-documents-ui.js && node --check scripts/purchase-documents-postgres-856.mjs && node --check tests/purchase-documents-v1.test.js && node --check tests/purchase-documents-ui-intent-856.test.js
+      - name: Unit and real isolated PostgreSQL round-trip
+        run: node --test tests/purchase-documents-v1.test.js tests/purchase-documents-ui-intent-856.test.js scripts/purchase-documents-postgres-856.mjs
