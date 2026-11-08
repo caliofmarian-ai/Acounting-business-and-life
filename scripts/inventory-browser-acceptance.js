@@ -23,7 +23,7 @@ const toolsEnd=source.indexOf('\nfunction lotExpiryCopy(',toolsStart);
 assert.ok(toolsStart>0&&toolsEnd>toolsStart,'Actual Stock tool functions are required');
 const stockTools=source.slice(toolsStart,toolsEnd);
 const script=[
-  "const $=id=>document.getElementById(id);let inventoryLoadGeneration=0;window.stockLoadCalls=[];",
+  "const $=id=>document.getElementById(id);let inventoryLoadGeneration=0;const inventoryWrites={invalidate(){}};window.stockLoadCalls=[];",
   "const merchantReadContext=()=>({accountId:1,businessId:1});function isMerchantBaseActive(){return true}",
   "function loadStock({tool=null}={}){window.stockLoadCalls.push(tool);inventoryReadState('ready');const panel=$('stockTool-'+tool);if(panel){panel.dataset.stockLoading='false';panel.dataset.stockLoaded='true'}return Promise.resolve([])}",
   renderer,

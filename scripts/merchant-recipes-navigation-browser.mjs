@@ -19,7 +19,7 @@ assert.ok(navMarkup?.includes('merchantBusinessTools'),'actual shell nav markup 
 const states=['food','mixed','non_food','unknown','supplier'];
 const controls='<aside id="syntheticFixture"><strong>SYNTHETIC UI CHECK — no live account or stock</strong>'+states.map(s=>'<button type="button" data-fixture="'+s+'">Fixture '+s+'</button>').join('')+'</aside>';
 const script=[
- "const $=id=>document.getElementById(id);const accountingState={role:'merchant'};const activeSurface='profile',activeRole='merchant';async function loadMerchantView(name){document.body.dataset.requestedView=name}function updateSellPreview(){}function resetStockTools(){document.querySelectorAll('#stockToolDeck details').forEach(d=>d.open=false)}",
+ "const $=id=>document.getElementById(id);const accountingState={role:'merchant'};const inventoryWrites={invalidate(){}};const activeSurface='profile',activeRole='merchant';async function loadMerchantView(name){document.body.dataset.requestedView=name}function updateSellPreview(){}function resetStockTools(){document.querySelectorAll('#stockToolDeck details').forEach(d=>d.open=false)}",
  "const primary=document.createElement('nav');primary.id='merchantWorkspaceNav';primary.className='merchantWorkspaceNav';primary.setAttribute('aria-label','Merchant workspace navigation');primary.innerHTML="+JSON.stringify(navMarkup)+";document.getElementById('shell').insertAdjacentElement('afterbegin',primary);document.body.dataset.merchantNav='unified';",
  shellActive,setView,presentation,actions,
  "$('login').classList.add('hidden');$('shell').classList.remove('hidden');$('todayContent').classList.remove('hidden');$('todayLoading').classList.add('hidden');",
