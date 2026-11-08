@@ -322,6 +322,26 @@ export function intakeOperationIsCurrent(state,revision,expectedCsrf,currentCsrf
     expectedCsrf===currentCsrf;
 }
 
+// After a paid-stock POST or historical expense PATCH, an unannounced
+// Merchant workspace change can invalidate cached revision and CSRF checks.
+// Fail closed before showing private Stock/Money evidence or another mutation.
+export async function postWriteMerchantAuthorityIsCurrent(expected,readLive,isCurrent,readBound){
+  const valid=ctx=>Boolean(ctx&&
+    Number.isSafeInteger(ctx.accountId)&&ctx.accountId>0&&
+    Number.isSafeInteger(ctx.businessId)&&ctx.businessId>0&&
+    typeof ctx.businessName==='string');
+  const same=(left,right)=>valid(left)&&valid(right)&&
+    left.accountId===right.accountId&&left.businessId===right.businessId&&
+    left.businessName===right.businessName;
+  if(!valid(expected)||typeof readLive!=='function'||
+     typeof isCurrent!=='function'||typeof readBound!=='function')return false;
+  try{
+    if(!isCurrent()||!same(expected,readBound()))return false;
+    const live=await readLive();
+    return isCurrent()&&same(expected,readBound())&&same(expected,live);
+  }catch{return false;}
+}
+
 export function parseStockIntakeCsv(text){
   const records=parseCsvRecords(text);
   if(records.length<2)throw new Error('CSV must have a header and at least one product.');
@@ -802,6 +822,9 @@ if(hasDocument){
           note:'Paid stock intake from reviewed Merchant CSV. Actual purchase date: '+originalDate+'. '+row.note
         })});
         if(!requireCurrent())break;
+        if(!await postWriteMerchantAuthorityIsCurrent(
+          originalContext,snapshot,stillCurrent,()=>state.context
+        )){invalidatePrivateReview();break;}
         verifyPaidStockIntakeReceipt(result,originalContext,row,paidFrom);
         // At this point the stock and a linked expense exist even if the date correction fails.
         row.result='saved-date-pending';row.selected=false;saved++;
@@ -825,6 +848,9 @@ if(hasDocument){
             })
           });
           if(!requireCurrent())break;
+          if(!await postWriteMerchantAuthorityIsCurrent(
+            originalContext,snapshot,stillCurrent,()=>state.context
+          )){invalidatePrivateReview();break;}
           verifyPaidStockIntakeExpenseDatePatch(dated,result.transaction,originalContext,originalDate);
         }
         row.result='saved';

@@ -7,7 +7,7 @@ import {
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
   STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes,
-  canonicalStockIntakeIdentityId,stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows,verifyPaidStockIntakeReceipt,verifyPaidStockIntakeExpenseDatePatch
+  canonicalStockIntakeIdentityId,stockIntakeOriginHeaders,stockIntakePurchaseIntentKey,stockIntakeBaseQuantityExact,stockIntakeScopedRows,verifyPaidStockIntakeReceipt,verifyPaidStockIntakeExpenseDatePatch,postWriteMerchantAuthorityIsCurrent
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -831,4 +831,54 @@ test('actual Merchant snapshot rejects malformed origin IDs while preserving can
   assert.match(source,/canonicalStockIntakeIdentityId\(me\?\.account\?\.id\)/);
   assert.match(source,/canonicalStockIntakeIdentityId\(business\?\.id\)/);
   assert.match(source,/canonicalStockIntakeIdentityId\(workspace\.active_business_id\)/);
+});
+
+test('paid-stock and dated expense acknowledgements require a fresh live Merchant binding',async()=>{
+  const original={accountId:11,businessId:31,businessName:'Synthetic Merchant A'};
+  const other={accountId:11,businessId:32,businessName:'Synthetic Merchant B'};
+  let bound=original,authorized=true;
+  const check=readLive=>postWriteMerchantAuthorityIsCurrent(
+    original,readLive,()=>authorized,()=>bound
+  );
+  assert.equal(await check(async()=>({...original})),true);
+  assert.equal(await check(async()=>other),false,
+    'a silent Merchant A to B switch must revoke the previous paid receipt');
+  bound=other;
+  assert.equal(await check(async()=>original),false,
+    'a stale A snapshot cannot override an already changed cached selection');
+  bound=original;authorized=false;
+  assert.equal(await check(async()=>original),false,'an expired/replaced session cannot display A');
+  authorized=true;
+  assert.equal(await check(async()=>{throw new Error('Session read failed')}),false,
+    'unverifiable post-write outcome must not be advertised as SAVED');
+  let finish;
+  const delayed=new Promise(resolve=>{finish=resolve});
+  const pending=check(()=>delayed);
+  bound=other;finish(original);
+  assert.equal(await pending,false,
+    'a Merchant workspace switch during the post-write snapshot must revoke late ACK');
+  bound=original;
+  assert.equal(await postWriteMerchantAuthorityIsCurrent(
+    original,()=>delayed,()=>authorized,()=>({accountId:11,businessId:'31',businessName:'Synthetic Merchant A'})
+  ),false,'malformed current authority does not gain Merchant identity through coercion');
+  assert.equal(await postWriteMerchantAuthorityIsCurrent(
+    original,async()=>original,()=>authorized,()=>original
+  ),true);
+});
+
+test('actual paid-stock controller checks live Merchant after every durable response before private evidence',()=>{
+  const post=js.indexOf("const result=await api('/api/inventory/purchase'");
+  const postAuth=js.indexOf('await postWriteMerchantAuthorityIsCurrent(',post);
+  const receipt=js.indexOf('verifyPaidStockIntakeReceipt(result,originalContext,row,paidFrom)',post);
+  const savedPending=js.indexOf("row.result='saved-date-pending'",post);
+  assert.ok(post>=0&&postAuth>post&&receipt>postAuth&&savedPending>receipt,
+    'fresh live identity must gate paid-stock ACK and private expense IDs before SAVED');
+  const patch=js.indexOf("const dated=await api('/api/transactions/'",savedPending);
+  const patchAuth=js.indexOf('await postWriteMerchantAuthorityIsCurrent(',patch);
+  const checked=js.indexOf('verifyPaidStockIntakeExpenseDatePatch(dated,result.transaction,originalContext,originalDate)',patch);
+  const saved=js.indexOf("row.result='saved';",patch);
+  assert.ok(patch>savedPending&&patchAuth>patch&&checked>patchAuth&&saved>checked,
+    'historical expense ACK must be reauthorized before reporting posted Money evidence');
+  const paths=js.match(/if\(!await postWriteMerchantAuthorityIsCurrent\([\s\S]*?\)\)\{invalidatePrivateReview\(\);break;\}/g)||[];
+  assert.equal(paths.length,2,'both post-write failures must purge old private Merchant data without retry');
 });
