@@ -13,6 +13,7 @@ export function createInventoryCountUi({
   api,
   getInventory,
   getLocations,
+  beginWrite=()=>null,
   getReadGuard=()=>()=>true,
   refreshInventory,
   escapeHtml,
@@ -229,6 +230,8 @@ export function createInventoryCountUi({
   }
 
   async function start(){
+    const write=beginWrite(byId('guidedCountCard'));if(!write)return;
+    try{
     const countType=byId('countSessionType')?.value||'full';
     const scopeType=countType==='full'?'all':byId('countSessionScopeType')?.value;
     const scopeValue=countType==='full'?'':byId('countSessionScopeValue')?.value;
@@ -242,15 +245,19 @@ export function createInventoryCountUi({
         method:'POST',
         body:JSON.stringify({count_type:countType,scope_type:scopeType,scope_value:scopeValue})
       });
+      if(!write.accept())return;
       render(created);
       message('Count started. Expected quantities stay hidden until Review.','positive');
-    }catch(error){
+    }catch(error){if(!write.isCurrent())return;
       message(error.message||'Count could not be started.','negative');
       if(error.data?.active_session_id)await load();
     }
+    }finally{write.finish()}
   }
 
   async function saveItem(){
+    const write=beginWrite(byId('guidedCountCard'));if(!write)return;
+    try{
     if(!session||session.status!=='in_progress')return;
     const item=activeSelectedItem();
     const input=byId('countSessionQuantity');
@@ -265,6 +272,7 @@ export function createInventoryCountUi({
         method:'PUT',
         body:JSON.stringify({counted_quantity:counted})
       });
+      if(!write.accept())return;
       render(saved);
       const next=saved.items?.find(x=>x.counted_quantity==null);
       if(next&&byId('countSessionItemPicker')){
@@ -272,34 +280,45 @@ export function createInventoryCountUi({
         renderCurrentItem();
       }
       message(next?'Saved. Continue with the next item.':'All items counted. Review is ready.','positive');
-    }catch(error){message(error.message||'Count could not be saved.','negative')}
+    }catch(error){if(!write.isCurrent())return;message(error.message||'Count could not be saved.','negative')}
+    }finally{write.finish()}
   }
 
   async function review(){
+    const write=beginWrite(byId('guidedCountCard'));if(!write)return;
+    try{
     if(!session)return;
     message('Preparing review…');
     try{
       const reviewed=await api(`/api/inventory/count-sessions/${session.id}/review`,{
         method:'POST',body:'{}'
       });
+      if(!write.accept())return;
       render(reviewed);
       message('Review every variance before posting. Inventory has not changed yet.','positive');
-    }catch(error){message(error.message||'Count is not ready for review.','negative')}
+    }catch(error){if(!write.isCurrent())return;message(error.message||'Count is not ready for review.','negative')}
+    }finally{write.finish()}
   }
 
   async function resume(){
+    const write=beginWrite(byId('guidedCountCard'));if(!write)return;
+    try{
     if(!session)return;
     message('Returning to counting…');
     try{
       const resumed=await api(`/api/inventory/count-sessions/${session.id}/resume`,{
         method:'POST',body:'{}'
       });
+      if(!write.accept())return;
       render(resumed);
       message('Counting resumed. Expected quantities are hidden again.','positive');
-    }catch(error){message(error.message||'Count could not be resumed.','negative')}
+    }catch(error){if(!write.isCurrent())return;message(error.message||'Count could not be resumed.','negative')}
+    }finally{write.finish()}
   }
 
   async function post(){
+    const write=beginWrite(byId('guidedCountCard'));if(!write)return;
+    try{
     if(!session||session.status!=='review')return;
     const approved=[...document.querySelectorAll('#countSessionReviewList input[data-count-approve]:checked')]
       .map(input=>Number(input.dataset.countApprove))
@@ -315,12 +334,15 @@ export function createInventoryCountUi({
         method:'POST',
         body:JSON.stringify({approved_inventory_ids:approved})
       });
+      if(!write.accept())return;
       const adjustments=Array.isArray(posted.posted_adjustments)?posted.posted_adjustments.length:
         (posted.items||[]).filter(x=>x.posted_adjustment_id).length;
       render(null);
       if(typeof refreshInventory==='function')await refreshInventory();
+      if(!write.isCurrent())return;
       message(`Inventory count posted once. ${adjustments} stock adjustment(s) recorded in the audit trail.`,'positive');
-    }catch(error){message(error.message||'Inventory count could not be posted.','negative')}
+    }catch(error){if(!write.isCurrent())return;message(error.message||'Inventory count could not be posted.','negative')}
+    }finally{write.finish()}
   }
 
   function wire(){
