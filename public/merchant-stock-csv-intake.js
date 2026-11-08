@@ -814,6 +814,7 @@ if(hasDocument){
         // Canonical atomic purchase + linked expense. This records an existing payment; no funds transfer occurs.
         const result=await api('/api/inventory/purchase',{method:'POST',headers:purchaseOriginHeaders,body:JSON.stringify({
           purchase_intent_key:intentKey,
+          create_only:true,
           item:row.item,...classification,
           purchase_quantity:row.quantity,purchase_unit:row.unit,total_cost:CENTS(row.total),
           account:paidFrom,record_expense:true,

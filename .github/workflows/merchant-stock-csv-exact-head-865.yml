@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'public/merchant-stock-csv-intake.js'
+      - 'server-business-accounting.js'
+      - 'qa-purchase-intent-881.js'
       - 'tests/merchant-stock-csv-intake-v1.test.js'
       - '.github/workflows/merchant-stock-csv-exact-head-865.yml'
 

@@ -77,7 +77,7 @@ export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,h
     const item=scope+' ingredient';
     const firstKey=randomUUID();
     const secondKey=randomUUID();
-    const purchase={purchase_intent_key:firstKey,item,purchase_quantity:125,purchase_unit:'g',total_cost:'12.34',
+    const purchase={purchase_intent_key:firstKey,create_only:true,item,purchase_quantity:125,purchase_unit:'g',total_cost:'12.34',
       inventory_type:'ingredient',inventory_domain:'food',stock_role:'ingredient',storage_condition:'dry',
       storage_area_type:'pantry',account:'cash',record_expense:true,note:'Synthetic QA inventory expense'};
     const [first,concurrent]=await Promise.all([
@@ -89,9 +89,15 @@ export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,h
     assert.ok(first.json?.purchase?.id,'Purchase intent 881: purchase ID is present');
     exact(String(first.json?.inventory?.business_id),String(a),'receipt is scoped to initiating business');
     exact(Number(first.json?.inventory?.quantity),125,'parallel retry increases stock once');
+    exact((await receive(a,{...purchase,purchase_intent_key:randomUUID()},merchant.token)).status,409,
+      'distinct create-only intent cannot add quantity or expense to an existing same-business name');
+    exact((await receive(a,{...purchase,purchase_intent_key:randomUUID(),create_only:'true'},merchant.token)).status,400,
+      'non-boolean create-only authority fails closed');
+    exact((await receive(a,{...purchase,purchase_intent_key:randomUUID(),inventory_id:first.json.inventory.id},merchant.token)).status,400,
+      'create-only cannot target an existing Inventory ID');
     exact((await receive(a,{...purchase,total_cost:'13.34'},merchant.token)).status,409,'same key with different amount is rejected');
 
-    const second=await receive(a,{...purchase,purchase_intent_key:secondKey},merchant.token);
+    const second=await receive(a,{...purchase,purchase_intent_key:secondKey,create_only:false},merchant.token);
     exact(second.status,201,'new intent can receive the same item again');
     assert.ok(second.json?.purchase?.id&&second.json.purchase.id!==first.json.purchase.id,
       'Purchase intent 881: distinct intent creates another purchase');
@@ -115,7 +121,7 @@ export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,h
     }
 
     const {purchase_intent_key:ignored,...unkeyed}=purchase;
-    const legacy=await receive(a,{...unkeyed,item:scope+' legacy ingredient',purchase_quantity:25,total_cost:0,record_expense:false},merchant.token);
+    const legacy=await receive(a,{...unkeyed,create_only:false,item:scope+' legacy ingredient',purchase_quantity:25,total_cost:0,record_expense:false},merchant.token);
     exact(legacy.status,201,'existing request without a key still works');
     exact(legacy.json?.transaction,null,'legacy no-expense request remains a stock-only receive');
 

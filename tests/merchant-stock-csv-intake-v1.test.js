@@ -733,7 +733,7 @@ test('actual CSV purchase includes reviewed origin and secure per-row intent but
   const key=handler.indexOf('const intentKey=stockIntakePurchaseIntentKey(row)');
   const dispatch=handler.indexOf("const result=await api('/api/inventory/purchase'");
   assert.ok(origin>=0&&preflight>origin&&key>preflight&&dispatch>key);
-  assert.match(handler,/method:'POST',headers:purchaseOriginHeaders,body:JSON\.stringify\(\{\s*purchase_intent_key:intentKey,/);
+  assert.match(handler,/method:'POST',headers:purchaseOriginHeaders,body:JSON\.stringify\(\{\s*purchase_intent_key:intentKey,\s*create_only:true,/);
   assert.doesNotMatch(handler,/x-abl-inventory-purchase-intent-key/);
   assert.match(handler,/row\.result='uncertain'/);
   assert.match(js,/delete row\.purchaseIntentKey/);
