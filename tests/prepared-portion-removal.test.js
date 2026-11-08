@@ -91,3 +91,17 @@ test('ingredient consumption matches the canonical three-decimal physical stock 
     {recipe_quantity:'0.0001',unit_cost:'2.000000'}
   ],1),error=>error?.status===409);
 });
+
+test('noncanonical IDs and malformed trusted business authority never authorize prepared stock writes',()=>{
+  for(const bad of ['012',' 12 ','12 ','12.0','1.2e1','+12',[12],{valueOf:()=>12},true,12.1,0,Number.MAX_SAFE_INTEGER+1]){
+    assert.throws(()=>parsePreparedRemoval({...example,business_id:bad},12),e=>e.status===409,
+      'request business ID '+String(bad));
+    assert.throws(()=>parsePreparedRemoval(example,bad),e=>e.status===409,
+      'trusted business ID '+String(bad));
+  }
+  for(const product_id of ['081',' 81 ','81.0','8.1e1',+Infinity]){
+    assert.throws(()=>parsePreparedRemoval({...example,product_id},12),e=>e.status===400);
+  }
+  assert.equal(parsePreparedRemoval({...example,business_id:'12',product_id:'81'},'12').businessId,12);
+  assert.equal(parsePreparedRemoval(example,12).productId,81);
+});

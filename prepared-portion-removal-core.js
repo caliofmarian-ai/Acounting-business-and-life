@@ -7,11 +7,12 @@ export const PREPARED_REMOVAL_REASONS=Object.freeze({
 });
 export const preparedRemovalTreatment=reason=>reason==='owner_consumption'?'noncash_owner_draw':'noncash_product_loss';
 const preparedPositiveId=value=>{
-  // JSON identity must not be implicitly coerced from booleans, arrays or objects.
-  if((typeof value!=='number'&&typeof value!=='string')||
-     (typeof value==='string'&&!/^\d+$/.test(value)))return null;
+  // Both caller IDs and the trusted session's business ID must be canonical.
+  // Number(...) coercion or zero-padded aliases must not authorize a stock write.
+  if(typeof value==='number')return Number.isSafeInteger(value)&&value>0?value:null;
+  if(typeof value!=='string'||!(/^[1-9]\d*$/.test(value)))return null;
   const n=Number(value);
-  return Number.isSafeInteger(n)&&n>0?n:null;
+  return Number.isSafeInteger(n)?n:null;
 };
 const preparedPortions=value=>{
   if((typeof value!=='number'&&typeof value!=='string')||
@@ -25,7 +26,8 @@ const preparedPortions=value=>{
 };
 export function parsePreparedRemoval(body,expectedBusinessId){
   const businessId=preparedPositiveId(body?.business_id);
-  if(businessId===null||businessId!==Number(expectedBusinessId)){
+  const authorizedBusinessId=preparedPositiveId(expectedBusinessId);
+  if(businessId===null||authorizedBusinessId===null||businessId!==authorizedBusinessId){
     throw Object.assign(new Error('Merchant business changed. Reopen Quick Sale and try again.'),{status:409});
   }
   const productId=preparedPositiveId(body?.product_id),quantity=preparedPortions(body?.quantity);
