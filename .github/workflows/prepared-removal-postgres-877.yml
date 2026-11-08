@@ -1,0 +1,61 @@
+name: Prepared Portion Stock Precision — exact head #877
+on:
+  pull_request:
+    paths:
+      - 'prepared-portion-removal-core.js'
+      - 'tests/prepared-portion-removal.test.js'
+      - 'scripts/prepared-removal-postgres-877.mjs'
+      - 'scripts/prepared-removal-http-postgres-877.mjs'
+      - '.github/workflows/prepared-removal-postgres-877.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'prepared-portion-removal-core.js'
+      - 'tests/prepared-portion-removal.test.js'
+      - 'scripts/prepared-removal-postgres-877.mjs'
+      - 'scripts/prepared-removal-http-postgres-877.mjs'
+      - '.github/workflows/prepared-removal-postgres-877.yml'
+permissions:
+  contents: read
+jobs:
+  isolated-physical-stock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_prepared_877_only
+          POSTGRES_DB: abl_prepared_removal_877_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_prepared_removal_877_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      NODE_ENV: test
+      ABL_PREPARED_REMOVAL_877_CI: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: ci_prepared_877_only
+      PGDATABASE: abl_prepared_removal_877_ci
+      PAYMONGO_LIVE_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert literal PR revision
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Actual-source unit and real isolated PostgreSQL 16
+        run: node --test tests/prepared-portion-removal.test.js scripts/prepared-removal-postgres-877.mjs scripts/prepared-removal-http-postgres-877.mjs

@@ -7,6 +7,11 @@ on:
       - 'inventory-purchase-intent-http-881.js'
       - 'tests/inventory-purchase-intent-881.test.js'
       - 'scripts/inventory-purchase-intent-postgres-881.mjs'
+      - 'scripts/inventory-purchase-intent-runtime-881.mjs'
+      - 'server-business-accounting.js'
+      - 'public/v03.js'
+      - 'qa-acceptance.js'
+      - 'qa-purchase-intent-881.js'
       - '.github/workflows/inventory-purchase-intent-postgres-881.yml'
   push:
     branches: [main]
@@ -15,6 +20,11 @@ on:
       - 'inventory-purchase-intent-http-881.js'
       - 'tests/inventory-purchase-intent-881.test.js'
       - 'scripts/inventory-purchase-intent-postgres-881.mjs'
+      - 'scripts/inventory-purchase-intent-runtime-881.mjs'
+      - 'server-business-accounting.js'
+      - 'public/v03.js'
+      - 'qa-acceptance.js'
+      - 'qa-purchase-intent-881.js'
       - '.github/workflows/inventory-purchase-intent-postgres-881.yml'
 
 permissions:
@@ -61,3 +71,9 @@ jobs:
         run: node --test tests/inventory-purchase-intent-881.test.js
       - name: Real isolated PostgreSQL double-post and rollback contract
         run: node scripts/inventory-purchase-intent-postgres-881.mjs
+      - name: Authenticated application route on isolated PostgreSQL
+        env:
+          PGDATABASE: abl_purchase_intent_runtime_ci
+        run: |
+          psql --dbname postgres --set ON_ERROR_STOP=1 --command 'CREATE DATABASE abl_purchase_intent_runtime_ci'
+          node scripts/inventory-purchase-intent-runtime-881.mjs
