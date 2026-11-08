@@ -1,0 +1,93 @@
+name: Temporary Supplier 805 Release Preparation
+on:
+  push:
+    branches: [fix/supplier-workspace-request-context-801]
+    paths: [.github/workflows/release-prepare-supplier-805.yml]
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Reconcile only the reviewed Supplier scope with released main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = 67b75f6ac5fb4c3a743dd143e542ac9c91a20cc5
+          test "$(git diff --name-only HEAD^ HEAD)" = .github/workflows/release-prepare-supplier-805.yml
+          test "$(git rev-parse origin/main)" = 4d77787b416c1d2b59d4b1551dcc66fb84ed55de
+          git -c user.name=release-preparation -c user.email=release-preparation@users.noreply.github.com merge --no-commit --no-ff 4d77787b416c1d2b59d4b1551dcc66fb84ed55de
+          git rm .github/workflows/release-prepare-supplier-805.yml
+          printf '%s\n' public/suppliers-ui.js qa-acceptance.js tests/qa-supplier-experience.test.js tests/supplier-workspace-request-context.test.js | sort > /tmp/expected-805-paths
+          git diff --cached --name-only 4d77787b416c1d2b59d4b1551dcc66fb84ed55de | sort > /tmp/actual-805-paths
+          diff -u /tmp/expected-805-paths /tmp/actual-805-paths
+          git diff --cached --check
+          grep -q qa-owner-decision-evidence.js qa-acceptance.js
+          grep -q qa-inventory-origin-841.js qa-acceptance.js
+          git diff --cached --stat 4d77787b416c1d2b59d4b1551dcc66fb84ed55de
+      - run: npm ci
+      - name: Full tests on prepared integration tree
+        run: npm test
+      - name: Independently verify public Production health and served code (GET only)
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {createHash} from 'node:crypto';
+          import {execFileSync} from 'node:child_process';
+          const revision='4d77787b416c1d2b59d4b1551dcc66fb84ed55de';
+          const origin='https://caliof.com';
+          const response=await fetch(origin+'/health',{signal:AbortSignal.timeout(20000),headers:{'Cache-Control':'no-cache'}});
+          const health=await response.json();
+          console.log('PRODUCTION_PUBLIC_HEALTH',JSON.stringify({status:response.status,health}));
+          assert.equal(response.status,200);
+          assert.ok(JSON.stringify(health).includes(revision.slice(0,12)),'Expected deployed revision missing from health');
+          for(const path of ['public/v03.js','public/inventory-write-context.js']){
+            const res=await fetch(origin+'/'+path.slice(7)+'?release='+revision,{signal:AbortSignal.timeout(20000),headers:{'Cache-Control':'no-cache'}});
+            assert.equal(res.status,200,path);
+            const bytes=Buffer.from(await res.arrayBuffer());
+            const actual=createHash('sha1').update(Buffer.from('blob '+bytes.length+'\0')).update(bytes).digest('hex');
+            const expected=execFileSync('git',['rev-parse',revision+':'+path],{encoding:'utf8'}).trim();
+            assert.equal(actual,expected,path+' served source parity');
+            console.log('PRODUCTION_PUBLIC_SOURCE_PARITY',JSON.stringify({path,blob:actual,bytes:bytes.length}));
+          }
+          NODE
+      - name: Materialize reviewed tree only (never move branch refs)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('node:fs');
+            const cp=require('node:child_process');
+            const repo=context.repo;
+            const main='4d77787b416c1d2b59d4b1551dcc66fb84ed55de';
+            const paths=['public/suppliers-ui.js','qa-acceptance.js','tests/qa-supplier-experience.test.js','tests/supplier-workspace-request-context.test.js'];
+            const head=await github.rest.git.getRef({...repo,ref:'heads/fix/supplier-workspace-request-context-801'});
+            if(head.data.object.sha!==context.sha)throw new Error('Supplier branch moved; do not publish');
+            const liveMain=await github.rest.git.getRef({...repo,ref:'heads/main'});
+            if(liveMain.data.object.sha!==main)throw new Error('Main moved; prepare again');
+            const prepared=cp.execFileSync('git',['write-tree'],{encoding:'utf8'}).trim();
+            const mainCommit=await github.rest.git.getCommit({...repo,commit_sha:main});
+            const tree=paths.map(path=>({path,mode:'100644',type:'blob',content:fs.readFileSync(path,'utf8')}));
+            const result=await github.rest.git.createTree({...repo,base_tree:mainCommit.data.tree.sha,tree});
+            if(result.data.sha!==prepared)throw new Error('Materialized tree differs from tested index');
+            core.info('RELEASE_PREPARED_805 '+JSON.stringify({tree:prepared,parent:context.sha,main,source:'67b75f6ac5fb4c3a743dd143e542ac9c91a20cc5',paths,refs_changed:false}));
+      - name: Preserve local review workspace without Git credentials
+        if: always()
+        shell: bash
+        run: tar --exclude=.git -czf "$RUNNER_TEMP/release-review-805.tar.gz" .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-review-805
+          path: ${{ runner.temp }}/release-review-805.tar.gz
+          retention-days: 1
+          if-no-files-found: error
