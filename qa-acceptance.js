@@ -1,3 +1,6 @@
+import {INVENTORY_ORIGIN_841_WAVE,runInventoryOrigin841Acceptance} from './qa-inventory-origin-841.js';
+import {PREPARED_REMOVAL_877_WAVE,runPreparedRemoval877Acceptance} from './qa-prepared-removal-877.js';
+import {PURCHASE_DOCUMENTS_856_WAVE,runPurchaseDocuments856Acceptance} from './qa-purchase-documents-856.js';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
@@ -81,6 +84,9 @@ ACCEPTANCE_WAVES.add(MERCHANT_COUNTER_ORDERS_V1_WAVE);
 ACCEPTANCE_WAVES.add(KNOWLEDGE_CENTER_WAVE);
 ACCEPTANCE_WAVES.add(INVENTORY_LOCATION_READ_862_WAVE);
 ACCEPTANCE_WAVES.add(PROFILE_FINANCE_MONEY_871_WAVE);
+ACCEPTANCE_WAVES.add(INVENTORY_ORIGIN_841_WAVE);
+ACCEPTANCE_WAVES.add(PREPARED_REMOVAL_877_WAVE);
+ACCEPTANCE_WAVES.add(PURCHASE_DOCUMENTS_856_WAVE);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -442,8 +448,8 @@ async function ensureMerchantApproved({pool,base,merchant,adminToken,territoryId
   };
 }
 
-async function ensureInventoryItem({base,token,name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit}){
-  const inventory=await requestJson(base,'/api/inventory',{token});
+async function ensureInventoryItem({base,token,businessId,name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit}){
+  const inventory=await requestJson(base,'/api/inventory',{token,headers:{'x-abl-inventory-origin-business':String(businessId)}});
   expectStatus(inventory,200,'Merchant inventory read');
   const existing=(Array.isArray(inventory.json)?inventory.json:[]).find(
     item=>String(item.item||'').trim().toLowerCase()===String(name).toLowerCase()
@@ -455,7 +461,7 @@ async function ensureInventoryItem({base,token,name,purchaseQuantity,purchaseUni
 
   const created=await requestJson(base,'/api/inventory/purchase',{
     method:'POST',
-    token,
+    token,headers:{'x-abl-inventory-origin-business':String(businessId)},
     body:{
       item:name,
       purchase_quantity:purchaseQuantity,
@@ -637,7 +643,7 @@ async function runMerchantCatalogSeed({pool,base,secret}){
   ]){
     const [name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit]=spec;
     inventoryByName[name]=await ensureInventoryItem({
-      base,token:merchant.token,name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit
+      base,token:merchant.token,businessId:workspace.businessId,name,purchaseQuantity,purchaseUnit,totalCost,reorderQuantity,reorderUnit
     });
   }
 
@@ -1634,6 +1640,25 @@ async function ensureQaSupplierSupportTicket({pool,base,token,accountId,poId}){
   return ticketId;
 }
 
+export function assertSupplierExperienceFinanceEvidence(overview,{supplierBusinessId,expectedTotal}){
+  const businessId=Number(supplierBusinessId),minimum=Number(expectedTotal),failures=[];
+  const finiteNumber=value=>(typeof value==='number'||(typeof value==='string'&&value.trim()!==''))&&Number.isFinite(Number(value));
+  const attributed='SUPPLIER_BUSINESS_ATTRIBUTED';
+  if(!finiteNumber(supplierBusinessId)||!Number.isSafeInteger(businessId)||businessId<=0)failures.push('expected_supplier_business_id');
+  if(!finiteNumber(expectedTotal)||minimum<=0)failures.push('expected_fixture_total');
+  if(overview?.role!=='supplier')failures.push('role');
+  if(!finiteNumber(overview?.business?.id)||!Number.isSafeInteger(Number(overview.business.id))||Number(overview.business.id)!==businessId)failures.push('business.id');
+  if(overview?.commercial?.attribution_status!==attributed)failures.push('commercial.attribution_status');
+  if(overview?.cash_evidence?.attribution_status!==attributed)failures.push('cash_evidence.attribution_status');
+  if(!finiteNumber(overview?.commercial?.received_po_count)||!Number.isSafeInteger(Number(overview.commercial.received_po_count))||Number(overview.commercial.received_po_count)<1)failures.push('commercial.received_po_count');
+  for(const field of ['business_scoped_po_paid_amount','business_ledger_recorded_receipts']){
+    const value=overview?.cash_evidence?.[field];
+    if(!finiteNumber(value)||Number(value)<minimum)failures.push('cash_evidence.'+field);
+  }
+  // Report field categories only; runtime payloads can contain private business/account data.
+  if(failures.length)throw new Error('Supplier Finance evidence mismatch: '+failures.join(', ')+'.');
+}
+
 async function runSupplierExperienceAcceptance({pool,base,secret}){
   const merchantSeed=await runMerchantCatalogSeed({pool,base,secret});
   if(merchantSeed.status!=='PASS')throw new Error('Merchant catalog prerequisite did not pass.');
@@ -1779,18 +1804,14 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
     throw new Error('Supplier Experience PO payment did not reconcile.');
   }
 
-  const supplierFinance=await requestJson(base,'/api/accounting/finance-overview',{token:supplier.token});
-  expectStatus(supplierFinance,200,'Supplier Finance overview');
-  if(supplierFinance.json?.role!=='supplier'||!supplierFinance.json?.business?.id){
-    throw new Error('Supplier Finance did not resolve a Supplier business workspace.');
+  const supplierBusinessId=Number(po.supplier_business_id);
+  if(!['number','string'].includes(typeof po.supplier_business_id)||!Number.isSafeInteger(supplierBusinessId)||supplierBusinessId<=0){
+    throw new Error('Supplier Experience PO seller business attribution is missing or invalid.');
   }
-  const supplierBusinessId=Number(supplierFinance.json.business.id);
   const expectedTotal=SUPPLIER_QA_PRICE*SUPPLIER_QA_PACKS;
-  if(Number(supplierFinance.json?.commercial?.received_po_count||0)<1
-    ||Number(supplierFinance.json?.cash_evidence?.account_level_po_paid_amount||0)<expectedTotal
-    ||Number(supplierFinance.json?.cash_evidence?.business_ledger_recorded_receipts||0)<expectedTotal){
-    throw new Error('Supplier Finance is missing fulfilled-PO or recorded-payment evidence.');
-  }
+  const supplierFinance=await requestJson(base,`/api/accounting/finance-overview?business_id=${supplierBusinessId}`,{token:supplier.token});
+  expectStatus(supplierFinance,200,'Supplier Finance overview');
+  assertSupplierExperienceFinanceEvidence(supplierFinance.json,{supplierBusinessId,expectedTotal});
 
   const supplierMe=await requestJson(base,'/api/me',{token:supplier.token});
   expectStatus(supplierMe,200,'Supplier Account Home');
@@ -6394,7 +6415,17 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===PROFILE_FINANCE_MONEY_871_WAVE
+    const result=config.wave===PURCHASE_DOCUMENTS_856_WAVE
+       ?await runPurchaseDocuments856Acceptance({pool,base,secret:config.secret,
+         aliases:{merchant:MERCHANT_ALIAS,customer:CUSTOMER_ALIAS},
+         helpers:{requestJson,requestBinary,expectStatus,qaAccountSession,ensureActiveRole}})
+       :config.wave===PREPARED_REMOVAL_877_WAVE
+       ?await runPreparedRemoval877Acceptance({pool,base,secret:config.secret,
+         aliases:{merchant:MERCHANT_ALIAS},helpers:{requestJson,expectStatus,qaAccountSession,ensureActiveRole}})
+       :config.wave===INVENTORY_ORIGIN_841_WAVE
+       ?await runInventoryOrigin841Acceptance({pool,base,secret:config.secret,
+         aliases:{merchant:MERCHANT_ALIAS},helpers:{requestJson,expectStatus,qaAccountSession,ensureActiveRole}})
+       :config.wave===PROFILE_FINANCE_MONEY_871_WAVE
        ?await runProfileFinanceMoney871Acceptance({
          pool,base,secret:config.secret,
          aliases:{customer:CUSTOMER_ALIAS,other:MERCHANT_ALIAS},
