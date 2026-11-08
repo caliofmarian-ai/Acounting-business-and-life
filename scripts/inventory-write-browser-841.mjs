@@ -7,6 +7,8 @@ import {join} from 'node:path';
 
 const read=p=>readFileSync(p,'utf8'),source=read('public/v03.js');
 const block=(a,b)=>{const start=source.indexOf(a),end=source.indexOf(b,start);assert.ok(start>=0&&end>start);return source.slice(start,end)};
+const purchaseIntentState=source.match(/^let pendingStockPurchase=null;$/m)?.[0];
+assert.ok(purchaseIntentState,'Native Stock callback fixture includes its purchase intent state');
 const forms=['stockForm','stockAdjustmentForm','consumableRuleForm','storageForm','restockSettingsForm','ingredientAllergenForm','inventoryUnavailableForm'];
 const callbacks=forms.filter(form=>form!=='inventoryUnavailableForm').map(form=>{
   const start=source.indexOf(`$('${form}')${form==='stockForm'?'.':'?.'}addEventListener('submit',async`);
@@ -29,6 +31,7 @@ const staleMerchantRead=()=>Object.assign(new Error('context changed'),{staleMer
 const inventoryWrites=createInventoryWriteController({captureContext:merchantReadContext,isContextCurrent:merchantReadIsCurrent,byId:$});
 const beginInventoryWrite=root=>inventoryWrites.begin(root);
 let inventoryConfirmedContext=merchantReadContext();
+${purchaseIntentState}
 window.__calls=[];window.__refreshes=0;window.__logouts=0;
 function setOnline(){}function logout(){window.__logouts++}
 const num=String,money=String,esc=String;function invalidateMerchantToday(){}
@@ -43,7 +46,7 @@ function updateStockAdjustmentPreview(){}const checkedAllergens=()=>[];
 const originalFetch=window.fetch.bind(window);
 window.fetch=(path,options={})=>{
   if(!String(path).startsWith('/api/'))return originalFetch(path,options);
-  window.__calls.push({path,method:options.method||'GET',headers:options.headers});
+  window.__calls.push({path,method:options.method||'GET',headers:options.headers,body:options.body});
   return new Promise(resolve=>{window.__resolve=(status,data)=>resolve(new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}}))});
 };
 `+block('async function api(', '\nasync function cachedJson(')+'\n'+callbacks+'\n'+functionSource('loadInventoryUnavailableAllocations')+'\n'+functionSource('loadConsumableRules')+'\n'+block('function wireInventoryUnavailableUi(){','\nlet inventoryLoadGeneration=')+`
@@ -61,6 +64,7 @@ window.__fixture={forms,prepareCount(action){
 },prepare(){
  count.reset();locations.reset();
  inventoryWrites.invalidate();window.__context={accountId:1,businessId:11,session:'synthetic-a',profileEpoch:1};
+ pendingStockPurchase=null;
  inventoryConfirmedContext=merchantReadContext();window.__calls=[];window.__refreshes=0;
  for(const id of ['stockAdjustmentInventory','storageInventoryId','restockSettingsInventory','ingredientAllergenInventory','inventoryIdentifierItem','inventoryUnavailableItem','inventoryTransferItem','inventoryTransferSource','inventoryTransferDestination']){if($(id).tagName==='SELECT'&&![...$(id).options].some(o=>o.value==='10'))$(id).add(new Option('Synthetic flour','10'));$(id).value='10';}
  $('stockAdjustmentQty').value='1';$('inventoryUnavailableQuantity').value='1';
@@ -107,6 +111,22 @@ try{
         checks.push(width+' '+form+' stale '+status);
       }
     }
+    await page.evaluate(()=>{
+      window.__fixture.prepare();window.__fixture.submit('stockForm');
+      window.__resolve(503,{error:'Synthetic lost purchase acknowledgement'});
+    });
+    await page.waitForFunction(()=>document.getElementById('stockMessage').textContent==='Synthetic lost purchase acknowledgement');
+    const keys=await page.evaluate(()=>{
+      window.__fixture.submit('stockForm');
+      const keys=window.__calls.map(call=>JSON.parse(call.body).purchase_intent_key);
+      window.__resolve(503,{error:'Synthetic retry acknowledgement lost'});
+      return keys;
+    });
+    assert.equal(keys.length,2,'unchanged purchase dispatches a retry');
+    assert.match(keys[0],/^[0-9a-f-]{36}$/i);
+    assert.equal(keys[1],keys[0],'native retry reuses the original intent');
+    await page.waitForFunction(()=>document.getElementById('stockMessage').textContent==='Synthetic retry acknowledgement lost');
+    checks.push(width+' purchase retry uses original intent');
     for(const [action,message] of [
       ['countSessionStart','countSessionMessage'],['countSessionSaveItem','countSessionMessage'],
       ['countSessionReviewBtn','countSessionMessage'],['countSessionResumeBtn','countSessionMessage'],
