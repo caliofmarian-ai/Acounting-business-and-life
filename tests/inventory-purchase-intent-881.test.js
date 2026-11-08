@@ -1166,7 +1166,7 @@ test('original Merchant provenance and optional purchase/lot/expense links canno
   const valid={purchase:{id:44,business_id:'101',inventory_id:'10',
       total_cost:'68.42',account:'cash'},
     inventory:{id:10,business_id:101},
-    lot:{id:90,business_id:'101',inventory_id:10},
+    lot:{id:90,business_id:'101',inventory_id:10,internal_lot_code:'INV-101-44'},
     transaction:{id:72,business_id:101,source:'inventory_purchase',
       source_id:'44',type:'business_expense',amount:'68.42',
       account:'cash',payment_method:'cash'}};
@@ -1177,6 +1177,10 @@ test('original Merchant provenance and optional purchase/lot/expense links canno
     {...valid,transaction:{...valid.transaction,business_id:202}},
     {...valid,purchase:{...valid.purchase,inventory_id:11}},
     {...valid,lot:{...valid.lot,inventory_id:11}},
+    {...valid,lot:{...valid.lot,internal_lot_code:'INV-101-43'}},
+    {...valid,lot:{...valid.lot,internal_lot_code:'INV-202-44'}},
+    {...valid,lot:{...valid.lot,internal_lot_code:'inv-101-43'}},
+    {...valid,lot:{...valid.lot,internal_lot_code:['INV-101-44']}},
     {...valid,transaction:{...valid.transaction,source_id:45}},
     {...valid,transaction:{...valid.transaction,source_id:undefined}},
     {...valid,transaction:{id:72,amount:'68.42'}},
@@ -1213,6 +1217,10 @@ test('original Merchant provenance and optional purchase/lot/expense links canno
   assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
     {...ctx,response:missingInventory}),missingInventory,
     'Legacy optional inventory snapshot can be omitted without breaking correct lot linkage');
+  const historicalLot={...valid,lot:{...valid.lot,internal_lot_code:'PO-LEGACY-55'}};
+  assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
+    {...ctx,response:historicalLot}),historicalLot,
+    'Non-Inventory legacy lot codes remain valid when all other evidence agrees');
   const minimalTransaction={purchase:{id:44},transaction:{id:72}};
   assert.deepEqual(await finishInventoryPurchaseIntent(realEnough,
     {...ctx,response:minimalTransaction}),minimalTransaction,
@@ -1259,6 +1267,40 @@ test('unlinked economic expense is rejected before SQL, on replay and inspection
   }),e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
   assert.equal(didCommit,false);
   assert.equal(didRollback,true);
+});
+
+
+test('direct Inventory receiving lot marker stays bound on replay and inspection',async()=>{
+  const original={businessId:101,accountId:501,intentKey:key,payload};
+  const wrongLot={purchase:{id:44,business_id:101,inventory_id:10},
+    inventory:{id:10,business_id:101},
+    lot:{id:99,business_id:101,inventory_id:10,internal_lot_code:'INV-101-43'}};
+  const replay={async query(sql){
+    if(sql.includes('INSERT INTO inventory_purchase_intents'))return{rowCount:0,rows:[]};
+    if(sql.includes('SELECT payload_sha256,purchase_id,response_json'))return{rowCount:1,rows:[{
+      payload_sha256:inventoryPurchaseFingerprint(payload),purchase_id:44,response_json:wrongLot
+    }]};
+    throw Error('Unexpected replay SQL');
+  }};
+  await assert.rejects(claimInventoryPurchaseIntent(replay,original),
+    e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+
+  let committed=false,rolledBack=false;
+  const inspector={async query(sql){
+    if(sql.trim()==='BEGIN')return{rowCount:0,rows:[]};
+    if(sql.trim()==='ROLLBACK'){rolledBack=true;return{rowCount:0,rows:[]}};
+    if(sql.trim()==='COMMIT'){committed=true;throw Error('Wrong lot was accepted')};
+    if(sql.includes('FROM inventory_purchase_intents'))return{rowCount:1,rows:[{
+      payload_sha256:inventoryPurchaseFingerprint(payload),purchase_id:44,response_json:wrongLot
+    }]};
+    if(sql.includes('FROM inventory_purchases'))return{rowCount:1,rows:[{id:44}]};
+    throw Error('Unexpected inspection SQL');
+  }};
+  await assert.rejects(inspectInventoryPurchaseIntent(inspector,{
+    ...original,verifyCurrentMerchantAuthority:async()=>true
+  }),e=>e.status===409&&e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT');
+  assert.equal(committed,false);
+  assert.equal(rolledBack,true);
 });
 
 test('foreign Merchant response provenance is rejected on replay and inspection, without a new purchase',async()=>{

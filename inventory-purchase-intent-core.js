@@ -192,6 +192,21 @@ function verifiedPurchaseResponse(response,purchaseId,businessId){
   // agree with the purchase about the underlying stock item.
   if(lot&&response.purchase.inventory_id!==undefined&&lot.inventory_id!==undefined)
     sameId(response.purchase.inventory_id,lot.inventory_id,'purchase/lot inventory link');
+  // The canonical paid-stock HTTP route labels its direct receiving lot
+  // INV-<business_id>-<purchase_id>. A lot from another same-item purchase
+  // can have matching inventory_id/business_id yet still be the wrong lot.
+  // Validate this source-owned marker when present, including on replay.
+  // Older/supplier-origin lots without an INV- marker remain supported.
+  if(lot&&lot.internal_lot_code!==undefined&&lot.internal_lot_code!==null){
+    const code=lot.internal_lot_code;
+    if(typeof code!=='string')
+      throw conflict('Purchase response contains an invalid lot origin marker');
+    if(/^INV-/i.test(code)&&
+       (businessId===undefined||
+        code!==`INV-${dbId(businessId,'Business')}-${dbId(purchaseId,'Purchase')}`)){
+      throw conflict('Purchase response lot marker belongs to another purchase or business');
+    }
+  }
   if(transaction){
     // A legacy transaction {id} has no asserted financial meaning. A receipt
     // that claims expense economics MUST bind that expense to this purchase,
