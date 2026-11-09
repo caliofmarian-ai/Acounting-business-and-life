@@ -438,6 +438,139 @@ async function ensureServiceReview({
   return Number(review.json?.id||0);
 }
 
+// Runtime-only Payment Core acceptance for a controlled, already-completed QA job.
+// Deliberately uses an unconfigured provider: an intent is NOT payment or payout.
+async function verifyUnsettledServiceJobPaymentAuthority({
+  pool,base,customer,provider,jobId,acceptedQuoteId,expectedAmount,requestJson,expectStatus
+}){
+  const providerCode='qa_unconfigured_571';
+  const path='/api/payments/intents/service-job/'+jobId;
+  const summaryPath='/api/payments/service-jobs/'+jobId+'/summary';
+  const initial=await requestJson(base,summaryPath,{token:customer.token});
+  expectStatus(initial,200,'Local Services payment authority before intent');
+  const commercial=initial.json?.commercial;
+  if(Number(initial.json?.service_job_id)!==Number(jobId)
+    ||initial.json?.currency_code!=='PHP'
+    ||Number(commercial?.accepted_quote_id)!==Number(acceptedQuoteId)
+    ||Number(commercial?.agreed_total)!==expectedAmount
+    ||Number(commercial?.payable_value)!==expectedAmount
+    ||commercial?.payable_state!=='PAYABLE'
+    ||Number(initial.json?.payment?.outstanding)!==expectedAmount
+    ||Number(initial.json?.payment?.pending_count)!==0){
+    throw new Error('Controlled Service Job payable is not bound to the Customer-accepted quote.');
+  }
+  const key='qa-571-unsettled-service-job-'+jobId;
+  const body={
+    idempotency_key:key,
+    logical_method:'online_other',
+    provider_code:providerCode,
+    client_reference:'Synthetic QA; no provider checkout'
+  };
+  const foreign=await requestJson(base,path,{
+    method:'POST',token:provider.token,
+    body:{...body,idempotency_key:key+'-foreign'}
+  });
+  expectStatus(foreign,403,'Non-payer Service Job payment-intent denial');
+  let intentId=0;
+  try{
+    const created=await requestJson(base,path,{method:'POST',token:customer.token,body});
+    expectStatus(created,201,'Controlled unsettled Service Job payment intent');
+    const intent=created.json||{};
+    intentId=Number(intent.id);
+    if(!Number.isSafeInteger(intentId)||intentId<=0
+      ||intent.source_type!=='service_job'
+      ||Number(intent.source_id)!==Number(jobId)
+      ||Number(intent.payer_account_id)!==Number(customer.accountId)
+      ||intent.idempotency_key!==key
+      ||intent.provider_code!==providerCode
+      ||intent.currency_code!=='PHP'
+      ||Number(intent.amount)!==expectedAmount
+      ||intent.status!=='requires_provider'
+      ||created.json?.provider_adapter_ready!==false
+      ||created.json?.next_action!=='CONNECT_REAL_PAYMENT_PROVIDER'){
+      throw new Error('Controlled Service Job intent violated accepted-quote/payment-provider HOLD.');
+    }
+    const replay=await requestJson(base,path,{method:'POST',token:customer.token,body});
+    expectStatus(replay,201,'Service Job payment intent exact replay');
+    if(Number(replay.json?.id)!==intentId||replay.json?.public_id!==intent.public_id){
+      throw new Error('Service Job idempotent replay produced a second payment intent.');
+    }
+    const methodConflict=await requestJson(base,path,{
+      method:'POST',token:customer.token,
+      body:{...body,logical_method:'bank_transfer'}
+    });
+    expectStatus(methodConflict,409,'Service Job same-key method conflict');
+    const pendingConflict=await requestJson(base,path,{
+      method:'POST',token:customer.token,
+      body:{...body,idempotency_key:key+'-competing'}
+    });
+    expectStatus(pendingConflict,409,'Service Job second pending intent denial');
+    const detail=await requestJson(base,'/api/payments/intents/'+intent.public_id,{token:customer.token});
+    expectStatus(detail,200,'Customer Service Job intent detail');
+    if(Number(detail.json?.id)!==intentId||detail.json?.status!=='requires_provider'){
+      throw new Error('Customer Service Job intent read is inconsistent.');
+    }
+    const providerSummary=await requestJson(base,summaryPath,{token:provider.token});
+    expectStatus(providerSummary,200,'Service Provider payment summary');
+    if(Number(providerSummary.json?.payment?.pending_count)!==1
+      ||Number(providerSummary.json?.payment?.gross_confirmed)!==0
+      ||Number(providerSummary.json?.payment?.outstanding)!==expectedAmount){
+      throw new Error('Service Provider Money improperly treated pending QA intent as paid.');
+    }
+    const audit=await pool.query(
+      `SELECT COUNT(*)::int n FROM payment_audit_events
+         WHERE payment_intent_id=$1 AND actor_account_id=$2
+           AND event_code='service_job_payment_intent_created'`,
+      [intentId,customer.accountId]
+    );
+    const sideEffects=await pool.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM payment_allocations WHERE payment_intent_id=$1) allocations,
+         (SELECT COUNT(*)::int FROM provider_events WHERE payment_intent_id=$1) provider_events,
+         (SELECT COUNT(*)::int FROM refunds WHERE payment_intent_id=$1) refunds`,
+      [intentId]
+    );
+    if(Number(audit.rows[0]?.n)!==1
+      ||Number(sideEffects.rows[0]?.allocations)!==0
+      ||Number(sideEffects.rows[0]?.provider_events)!==0
+      ||Number(sideEffects.rows[0]?.refunds)!==0){
+      throw new Error('Unconfigured QA intent unexpectedly produced provider/settlement/refund evidence.');
+    }
+    const unauthorizedRefund=await requestJson(base,'/api/payments/admin/refunds',{
+      method:'POST',token:customer.token,
+      body:{payment_intent_id:intentId,amount:'1.00',
+        reason:'Controlled QA denial; do not reserve',idempotency_key:key+'-refund-denied'}
+    });
+    expectStatus(unauthorizedRefund,403,'Ordinary Customer admin refund denial');
+  }finally{
+    // Restore the controlled fixture without invoking any provider or real payout.
+    if(intentId){
+      const cancelled=await pool.query(
+        `UPDATE payment_intents SET status='cancelled',
+           cancelled_at=clock_timestamp(),updated_at=clock_timestamp()
+         WHERE id=$1 AND source_type='service_job' AND source_id=$2
+           AND payer_account_id=$3 AND provider_code=$4 AND status='requires_provider'
+         RETURNING id`,
+        [intentId,jobId,customer.accountId,providerCode]
+      );
+      if(cancelled.rowCount!==1){
+        throw new Error('Controlled QA payment intent cleanup could not prove cancellation.');
+      }
+    }
+  }
+  const restored=await requestJson(base,summaryPath,{token:customer.token});
+  expectStatus(restored,200,'Service Job payment fixture restored');
+  if(Number(restored.json?.payment?.pending_count)!==0
+    ||Number(restored.json?.payment?.gross_confirmed)!==0
+    ||Number(restored.json?.payment?.outstanding)!==expectedAmount){
+    throw new Error('Controlled QA payment intent cleanup left an active/paid balance.');
+  }
+  return{accepted_quote_bound:true,unsettled_intent_created:true,
+    exact_replay:true,method_conflict_denied:true,pending_conflict_denied:true,
+    non_payer_denied:true,refund_permission_denied:true,
+    provider_settlement_unchanged:true,fixture_cancelled:true};
+}
+
 export async function runServiceProviderExperienceAcceptance({
   pool,base,secret,aliases,helpers
 }){
@@ -716,6 +849,12 @@ export async function runServiceProviderExperienceAcceptance({
     requestJson,expectStatus
   });
 
+  const paymentIntentQa=await verifyUnsettledServiceJobPaymentAuthority({
+    pool,base,customer,provider,jobId,
+    acceptedQuoteId:Number(job.accepted_quote_id),expectedAmount:SERVICE_FINAL_PRICE,
+    requestJson,expectStatus
+  });
+
   const [customerJobs,providerJobs]=await Promise.all([
     requestJson(base,'/api/services/jobs/mine',{token:customer.token}),
     requestJson(base,'/api/services/jobs/mine',{token:provider.token})
@@ -842,6 +981,7 @@ export async function runServiceProviderExperienceAcceptance({
     support_ticket_id:supportTicketId,
     support:true,
     logout_relogin:true,
+    payment_core_controlled_runtime:paymentIntentQa,
     online_service_payment:'HOLD_UNSUPPORTED_RUNTIME_FLOW',
     provider_payout_settlement:'HOLD_FOR_PROVIDER_EVIDENCE'
   };
