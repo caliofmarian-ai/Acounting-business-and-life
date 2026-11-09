@@ -120,3 +120,25 @@ test('credential QA targets canonical active authorization across historical con
     providerAccountId:13,credentialId:14,pilotTerritoryId:1,secondaryTerritoryId:2
   }),/company_test credential missing/);
 });
+
+test('Local Services exact-head runtime wave exercises provider-neutral payment intent without settlement',()=>{
+  assert.match(service,/verifyUnsettledServiceJobPaymentAuthority/);
+  assert.match(service,/paymentIntentQa=await verifyUnsettledServiceJobPaymentAuthority/);
+  assert.match(service,/\/api\/payments\/intents\/service-job\//);
+  assert.match(service,/\/api\/payments\/service-jobs\//);
+  assert.match(service,/qa_unconfigured_571/);
+  assert.match(service,/commercial\?\.accepted_quote_id/);
+  assert.match(service,/commercial\?\.agreed_total/);
+  assert.match(service,/status!=='requires_provider'/);
+  assert.match(service,/Service Job payment intent exact replay/);
+  assert.match(service,/Service Job same-key method conflict/);
+  assert.match(service,/Service Job second pending intent denial/);
+  assert.match(service,/Non-payer Service Job payment-intent denial/);
+  assert.match(service,/Ordinary Customer admin refund denial/);
+  assert.match(service,/payment_audit_events/);
+  assert.match(service,/provider_events WHERE payment_intent_id/);
+  assert.match(service,/payment_allocations WHERE payment_intent_id/);
+  assert.match(service,/UPDATE payment_intents SET status='cancelled'/);
+  assert.match(service,/fixture_cancelled:true/);
+  assert.match(service,/online_service_payment:'HOLD_UNSUPPORTED_RUNTIME_FLOW'/);
+});
