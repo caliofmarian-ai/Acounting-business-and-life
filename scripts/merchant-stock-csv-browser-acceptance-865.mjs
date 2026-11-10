@@ -115,7 +115,7 @@ try {
     )
   });
   await page.waitForFunction(() => document.querySelector('#rowsCounter')?.textContent?.includes('1 lines'));
-  await page.locator('#rows .item select').selectOption('food_ingredient');
+  await page.locator('#rows .item select').last().selectOption('food_ingredient');
   await page.locator('#rows .item label.check input[type=checkbox]').last().check();
   await page.locator('#businessName').fill('Synthetic QA Merchant');
   await page.locator('#purchaseAccount').selectOption('cash');
