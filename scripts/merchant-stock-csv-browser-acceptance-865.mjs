@@ -139,6 +139,12 @@ try {
   releaseInventoryRead();
   releaseInventoryRead = null;
   await page.waitForFunction(() => document.querySelector('#stop')?.disabled === true);
+  assert.equal(await page.locator('#physicalConfirm').isChecked(), false,
+    'Explicit Stop must revoke the former physical receiving approval');
+  assert.equal(await page.locator('#moneyConfirm').isChecked(), false,
+    'Explicit Stop must revoke the former paid expense approval');
+  assert.equal(await page.locator('#post').isDisabled(), true,
+    'Completed preflight after Stop must never silently re-enable a paid Stock + Money POST');
   assert.equal(purchasePosts, 0, 'Stop during pending Stock preflight must prevent ALL purchase POSTs');
   assert.equal(transactionPatches, 0, 'No historical Money patch may occur without a posted purchase');
   assert.match(await page.locator('#results').innerText(), /Stop requested/i);

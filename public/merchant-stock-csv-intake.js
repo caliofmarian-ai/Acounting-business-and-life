@@ -905,7 +905,15 @@ if(hasDocument){
   });
   $('purchaseDate').max=localDatePH();
   $('post').addEventListener('click',saveSelected);
-  $('stop').addEventListener('click',()=>{state.stop=true;message('results','Stop requested. Any purchase already sent can finish. Pending items stay unposted.','error')});
+  $('stop').addEventListener('click',()=>{
+    // A deliberate Stop cancels the previous human approval to POST a paid
+    // Stock + Money batch. A request already dispatched may still finish;
+    // pending rows cannot be submitted again without fresh confirmation.
+    state.stop=true;
+    revokeBatchConfirmations();
+    updateControls();
+    message('results','Stop requested. Any purchase already sent can finish. Pending items stay unposted. Reconfirm both batch approvals before another Save.','error');
+  });
   $('selectSafe').addEventListener('click',()=>{
     let changed=false;
     state.rows.forEach(r=>{
