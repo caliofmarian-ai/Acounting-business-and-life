@@ -173,7 +173,7 @@ test('credential review wave restores company_test Admin assignment and grant ba
   assert.ok(f.calls.some(q=>q.sql?.startsWith('UPDATE admin_function_assignments SET status=$3')&&q.params[2]==='revoked'));
   const method=service.slice(service.indexOf('async function verifyCredentialAdminScope('),service.indexOf('async function serviceNotifications'));
   assert.match(method,/captureQaCredentialAdminBaseline/);
-  assert.match(method,/finally\\s*\\{\\s*await restoreQaCredentialAdminBaseline/);
+  assert.match(method,/finally\s*\{\s*await restoreQaCredentialAdminBaseline/);
   assert.match(service,/credential_qa_admin_authorization_restored:/);
 });
 test('credential review fixture fails closed on unauthorized account and other agent scope',async()=>{
