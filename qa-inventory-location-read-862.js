@@ -59,10 +59,11 @@ async function fingerprintBusiness(pool,businessId){
   if(result.rows.length!==1)throw new Error('Inventory 862 fingerprint unavailable.');
   return result.rows[0];
 }
-async function measureAuthorized(base,path,token=''){
+async function measureAuthorized(base,path,token='',businessId=null){
   const started=performance.now();
   const headers={Accept:'application/json','Cache-Control':'no-store'};
   if(token)headers.Authorization='Bearer '+token;
+  if(businessId!=null)headers['x-abl-inventory-origin-business']=String(businessId);
   const response=await fetch(base+path,{headers,cache:'no-store',signal:AbortSignal.timeout(12000)});
   const body=await response.json().catch(()=>null);
   const elapsed=Number((performance.now()-started).toFixed(2));
@@ -136,7 +137,7 @@ export async function runInventoryLocationRead862Acceptance({
 
     const warmups=[];
     for(const path of INVENTORY_862_PATHS){
-      const warm=await measureAuthorized(base,path,merchant.token);
+      const warm=await measureAuthorized(base,path,merchant.token,originalBusinessId);
       assertHttp(warm,200,'Warm Merchant '+path);
       inventory862AssertPayload(warm.body,originalBusinessId,path);
       warmups.push(warm.elapsed);
@@ -145,7 +146,7 @@ export async function runInventoryLocationRead862Acceptance({
     // Replicate the concurrent GET pair performed by Merchant Storage UI.
     for(let n=0;n<rounds;n++){
       const responses=await Promise.all(INVENTORY_862_PATHS.map(path=>
-        measureAuthorized(base,path,merchant.token)
+        measureAuthorized(base,path,merchant.token,originalBusinessId)
       ));
       for(let idx=0;idx<responses.length;idx++){
         const path=INVENTORY_862_PATHS[idx],response=responses[idx];
@@ -164,7 +165,7 @@ export async function runInventoryLocationRead862Acceptance({
       for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS]){
         const suffix=path.includes('location-balances')&&foreignInventory.rows.length
           ?'&inventory_id='+Number(foreignInventory.rows[0].id):'';
-        const forged=await measureAuthorized(base,path+'?business_id='+otherId+suffix,merchant.token);
+        const forged=await measureAuthorized(base,path+'?business_id='+otherId+suffix,merchant.token,originalBusinessId);
         assertHttp(forged,200,'Forged business query '+path);
         inventory862AssertPayload(forged.body,originalBusinessId,path);
         if(suffix&&forged.body.length)throw new Error('Foreign Inventory item leaked in scoped balance GET.');
@@ -177,7 +178,7 @@ export async function runInventoryLocationRead862Acceptance({
         throw new Error('Inventory 862 selected workspace did not update.');
       const beforeB=await fingerprintBusiness(pool,otherId);
       for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS]){
-        const result=await measureAuthorized(base,path,merchant.token);
+        const result=await measureAuthorized(base,path,merchant.token,otherId);
         assertHttp(result,200,'Merchant switched B '+path);
         inventory862AssertPayload(result.body,otherId,path);
       }
@@ -186,7 +187,7 @@ export async function runInventoryLocationRead862Acceptance({
         throw new Error('Inventory 862 GETs unexpectedly changed business B stock or ledger.');
       await selectBusiness({base,token:merchant.token,businessId:originalBusinessId});
       changedBusiness=false;
-      const back=await measureAuthorized(base,INVENTORY_862_PATHS[0],merchant.token);
+      const back=await measureAuthorized(base,INVENTORY_862_PATHS[0],merchant.token,originalBusinessId);
       assertHttp(back,200,'Merchant restored A');
       inventory862AssertPayload(back.body,originalBusinessId,INVENTORY_862_PATHS[0]);
     }
