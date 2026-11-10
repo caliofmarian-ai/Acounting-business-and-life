@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'public/merchant-stock-csv-intake.js'
+      - 'scripts/merchant-stock-csv-browser-acceptance-865.mjs'
       - 'server-business-accounting.js'
       - 'qa-purchase-intent-881.js'
       - 'tests/merchant-stock-csv-intake-v1.test.js'
@@ -41,3 +42,10 @@ jobs:
           node --check tests/merchant-stock-csv-intake-v1.test.js
           node --check qa-purchase-intent-881.js
           node --test tests/merchant-stock-csv-intake-v1.test.js
+      - name: Native Chrome Merchant CSV 390px flow (synthetic data, no server writes)
+        shell: bash
+        run: |
+          node --check scripts/merchant-stock-csv-browser-acceptance-865.mjs
+          npm install --prefix "$RUNNER_TEMP/merchant-csv-browser" --no-package-lock --ignore-scripts playwright@1.58.2
+          google-chrome --version
+          MERCHANT_CSV_BROWSER_MODULE="$RUNNER_TEMP/merchant-csv-browser/node_modules/playwright/index.mjs" MERCHANT_CSV_BROWSER_CHANNEL=chrome node scripts/merchant-stock-csv-browser-acceptance-865.mjs
