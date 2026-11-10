@@ -219,6 +219,85 @@ export async function resolveCredentialQaTerritories({pool,providerAccountId,cre
   return{reviewTerritoryId,outsideTerritoryId,reviewTargetMatchesPilot:reviewTerritoryId===pilot};
 }
 
+
+/* Credential-review QA temporarily changes a controlled staff test account.
+ * Capture all active/inactive grants consistently, then restore their former
+ * effective state in a single transaction, retaining immutable Admin audits. */
+export async function captureQaCredentialAdminBaseline(pool,accountId){
+  const client=await pool.connect();let active=false;
+  try{
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');active=true;
+    const actor=await client.query(
+      "SELECT id FROM accounts WHERE id=$1 AND account_mode='company_test' AND test_role='territory_admin' AND auth_status='active'",[accountId]);
+    if(actor.rowCount!==1)throw new Error('QA Territory Admin is not an active company_test account; refusing privilege mutation.');
+    const a=await client.query(
+      "SELECT id,territory_id,authority_rank,status,assigned_by_account_id,reason,effective_from,effective_until FROM platform_admin_assignments WHERE account_id=$1 AND admin_role='territory_admin' AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin' ORDER BY id",[accountId]);
+    const ids=a.rows.map(x=>String(x.id));
+    const p=ids.length?await client.query(
+      'SELECT assignment_id,permission_code,status,granted_by_account_id,reason,effective_from,effective_until FROM admin_permission_grants WHERE assignment_id=ANY($1::bigint[])',[ids]):{rows:[]};
+    const f=ids.length?await client.query(
+      'SELECT assignment_id,function_code,status,granted_by_account_id,reason,effective_from,effective_until FROM admin_function_assignments WHERE assignment_id=ANY($1::bigint[])',[ids]):{rows:[]};
+    await client.query('COMMIT');active=false;
+    return{accountId:String(accountId),assignments:a.rows,permissions:p.rows,functions:f.rows};
+  }catch(e){if(active)await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+}
+
+/* Only existing company_test authorization is touched. Any new scoped QA
+ * grants are revoked, not deleted, because audit records may reference them.
+ * Unexpected concurrent scopes fail closed; a failed restoration rolls back. */
+export async function restoreQaCredentialAdminBaseline(pool,accountId,snapshot,scopeIds){
+  if(!snapshot||snapshot.accountId!==String(accountId)
+    ||!Array.isArray(snapshot.assignments)||!Array.isArray(snapshot.permissions)
+    ||!Array.isArray(snapshot.functions)||!Array.isArray(scopeIds)||scopeIds.length!==2
+    ||scopeIds.some(x=>!Number.isSafeInteger(Number(x))||Number(x)<1))
+    throw new Error('QA credential Admin snapshot missing; unsafe to restore.');
+  const before=new Map(snapshot.assignments.map(a=>[String(a.id),a]));
+  const allowed=new Set(scopeIds.map(x=>String(x)));
+  const client=await pool.connect();let active=false;
+  try{
+    await client.query('BEGIN');active=true;
+    const actor=await client.query(
+      "SELECT id FROM accounts WHERE id=$1 AND account_mode='company_test' AND test_role='territory_admin' AND auth_status='active' FOR UPDATE",[accountId]);
+    if(actor.rowCount!==1)throw new Error('QA Territory Admin account changed before privilege restoration.');
+    const now=await client.query(
+      "SELECT id,territory_id FROM platform_admin_assignments WHERE account_id=$1 AND admin_role='territory_admin' AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin' ORDER BY id FOR UPDATE",[accountId]);
+    const ids=now.rows.map(r=>String(r.id)),found=new Set(ids);
+    if([...before.keys()].some(id=>!found.has(id)))
+      throw new Error('Original QA Territory Admin assignment missing.');
+    if(now.rows.some(r=>!before.has(String(r.id))&&!allowed.has(String(r.territory_id))))
+      throw new Error('Unrelated concurrent Territory Admin assignment; refusing overwrite.');
+    for(const row of now.rows){
+      const previous=before.get(String(row.id));
+      const response=previous?
+        await client.query(
+          "UPDATE platform_admin_assignments SET authority_rank=$3,status=$4,assigned_by_account_id=$5,reason=$6,effective_from=$7,effective_until=$8,updated_at=NOW() WHERE id=$1 AND account_id=$2",
+          [row.id,accountId,previous.authority_rank,previous.status,previous.assigned_by_account_id,previous.reason,previous.effective_from,previous.effective_until]):
+        await client.query(
+          "UPDATE platform_admin_assignments SET status='revoked',effective_until=NOW(),updated_at=NOW() WHERE id=$1 AND account_id=$2",
+          [row.id,accountId]);
+      if(response.rowCount!==1)throw new Error('QA Admin assignment compensation failed.');
+    }
+    for(const [table,field,records] of [
+      ['admin_permission_grants','permission_code',snapshot.permissions],
+      ['admin_function_assignments','function_code',snapshot.functions]
+    ]){
+      if(ids.length)await client.query(
+        `UPDATE ${table} SET status='revoked',effective_until=NOW(),updated_at=NOW() WHERE assignment_id=ANY($1::bigint[])`,[ids]);
+      for(const row of records){
+        if(!before.has(String(row.assignment_id)))throw new Error('QA Admin grant snapshot contains foreign assignment.');
+        const result=await client.query(
+          `UPDATE ${table} SET status=$3,granted_by_account_id=$4,reason=$5,effective_from=$6,effective_until=$7,updated_at=NOW() WHERE assignment_id=$1 AND ${field}=$2`,
+          [row.assignment_id,row[field],row.status,row.granted_by_account_id,row.reason,row.effective_from,row.effective_until]);
+        if(result.rowCount!==1)throw new Error('QA Admin original grant compensation failed.');
+      }
+    }
+    await client.query('COMMIT');active=false;
+    return{restored:true,original_assignments:before.size,temporary_assignments_revoked:ids.length-before.size};
+  }catch(e){if(active)await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+}
+
 async function verifyCredentialAdminScope({
   pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail,territoryId,jobId,
   requestJson,expectStatus
@@ -254,6 +333,8 @@ async function verifyCredentialAdminScope({
     pilotTerritoryId:territoryId,secondaryTerritoryId:otherTerritoryId
   });
 
+  const adminBaseline=await captureQaCredentialAdminBaseline(pool,territoryAdmin.accountId);
+  try{
   await pool.query(
     "UPDATE platform_admin_assignments SET status='revoked',updated_at=NOW() WHERE account_id=$1 AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin'",
     [territoryAdmin.accountId]
@@ -335,8 +416,12 @@ async function verifyCredentialAdminScope({
     ordinaryDenied:true,
     outOfScopeDenied:true,
     inScopeAllowed:true,
-    reviewTargetMatchesPilot
+    reviewTargetMatchesPilot,
+    qa_admin_authorization_restored:true
   };
+  }finally{
+    await restoreQaCredentialAdminBaseline(pool,territoryAdmin.accountId,adminBaseline,[outsideTerritoryId,reviewTerritoryId]);
+  }
 }
 
 async function serviceNotifications({
@@ -970,6 +1055,7 @@ export async function runServiceProviderExperienceAcceptance({
     credential_ordinary_user_denied:credentialScope.ordinaryDenied,
     credential_out_of_scope_denied:credentialScope.outOfScopeDenied,
     credential_in_scope_allowed:credentialScope.inScopeAllowed,
+    credential_qa_admin_authorization_restored:credentialScope.qa_admin_authorization_restored,
     credential_review_target_matches_pilot:credentialScope.reviewTargetMatchesPilot,
     finance_commercial_value:true,
     service_provider_net_allocations:providerNetCount,

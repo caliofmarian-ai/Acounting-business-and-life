@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {resolveCredentialQaTerritories} from '../qa-service-provider-acceptance.js';
+import {resolveCredentialQaTerritories,captureQaCredentialAdminBaseline,restoreQaCredentialAdminBaseline} from '../qa-service-provider-acceptance.js';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const qa=read('qa-acceptance.js');
@@ -141,4 +141,57 @@ test('Local Services exact-head runtime wave exercises provider-neutral payment 
   assert.match(service,/UPDATE payment_intents SET status='cancelled'/);
   assert.match(service,/fixture_cancelled:true/);
   assert.match(service,/online_service_payment:'HOLD_UNSUPPORTED_RUNTIME_FLOW'/);
+});
+
+function credentialAdminFixture(){
+  const calls=[],prior={id:'6',territory_id:'11',status:'active',authority_rank:'territory_admin',assigned_by_account_id:'1',reason:'initial',effective_from:null,effective_until:null};
+  let allowed=true,unrelated=false,failRestore=false;
+  const client={async query(sql,params=[]){
+    calls.push({sql,params});
+    if(/^(BEGIN|COMMIT|ROLLBACK)/.test(sql))return{rowCount:0,rows:[]};
+    if(sql.startsWith('SELECT id FROM accounts'))return{rowCount:allowed?1:0,rows:allowed?[{id:'21'}]:[]};
+    if(sql.startsWith('SELECT id,territory_id,authority_rank'))return{rows:[prior],rowCount:1};
+    if(sql.startsWith('SELECT assignment_id,permission_code'))
+      return{rows:[{assignment_id:'6',permission_code:'members.view',status:'active',granted_by_account_id:'1',reason:'before',effective_from:null,effective_until:null}]};
+    if(sql.startsWith('SELECT assignment_id,function_code'))
+      return{rows:[{assignment_id:'6',function_code:'trust_safety',status:'revoked',granted_by_account_id:'1',reason:'before',effective_from:null,effective_until:null}]};
+    if(sql.startsWith('SELECT id,territory_id FROM platform_admin_assignments'))
+      return{rows:[{id:'6',territory_id:'11'},{id:'7',territory_id:unrelated?'999':'23'}]};
+    if(sql.startsWith('UPDATE'))return{rowCount:failRestore&&sql.includes('SET status=$3')?0:1};
+    throw Error('Unexpected query '+sql);
+  },release(){calls.push({sql:'RELEASE'})}};
+  return{pool:{connect:async()=>client},calls,allow:x=>allowed=x,unrelated:x=>unrelated=x,fail:x=>failRestore=x};
+}
+test('credential review wave restores company_test Admin assignment and grant baseline, revoking new QA grants',async()=>{
+  const f=credentialAdminFixture(),b=await captureQaCredentialAdminBaseline(f.pool,21);
+  assert.equal(b.assignments.length,1);
+  const r=await restoreQaCredentialAdminBaseline(f.pool,21,b,[22,23]);
+  assert.deepEqual(r,{restored:true,original_assignments:1,temporary_assignments_revoked:1});
+  assert.ok(f.calls.some(q=>q.sql?.startsWith('UPDATE platform_admin_assignments SET authority_rank=')&&q.params[3]==='active'));
+  assert.ok(f.calls.some(q=>q.sql?.startsWith("UPDATE platform_admin_assignments SET status='revoked'")&&String(q.params[0])==='7'));
+  assert.ok(f.calls.some(q=>q.sql?.startsWith('UPDATE admin_permission_grants SET status=$3')&&q.params[2]==='active'));
+  assert.ok(f.calls.some(q=>q.sql?.startsWith('UPDATE admin_function_assignments SET status=$3')&&q.params[2]==='revoked'));
+  const method=service.slice(service.indexOf('async function verifyCredentialAdminScope('),service.indexOf('async function serviceNotifications'));
+  assert.match(method,/captureQaCredentialAdminBaseline/);
+  assert.match(method,/finally\\s*\\{\\s*await restoreQaCredentialAdminBaseline/);
+  assert.match(service,/credential_qa_admin_authorization_restored:/);
+});
+test('credential review fixture fails closed on unauthorized account and other agent scope',async()=>{
+  const f=credentialAdminFixture();f.allow(false);
+  await assert.rejects(captureQaCredentialAdminBaseline(f.pool,21),/not an active company_test/);
+  assert.equal(f.calls.filter(x=>x.sql?.startsWith('UPDATE')).length,0);
+  f.allow(true);const b=await captureQaCredentialAdminBaseline(f.pool,21);
+  f.unrelated(true);
+  await assert.rejects(restoreQaCredentialAdminBaseline(f.pool,21,b,[22,23]),/Unrelated concurrent/);
+  assert.equal(f.calls.filter(x=>x.sql?.startsWith('UPDATE')).length,0);
+  assert.ok(f.calls.some(x=>x.sql==='ROLLBACK'));
+});
+test('failed credential review fixture restoration ROLLBACKs without claiming PASS',async()=>{
+  const f=credentialAdminFixture(),b=await captureQaCredentialAdminBaseline(f.pool,21),offset=f.calls.length;
+  f.fail(true);
+  await assert.rejects(restoreQaCredentialAdminBaseline(f.pool,21,b,[22,23]),/grant compensation failed/);
+  const statements=f.calls.slice(offset).map(x=>x.sql);
+  assert.ok(statements.includes('ROLLBACK'));
+  assert.ok(!statements.includes('COMMIT'));
+  assert.equal(statements.at(-1),'RELEASE');
 });
