@@ -145,7 +145,7 @@ test('Local Services exact-head runtime wave exercises provider-neutral payment 
 
 function credentialAdminFixture(){
   const calls=[],prior={id:'6',territory_id:'11',status:'active',authority_rank:'territory_admin',assigned_by_account_id:'1',reason:'initial',effective_from:null,effective_until:null};
-  let allowed=true,unrelated=false,failRestore=false;
+  let allowed=true,unrelated=false,failRestore=false,unknownPermission=false,unknownFunction=false;
   const client={async query(sql,params=[]){
     calls.push({sql,params});
     if(/^(BEGIN|COMMIT|ROLLBACK)/.test(sql))return{rowCount:0,rows:[]};
@@ -157,10 +157,20 @@ function credentialAdminFixture(){
       return{rows:[{assignment_id:'6',function_code:'trust_safety',status:'revoked',granted_by_account_id:'1',reason:'before',effective_from:null,effective_until:null}]};
     if(sql.startsWith('SELECT id,territory_id FROM platform_admin_assignments'))
       return{rows:[{id:'6',territory_id:'11'},{id:'7',territory_id:unrelated?'999':'23'}]};
+    if(sql.startsWith('SELECT g.assignment_id,g.permission_code'))return{rows:[
+      {assignment_id:'6',permission_code:'members.view',reason:'before',territory_id:'11'},
+      {assignment_id:'7',permission_code:'credential.verify',reason:'Controlled QA in-scope credential authority',territory_id:'23'},
+      ...(unknownPermission?[{assignment_id:'6',permission_code:'finance.payout',reason:'Unrelated agent grant',territory_id:'11'}]:[])
+    ]};
+    if(sql.startsWith('SELECT g.assignment_id,g.function_code'))return{rows:[
+      {assignment_id:'6',function_code:'trust_safety',reason:'before',territory_id:'11'},
+      ...(unknownFunction?[{assignment_id:'6',function_code:'finance_admin',reason:'Other worker',territory_id:'11'}]:[])
+    ]};
     if(sql.startsWith('UPDATE'))return{rowCount:failRestore&&sql.includes('SET status=$3')?0:1};
     throw Error('Unexpected query '+sql);
   },release(){calls.push({sql:'RELEASE'})}};
-  return{pool:{connect:async()=>client},calls,allow:x=>allowed=x,unrelated:x=>unrelated=x,fail:x=>failRestore=x};
+  return{pool:{connect:async()=>client},calls,allow:x=>allowed=x,unrelated:x=>unrelated=x,fail:x=>failRestore=x,
+    unknownPermission:x=>unknownPermission=x,unknownFunction:x=>unknownFunction=x};
 }
 test('credential review wave restores company_test Admin assignment and grant baseline, revoking new QA grants',async()=>{
   const f=credentialAdminFixture(),b=await captureQaCredentialAdminBaseline(f.pool,21);
@@ -171,6 +181,8 @@ test('credential review wave restores company_test Admin assignment and grant ba
   assert.ok(f.calls.some(q=>q.sql?.startsWith("UPDATE platform_admin_assignments SET status='revoked'")&&String(q.params[0])==='7'));
   assert.ok(f.calls.some(q=>q.sql?.startsWith('UPDATE admin_permission_grants SET status=$3')&&q.params[2]==='active'));
   assert.ok(f.calls.some(q=>q.sql?.startsWith('UPDATE admin_function_assignments SET status=$3')&&q.params[2]==='revoked'));
+  assert.ok(f.calls.some(q=>q.sql?.startsWith("UPDATE admin_permission_grants SET status='revoked'")&&String(q.params[0])==='7'&&q.params[1]==='credential.verify'));
+  assert.ok(!f.calls.some(q=>q.sql?.includes('WHERE assignment_id=ANY($1::bigint[])')&&q.sql.startsWith('UPDATE')),'must not bulk-revoke grants');
   const method=service.slice(service.indexOf('async function verifyCredentialAdminScope('),service.indexOf('async function serviceNotifications'));
   assert.match(method,/captureQaCredentialAdminBaseline/);
   assert.match(method,/finally\s*\{\s*await restoreQaCredentialAdminBaseline/);
@@ -194,4 +206,17 @@ test('failed credential review fixture restoration ROLLBACKs without claiming PA
   assert.ok(statements.includes('ROLLBACK'));
   assert.ok(!statements.includes('COMMIT'));
   assert.equal(statements.at(-1),'RELEASE');
+});
+
+
+test('credential QA restores no grants if an unrelated executor added a permission or function',async()=>{
+  for(const kind of ['unknownPermission','unknownFunction']){
+    const f=credentialAdminFixture(),b=await captureQaCredentialAdminBaseline(f.pool,21);
+    const start=f.calls.length;f[kind](true);
+    await assert.rejects(restoreQaCredentialAdminBaseline(f.pool,21,b,[22,23]),/Unexpected concurrent QA Admin grant/);
+    const attempted=f.calls.slice(start).map(x=>x.sql);
+    assert.equal(attempted.filter(x=>x.startsWith('UPDATE')).length,0,'unrelated '+kind+' must not be changed');
+    assert.ok(attempted.includes('ROLLBACK'));
+    assert.ok(!attempted.includes('COMMIT'));
+  }
 });

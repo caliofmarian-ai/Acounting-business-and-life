@@ -245,7 +245,8 @@ export async function captureQaCredentialAdminBaseline(pool,accountId){
 
 /* Only existing company_test authorization is touched. Any new scoped QA
  * grants are revoked, not deleted, because audit records may reference them.
- * Unexpected concurrent scopes fail closed; a failed restoration rolls back. */
+ * Unexpected concurrent assignments or grant rows fail closed before mutation;
+ * a failed restoration rolls back. */
 export async function restoreQaCredentialAdminBaseline(pool,accountId,snapshot,scopeIds){
   if(!snapshot||snapshot.accountId!==String(accountId)
     ||!Array.isArray(snapshot.assignments)||!Array.isArray(snapshot.permissions)
@@ -267,6 +268,30 @@ export async function restoreQaCredentialAdminBaseline(pool,accountId,snapshot,s
       throw new Error('Original QA Territory Admin assignment missing.');
     if(now.rows.some(r=>!before.has(String(r.id))&&!allowed.has(String(r.territory_id))))
       throw new Error('Unrelated concurrent Territory Admin assignment; refusing overwrite.');
+    // Check every grant under row locks BEFORE restoring any assignment. A
+    // concurrent grant from another QA executor must never be silently revoked.
+    const sources=[
+      ['admin_permission_grants','permission_code',snapshot.permissions],
+      ['admin_function_assignments','function_code',snapshot.functions]
+    ];
+    const qaReasons=new Set([
+      'Controlled QA out-of-scope credential authority',
+      'Controlled QA in-scope credential authority'
+    ]);
+    const newQaGrants=[];
+    for(const [table,field,records] of sources){
+      const known=new Set(records.map(row=>JSON.stringify([String(row.assignment_id),String(row[field])])));
+      const live=ids.length?await client.query(
+        `SELECT g.assignment_id,g.${field},g.reason,a.territory_id FROM ${table} g JOIN platform_admin_assignments a ON a.id=g.assignment_id WHERE g.assignment_id=ANY($1::bigint[]) FOR UPDATE OF g`,[ids]):{rows:[]};
+      for(const row of live.rows){
+        const key=JSON.stringify([String(row.assignment_id),String(row[field])]);
+        if(known.has(key))continue;
+        if(table!=='admin_permission_grants'||row.permission_code!=='credential.verify'
+          ||!allowed.has(String(row.territory_id))||!qaReasons.has(row.reason))
+          throw new Error('Unexpected concurrent QA Admin grant; refusing overwrite.');
+        newQaGrants.push(row);
+      }
+    }
     for(const row of now.rows){
       const previous=before.get(String(row.id));
       const response=previous?
@@ -278,12 +303,15 @@ export async function restoreQaCredentialAdminBaseline(pool,accountId,snapshot,s
           [row.id,accountId]);
       if(response.rowCount!==1)throw new Error('QA Admin assignment compensation failed.');
     }
-    for(const [table,field,records] of [
-      ['admin_permission_grants','permission_code',snapshot.permissions],
-      ['admin_function_assignments','function_code',snapshot.functions]
-    ]){
-      if(ids.length)await client.query(
-        `UPDATE ${table} SET status='revoked',effective_until=NOW(),updated_at=NOW() WHERE assignment_id=ANY($1::bigint[])`,[ids]);
+    // Only the narrowly identified QA-created credential grants are revoked.
+    // Preserve immutable audit rows; do not touch any unrelated new grant.
+    for(const row of newQaGrants){
+      const compensated=await client.query(
+        "UPDATE admin_permission_grants SET status='revoked',effective_until=NOW(),updated_at=NOW() WHERE assignment_id=$1 AND permission_code=$2 AND reason=$3",
+        [row.assignment_id,row.permission_code,row.reason]);
+      if(compensated.rowCount!==1)throw new Error('QA-created credential grant compensation failed.');
+    }
+    for(const [table,field,records] of sources){
       for(const row of records){
         if(!before.has(String(row.assignment_id)))throw new Error('QA Admin grant snapshot contains foreign assignment.');
         const result=await client.query(
