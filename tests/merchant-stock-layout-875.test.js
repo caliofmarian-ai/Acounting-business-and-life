@@ -90,7 +90,7 @@ test('Stock post-write refresh is scoped to the currently open instrument',async
   const panels=new Map([['purchase',{open:true}],['locations',{open:true}]]);
   const view={classList:{contains:name=>name==='hidden'&&!visible}};
   const runtime={stockToolActive:'purchase',Promise,
-    $:key=>key==='viewStock'?view:key==='stockToolDeck'?{}:panels.get(key.slice('stockTool-'.length)),
+    $:key=>key==='viewStock'?view:key==='stockToolDeck'?{querySelector:()=>({})}:panels.get(key.slice('stockTool-'.length)),
     loadStock:opts=>{calls.push(opts||'full');return Promise.resolve()}};
   vm.createContext(runtime);
   vm.runInContext(code,runtime);
