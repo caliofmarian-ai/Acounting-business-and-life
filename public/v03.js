@@ -1,3 +1,4 @@
+import {createInventoryWriteController} from './inventory-write-context.js';
 import {createInventoryCountUi} from './inventory-count-ui.js';
 import {createInventoryScanUi} from './inventory-scan-ui.js';
 import {createInventoryLocationUi} from './inventory-location-ui.js';
@@ -11,6 +12,8 @@ let stockAdjustmentLots = [];
 let restockSuggestions = [];
 let wasteAnalyticsDays = 7;
 let products = [];
+let preparedRemovalPendingKey = null;
+let productSalesHistoryGeneration = 0;
 let recipeDraft = [];
 let allergenCatalog = [];
 let currentProductAllergenSummary = null;
@@ -319,12 +322,14 @@ const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;
 // Sensitive read evidence is page-local; legacy unscoped browser storage is never trusted.
 let merchantReadGeneration=0;
 let merchantReadLastContext=null;
+let pendingStockPurchase=null;
 const merchantReadCache=new Map(),merchantReadRequests=new Map();
 function clearLegacyMerchantCache(){
   try{for(let n=localStorage.length-1;n>=0;n--){const key=localStorage.key(n);if(key?.startsWith('abl_cache_'))localStorage.removeItem(key)}}catch{}
 }
 function merchantReadContext(){
   const state=window.BusinessLifeProfileState,accounting=window.BusinessLifeAccounting?.getState?.();
+  if($('businessWorkspaceSelect')?.disabled)return null;
   const accountId=Number(state?.accountId??state?.snapshot?.account?.id);
   // Compare the readable marker only in memory; never serialize it or use it as a cache key.
   const session=String(document.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('__Host-abl_csrf='))?.slice(16)||'';
@@ -337,10 +342,12 @@ function merchantReadContext(){
 function sameMerchantReadIdentity(a,b){return Boolean(a&&b&&a.accountId===b.accountId&&a.session===b.session&&a.profileEpoch===b.profileEpoch)}
 function staleMerchantRead(){return Object.assign(new Error('The Merchant context changed. Open this section again.'),{staleMerchantRead:true})}
 function invalidateMerchantReads(){
+  inventoryWrites.invalidate();
+  pendingStockPurchase=null;
   merchantReadGeneration+=1;merchantReadCache.clear();merchantReadRequests.clear();
   merchantReadLastContext=merchantReadContext();
-  inventoryLoadGeneration+=1;inventory=[];products=[];transactions=[];restockSuggestions=[];stockAdjustmentLots=[];
-  for(const id of ['recentList','historyList','productList','productSaleList','remittanceList','profit7List','profit30List','analysis7','analysis30'])$(id)?.replaceChildren();
+  inventoryLoadGeneration+=1;inventory=[];products=[];transactions=[];restockSuggestions=[];stockAdjustmentLots=[];preparedRemovalPendingKey=null;
+  for(const id of ['recentList','historyList','productList','productSaleList','preparedRemovalList','remittanceList','profit7List','profit30List','analysis7','analysis30'])$(id)?.replaceChildren();
   for(const id of ['availableTotal','todaySales','todayProfit','bizExpenses','personalWithdrawals','moneyReceived','remittanceReceived','acctCash','acctGcash','acctBank','acctOther','dayStatusDate','openingCashShown','expectedCashShown','openResult','closeResult','profit7Totals','profit30Totals','analysis7Totals','analysis30Totals']){if($(id))$(id).textContent='Not loaded'}
   for(const id of ['budgetPersonalDaily','budgetPersonalWeekly','budgetBusinessDaily','budgetMinimum']){if($(id))$(id).value=''}
   inventoryLocationUi.reset();inventoryCountUi?.reset();inventoryScanUi.reset();
@@ -359,6 +366,21 @@ function merchantReadIsCurrent(context){
     &&(context.businessId===null||context.businessId===current.businessId);
 }
 function merchantReadGuard(){const context=merchantReadContext();return()=>merchantReadIsCurrent(context)}
+const inventoryWrites=createInventoryWriteController({
+  captureContext:merchantReadContext,isContextCurrent:merchantReadIsCurrent,byId:$
+});
+const beginInventoryWrite=root=>inventoryWrites.begin(root);
+document.addEventListener('abl:feature-workspace',()=>inventoryWrites.invalidate());
+document.addEventListener('abl:merchant-local-view',()=>inventoryWrites.invalidate());
+for(const type of ['input','change','reset']){
+  document.addEventListener(type,event=>{
+    if(pendingStockPurchase?.form.contains(event.target))pendingStockPurchase=null;
+  },true);
+}
+// Invalidate at the START of a selector transition, before its PATCH can settle.
+document.addEventListener('change',event=>{
+  if(event.target?.id==='businessWorkspaceSelect')invalidateMerchantReads();
+},true);
 clearLegacyMerchantCache();
 
 function setOnline(ok){
@@ -375,9 +397,14 @@ function setOnline(ok){
 }
 async function api(path,options={},{isCurrent=()=>true}={}){
   const method=String(options.method||'GET').toUpperCase();
-  if(!['GET','HEAD'].includes(method)&&(path.startsWith('/api/inventory')||path==='/api/product-sales')
+  if(!['GET','HEAD'].includes(method)&&(path.startsWith('/api/inventory')||path==='/api/product-sales'||path==='/api/prepared-product-removals')
     &&(!inventoryConfirmedContext||!merchantReadIsCurrent(inventoryConfirmedContext)))throw new Error('Reload Inventory online before changing stock.');
   const headers={'Content-Type':'application/json',...(options.headers||{})};
+  if(/^\/api\/inventory(?:[/?]|$)/.test(path)){
+    const dispatchedContext=merchantReadContext(),callerCurrent=isCurrent;
+    isCurrent=()=>callerCurrent()&&merchantReadIsCurrent(dispatchedContext);
+    if(dispatchedContext?.businessId!=null)headers['x-abl-inventory-origin-business']=String(dispatchedContext.businessId);
+  }
   try{
     let r;
     try{r=await fetch(path,{...options,headers})}catch(error){
@@ -544,6 +571,9 @@ function renderMerchantToday(data){
 
   $('todayMoneyReceived').textContent=money(data.money?.confirmed_received);
   $('todayCompletedSales').textContent=money(data.money?.completed_sales);
+  const salesSources=data.money?.sources||{};
+  if($('todaySalesSources'))$('todaySalesSources').textContent='Orders '+money(salesSources.completed_order_value)+
+    ' · Quick Sale '+num(salesSources.quick_sale_portions||0)+' portion(s) / '+money(salesSources.quick_sale_value);
   $('todayAwaitingPayment').textContent=money(data.money?.awaiting_payment);
   $('todayBusinessExpenses').textContent=money(data.money?.business_expenses);
   $('todayFoodActions').classList.toggle('hidden',!data.presentation?.food_modules_enabled);
@@ -621,7 +651,7 @@ async function loadMerchantView(name){
     return Promise.all([loadDay(),loadRemittances(),loadAnalysis(7),loadAnalysis(30)]);
   }
   if(name==='Stock')return; // #875: each Stock tool fetches only when explicitly expanded.
-  if(name==='Sell')return Promise.all([loadStock(),loadProducts()]);
+  if(name==='Sell')return Promise.all([loadStock(),loadProducts(),loadProductSales(),loadPreparedRemovals()]);
   if(name==='Menu')return Promise.all([loadStock(),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)]);
   if(name==='History')return loadTransactions();
 }
@@ -755,8 +785,9 @@ let inventoryCountUi=null;
 const inventoryLocationUi=createInventoryLocationUi({
   api:inventoryReadApi,
   getReadGuard:inventoryReadGuard,
+  beginWrite:beginInventoryWrite,
   getInventory:()=>inventory,
-  refreshInventory:()=>loadStock(),
+  refreshInventory:()=>refreshStockTool('locations'),
   escapeHtml:esc,
   formatNumber:num,
   onLocationsChanged:()=>inventoryCountUi?.syncScopeOptions()
@@ -766,9 +797,10 @@ inventoryLocationUi.wire();
 inventoryCountUi=createInventoryCountUi({
   api:inventoryReadApi,
   getReadGuard:inventoryReadGuard,
+  beginWrite:beginInventoryWrite,
   getInventory:()=>inventory,
   getLocations:()=>inventoryLocationUi.getLocations(),
-  refreshInventory:()=>loadStock(),
+  refreshInventory:()=>refreshStockTool('count'),
   escapeHtml:esc,
   formatNumber:num,
   storageAreaLabels:STORAGE_AREA_LABELS
@@ -782,6 +814,7 @@ async function useInventoryForReceiving(item){
     await openStockTool('purchase'); // Reveal the purchase tool before pre-filling it.
     if(!stillAuthorized()||stockToolActive!=='purchase')return;
   }
+  pendingStockPurchase=null;
   if($('stockInventoryId'))$('stockInventoryId').value=String(item.id||'');
   if($('stockItem'))$('stockItem').value=item.item||'';
   if($('stockInventoryType'))$('stockInventoryType').value=item.inventory_type||'ingredient';
@@ -807,8 +840,9 @@ async function useInventoryForReceiving(item){
 const inventoryScanUi=createInventoryScanUi({
   api:inventoryReadApi,
   getReadGuard:inventoryReadGuard,
+  beginWrite:beginInventoryWrite,
   getInventory:()=>inventory,
-  refreshInventory:()=>loadStock(),
+  refreshInventory:()=>refreshStockTool('scanner'),
   escapeHtml:esc,
   formatNumber:num,
   onReceiveItem:useInventoryForReceiving,
@@ -926,11 +960,12 @@ async function loadInventoryUnavailableAllocations(readCurrent=inventoryReadGuar
       const active=row.state==='active',when=row.created_at?new Date(row.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'}):'';
       d.innerHTML=`<div class="rowMain"><strong>${esc(String(row.reason||'other').replaceAll('_',' '))} · ${num(row.quantity,4)} ${esc(row.unit||'')}</strong><small>${row.note?esc(row.note)+' • ':''}${row.location_name?esc(row.location_name)+' • ':''}${esc(when)}${active?'':' • released'}</small></div>${active?`<button type="button" class="miniBtn" data-release-unavailable="${Number(row.id)}">Restore</button>`:'<span>Released</span>'}`;
       d.querySelector('[data-release-unavailable]')?.addEventListener('click',async()=>{
+        const write=beginInventoryWrite(list);if(!write)return;
         try{
           await api(`/api/inventory/${inventoryId}/unavailable/${Number(row.id)}/release`,{method:'POST',body:JSON.stringify({note:'Restored from Inventory workspace'})});
-          await loadStock();
-          await loadInventoryUnavailableAllocations();
-        }catch(error){const msg=$('inventoryUnavailableMessage');if(msg)msg.textContent=error.message}
+          if(!write.accept())return;
+          await refreshStockTool('unavailable');if(!write.isCurrent())return;
+        }catch(error){if(!write.isCurrent())return;const msg=$('inventoryUnavailableMessage');if(msg)msg.textContent=error.message}finally{write.finish()}
       });
       return d;
     });
@@ -948,6 +983,8 @@ function wireInventoryUnavailableUi(){
   if(qty)qty.oninput=updateInventoryUnavailablePreview;
   if(form)form.onsubmit=async event=>{
     event.preventDefault();
+    const write=beginInventoryWrite(form);if(!write)return;
+    try{
     const message=$('inventoryUnavailableMessage');if(message)message.textContent='Saving hold…';
     try{
       const inventoryId=selectedPositiveInventoryId(select),quantity=Number(qty?.value);
@@ -957,15 +994,16 @@ function wireInventoryUnavailableUi(){
         quantity,
         note:$('inventoryUnavailableNote')?.value||''
       })});
+      if(!write.accept())return;
       if(message)message.textContent='Stock marked unavailable. No cash or accounting transaction was created.';
       if(qty)qty.value='';if($('inventoryUnavailableNote'))$('inventoryUnavailableNote').value='';
-      await loadStock();
+      await refreshStockTool('unavailable');if(!write.isCurrent())return;
       if(select)select.value=String(inventoryId);
       fillInventoryUnavailableEditor();
       if(select)select.value=String(inventoryId);
-      updateInventoryUnavailablePreview();
-      await loadInventoryUnavailableAllocations();
-    }catch(error){if(message)message.textContent=error.message}
+      updateInventoryUnavailablePreview(); // Tool refresh already reloaded this item's hold history.
+    }catch(error){if(!write.isCurrent())return;if(message)message.textContent=error.message}
+    }finally{write.finish()}
   };
 }
 let inventoryLoadGeneration=0;
@@ -1002,10 +1040,13 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
     ?'Connection unavailable. Showing last confirmed Inventory from '+new Date(savedAt).toLocaleString('en-PH',{timeZone:'Asia/Manila'})+' (Philippine time). Stock changes are disabled.'
     :state==='error'?'Inventory could not be loaded. '+(error?.message||'Try again.')
     :state==='partial'?'Inventory items loaded. Checking storage locations, lots and stock controls…':state==='loading'?'Loading Inventory for the current business…':'Inventory for the current business has not loaded.';
+  if((cached||state==='error')&&stockToolActive==='purchase'&&pendingStockPurchase){
+    copy.textContent+=' If saving was interrupted, reconnect with Retry this tool and submit the unchanged purchase in this page.';
+  }
   status.appendChild(copy);
   if(toolMenu){
-    // No second 'Load Inventory' button: each summary is the load action.
-    if(state==='error'&&stockToolActive){
+    // Recovery retries the open tool without reloading the page or its draft.
+    if(stockToolActive&&(state==='error'||(cached&&stockToolActive==='purchase'))){
       const retry=document.createElement('button');retry.type='button';retry.className='secondary';
       retry.textContent='Retry this tool';retry.onclick=()=>openStockTool(stockToolActive,{force:true});
       status.appendChild(retry);
@@ -1111,9 +1152,22 @@ async function loadStock({tool=null}={}){
   }
 }
 
+// A Stock write may refresh only its still-open instrument. A separate Sell/Menu
+// view keeps the legacy full read, but must never fan out fourteen advanced GETs
+// while Stock is visible. The write controller invalidates obsolete contexts.
+function refreshStockTool(tool){
+  const view=$('viewStock');
+  if($('stockToolDeck')&&view&&!view.classList.contains('hidden')){
+    if(stockToolActive!==tool||!$('stockTool-'+tool)?.open)return Promise.resolve();
+    return loadStock({tool});
+  }
+  return loadStock();
+}
+
 // One expanded instrument at a time. Never reuse a previous business's
 // readiness after a switch, or silently trigger all Stock GETs on navigation.
 function resetStockTools(){
+  inventoryWrites.invalidate();
   stockToolActive=null;stockToolTask=null;
   for(const detail of $('stockToolDeck')?.querySelectorAll('.stockTool')||[]){
     detail.open=false;
@@ -1129,6 +1183,7 @@ function openStockTool(name,{force=false}={}){
       other.dataset.stockLoaded='false';other.dataset.stockError='false';
     }
   }
+  inventoryWrites.invalidate();
   detail.open=true;stockToolActive=name;
   detail.dataset.stockLoading='true';detail.dataset.stockLoaded='false';detail.dataset.stockError='false';
   const task=loadStock({tool:name});
@@ -1142,6 +1197,7 @@ function initStockTools(){
     detail.querySelector('summary')?.addEventListener('click',event=>{
       event.preventDefault(); // native keyboard activation also dispatches click
       if(detail.open){
+        inventoryWrites.invalidate();
         detail.open=false;detail.dataset.stockLoading='false';detail.dataset.stockLoaded='false';
         detail.dataset.stockError='false';stockToolActive=null;stockToolTask=null;
         inventoryLoadGeneration++;inventoryConfirmedContext=null;
@@ -1408,7 +1464,8 @@ async function loadConsumableRules(isCurrent=inventoryReadGuard()){
       const d=document.createElement('div');d.className='listRow';
       d.innerHTML=`<div class="rowMain"><strong>${esc(r.item)}</strong><small>${consumableRuleLabel(r)} • stock ${num(r.stock_quantity,4)} ${esc(r.unit)}</small></div><button type="button" class="miniBtn">Remove</button>`;
       d.querySelector('button').onclick=async()=>{
-        try{await api(`/api/inventory/consumable-rules/${r.id}`,{method:'DELETE'});await loadConsumableRules()}catch(error){alert(error.message)}
+        const write=beginInventoryWrite(list);if(!write)return;
+        try{await api(`/api/inventory/consumable-rules/${r.id}`,{method:'DELETE'});if(!write.accept())return;await loadConsumableRules()}catch(error){if(write.isCurrent())alert(error.message)}finally{write.finish()}
       };
       return d;
     });
@@ -1438,6 +1495,13 @@ function fillProductSelects(){
   const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');
   const active=prepared.filter(p=>p.active);$('sellProduct').innerHTML=active.length?active.map(p=>`<option value="${p.id}">${esc(p.name)} — ${money(p.selling_price)}</option>`).join(''):'<option value="">No active prepared products</option>';
   $('recipeProduct').innerHTML=prepared.length?prepared.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join(''):'<option value="">Create a prepared product first</option>';
+  const removedSelect=$('preparedRemovalProduct');
+  if(removedSelect){
+    const previous=removedSelect.value;
+    removedSelect.replaceChildren(...(prepared.length?prepared.map(p=>new Option(p.name,String(p.id))):[new Option('Create a prepared product first','')]));
+    if(prepared.some(p=>String(p.id)===previous))removedSelect.value=previous;
+    updatePreparedRemovalPreview();
+  }
   updateSellPreview();if(prepared.length&&!$('recipeProduct').value)$('recipeProduct').value=String(prepared[0].id);
 }
 function fillIngredientSelect(){const ingredients=inventory.filter(i=>(i.inventory_type||'ingredient')==='ingredient');$('recipeIngredient').innerHTML=ingredients.length?ingredients.map(i=>`<option value="${i.id}">${esc(i.item)} — ${num(i.quantity)} ${esc(i.unit)}</option>`).join(''):'<option value="">Add ingredient stock first</option>'}
@@ -1555,7 +1619,86 @@ function selectRecipeProduct(id){setView('Menu');$('recipeProduct').value=String
 function editProduct(p){setView('Menu');$('productId').value=p.id;$('productKind').value=p.product_kind||'prepared_recipe';$('productName').value=p.name;$('productCategory').value=p.category;$('productPrice').value=Number(p.selling_price);$('productActive').checked=Boolean(p.active);$('productFormTitle').textContent='Edit prepared product';$('productSave').textContent='Save changes';$('productCancel').classList.remove('hidden');$('productForm').scrollIntoView({behavior:'smooth',block:'start'})}
 function resetProductForm(){$('productForm').reset();$('productId').value='';$('productKind').value='prepared_recipe';$('productCategory').value='Food';$('productActive').checked=true;$('productFormTitle').textContent='Create prepared product';$('productSave').textContent='Create prepared product';$('productCancel').classList.add('hidden');$('productMessage').textContent=''}
 async function toggleProduct(p){try{await api(`/api/products/${p.id}`,{method:'PATCH',body:JSON.stringify({active:!p.active})});await loadProducts()}catch(e){alert(e.message)}}
-async function loadProductSales(){const isCurrent=merchantReadGuard();const rows=await cachedJson('/api/product-sales','product_sales');if(!isCurrent())return;const nodes=rows.slice(0,20).map(s=>{const d=document.createElement('div');d.className='listRow';const margin=Number(s.revenue)>0?Number(s.gross_profit)/Number(s.revenue)*100:0;d.innerHTML=`<div class="rowMain"><strong>${num(s.quantity)} × ${esc(s.product_name_snapshot)}</strong><small>${esc(accountLabel(s.account))} • cost ${money(s.estimated_cogs)} • margin ${margin.toFixed(1)}%</small></div><div class="rowRight"><span>${money(s.revenue)}</span><small class="positive">gross ${money(s.gross_profit)}</small></div>`;return d});$('productSaleList').replaceChildren(...(nodes.length?nodes:[emptyRow('No menu sales yet.')]))}
+
+const preparedRemovalReasons=Object.freeze({
+  owner_consumption:'Owner consumption / personal use',
+  damaged:'Damaged prepared food',
+  spoilage:'Spoiled prepared food',
+  quality_rejected:'Failed quality control'
+});
+function updatePreparedRemovalPreview(){
+  const output=$('preparedRemovalPreview');
+  if(!output)return;
+  const product=products.find(p=>Number(p.id)===Number($('preparedRemovalProduct')?.value));
+  const qty=Number($('preparedRemovalQty')?.value);
+  if(!product||!Number.isFinite(qty)||qty<=0){
+    output.textContent='Choose a prepared product and portion quantity.';
+    return;
+  }
+  const cost=Number(product.estimated_unit_cost||0)*qty;
+  const isOwner=$('preparedRemovalReason')?.value==='owner_consumption';
+  output.innerHTML='Remove <strong>'+num(qty,4)+'</strong> × '+esc(product.name)+
+    ' • estimated ingredient cost <strong>'+money(cost)+'</strong> • sale revenue <strong>'+money(0)+'</strong> • cash movement <strong>'+money(0)+'</strong>'+
+    '<br><small>'+esc(isOwner?'Personal-use / owner draw, not operating waste.':'Prepared food loss / quality waste; not a sale.')+'</small>';
+}
+async function loadPreparedRemovals(){
+  const isCurrent=merchantReadGuard();
+  const data=await cachedJson('/api/prepared-product-removals','prepared_removals');
+  if(!isCurrent())return;
+  const entries=Array.isArray(data?.entries)?data.entries:[];
+  const reasons=Array.isArray(data?.summary_30d)?data.summary_30d:[];
+  const owner=reasons.filter(r=>r.removal_reason==='owner_consumption');
+  const loss=reasons.filter(r=>r.removal_reason!=='owner_consumption');
+  const total=(rows,key)=>rows.reduce((sum,r)=>sum+Number(r[key]||0),0);
+  const summary=$('preparedRemovalSummary');
+  if(summary)summary.textContent='Last 30 days: owner use '+num(total(owner,'portions'),4)+
+    ' portions / '+money(total(owner,'estimated_cost'))+
+    ' noncash personal cost • quality/damage/spoilage '+num(total(loss,'portions'),4)+
+    ' portions / '+money(total(loss,'estimated_cost'))+' noncash product loss.';
+  const nodes=entries.slice(0,25).map(item=>{
+    const node=document.createElement('div');node.className='listRow';
+    const label=preparedRemovalReasons[item.removal_reason]||item.removal_reason;
+    const date=new Date(item.occurred_at).toLocaleString('en-PH',{timeZone:'Asia/Manila',dateStyle:'medium',timeStyle:'short'});
+    node.innerHTML='<div class="rowMain"><strong>'+num(item.quantity,4)+' × '+esc(item.product_name_snapshot)+
+      '</strong><small>'+esc(label)+' • '+esc(date)+(item.note?' • '+esc(item.note):'')+
+      '</small></div><div class="rowRight"><strong>'+money(item.estimated_cost)+
+      '</strong><small>No sale / no cash</small></div>';
+    return node;
+  });
+  $('preparedRemovalList')?.replaceChildren(...(nodes.length?nodes:[emptyRow('No prepared portions removed without sale yet.')]));
+}
+
+async function loadProductSales(){
+  const list=$('productSaleList');
+  if(!list)return[];
+  const generation=++productSalesHistoryGeneration,guard=merchantReadGuard();
+  const active=()=>guard()&&generation===productSalesHistoryGeneration;
+  list.replaceChildren(emptyRow('Loading recent Quick Sales…'));
+  try{
+    // Never accept a browser-cached empty/304 history after posting new sales.
+    // This read is business-bound and does not regenerate or repost transactions.
+    const rows=await api('/api/product-sales',{cache:'no-store'},{isCurrent:active});
+    if(!active())return[];
+    if(!Array.isArray(rows))throw new Error('Quick Sale history returned an invalid response.');
+    const nodes=rows.slice(0,30).map(s=>{
+      const d=document.createElement('div');d.className='listRow';
+      const margin=Number(s.revenue)>0?Number(s.gross_profit)/Number(s.revenue)*100:0;
+      d.innerHTML=`<div class="rowMain"><strong>${num(s.quantity)} × ${esc(s.product_name_snapshot)}</strong><small>${esc(accountLabel(s.account))} • cost ${money(s.estimated_cogs)} • margin ${margin.toFixed(1)}%</small></div><div class="rowRight"><span>${money(s.revenue)}</span><small class="positive">gross ${money(s.gross_profit)}</small></div>`;
+      return d;
+    });
+    list.replaceChildren(...(nodes.length?nodes:[emptyRow('No Quick Sale records for this business yet.')]));
+    return rows;
+  }catch(error){
+    // An old business/session must never overwrite a newer Merchant's history.
+    if(!active())return[];
+    const message=emptyRow('Quick Sale history could not be loaded. '+(error.message||'Check your connection.'));
+    const retry=document.createElement('button');
+    retry.type='button';retry.className='secondary';retry.textContent='Retry sales history';
+    retry.addEventListener('click',()=>loadProductSales().catch(e=>console.error(e)));
+    list.replaceChildren(message,retry);
+    return[];
+  }
+}
 function profitRows(report){const nodes=[];for(const p of report.products||[]){const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(p.name)}</strong><small>Quick sale history · ${num(p.quantity)} portions • revenue ${money(p.revenue)} • ingredient cost ${money(p.cogs)}</small></div><div class="rowRight"><span class="${Number(p.gross_profit)>=0?'positive':'negative'}">${money(p.gross_profit)}</span><small>${Number(p.margin_pct).toFixed(1)}%</small></div>`;nodes.push(d)}
   const orders=report.completed_order_direct_cost?.orders||[];
   for(const o of orders.slice(0,8)){const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(o.order_number||('Order #'+o.order_id))} · ${esc(o.fulfilment_method||'order')}</strong><small>Ingredient ${money(o.ingredient_cost)} • packaging/direct consumables ${money(o.direct_consumable_cost)} • direct food cost ${money(o.direct_food_cost)}</small></div><div class="rowRight"><span class="${Number(o.direct_gross_profit)>=0?'positive':'negative'}">${money(o.direct_gross_profit)}</span><small>${Number(o.direct_margin_pct).toFixed(1)}%</small></div>`;nodes.push(d)}
@@ -1568,11 +1711,15 @@ async function refreshCurrentMerchantView(){
   const name=visible?.id?.replace(/^view/,'')||'Dashboard';
   try{
     if(name==='Dashboard'){invalidateMerchantToday();await loadMerchantToday({force:true});return}
+    if(name==='Stock'){
+      if(stockToolActive)await refreshStockTool(stockToolActive);
+      return;
+    }
     await loadMerchantView(name);
   }catch(error){if(!error.staleMerchantRead)console.error(error)}
 }
 if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
-if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
+if($('restockRefresh'))$('restockRefresh').onclick=()=>refreshStockTool('restock');
 if($('wastePeriod7'))$('wastePeriod7').onclick=()=>loadWasteAnalytics(7);
 if($('wastePeriod30'))$('wastePeriod30').onclick=()=>loadWasteAnalytics(30);
 if($('lotRefresh'))$('lotRefresh').onclick=()=>loadInventoryLots();
@@ -1583,7 +1730,7 @@ $('stockAdjustmentKind')?.addEventListener('change',async()=>{await loadStockAdj
 $('stockAdjustmentLot')?.addEventListener('change',updateStockAdjustmentPreview);
 $('stockAdjustmentQty')?.addEventListener('input',updateStockAdjustmentPreview);
 $('stockAdjustmentForm')?.addEventListener('submit',async e=>{
-  e.preventDefault();const out=$('stockAdjustmentMessage');if(out)out.textContent='Saving…';
+  e.preventDefault();const write=beginInventoryWrite($('stockAdjustmentForm'));if(!write)return;try{const out=$('stockAdjustmentMessage');if(out)out.textContent='Saving…';
   try{
     const result=await api('/api/inventory/adjustments',{method:'POST',body:JSON.stringify({
       inventory_id:Number($('stockAdjustmentInventory').value),
@@ -1591,36 +1738,38 @@ $('stockAdjustmentForm')?.addEventListener('submit',async e=>{
       quantity:Number($('stockAdjustmentQty').value),
       lot_id:$('stockAdjustmentLot').value?Number($('stockAdjustmentLot').value):null,
       note:$('stockAdjustmentNote').value
-    })});
+    })});if(!write.accept())return;
     if(out)out.textContent=`Saved. New stock: ${num(result.inventory.quantity,4)} ${result.inventory.unit}.`;
     $('stockAdjustmentQty').value='';
     $('stockAdjustmentNote').value='';
-    await loadStock();
-    await loadStockAdjustmentLots();
+    await refreshStockTool('adjustments');if(!write.isCurrent())return;
+    await loadStockAdjustmentLots();if(!write.isCurrent())return;
     invalidateMerchantToday();
     updateStockAdjustmentPreview();
-  }catch(error){if(out)out.textContent=error.message}
+  }catch(error){if(!write.isCurrent())return;if(out)out.textContent=error.message}
+}finally{write.finish()}
 });
 $('consumableRuleForm')?.addEventListener('submit',async e=>{
-  e.preventDefault();const out=$('consumableRuleMessage');if(out)out.textContent='Saving…';
+  e.preventDefault();const write=beginInventoryWrite($('consumableRuleForm'));if(!write)return;try{const out=$('consumableRuleMessage');if(out)out.textContent='Saving…';
   try{
     await api('/api/inventory/consumable-rules',{method:'POST',body:JSON.stringify({
       inventory_id:Number($('consumableInventoryId').value),
       fulfilment_scope:$('consumableScope').value,
       usage_basis:$('consumableBasis').value,
       quantity_used:Number($('consumableQty').value)
-    })});
+    })});if(!write.accept())return;
     if(out)out.textContent='Consumable rule saved.';
     $('consumableQty').value=1;
     await loadConsumableRules();
-  }catch(error){if(out)out.textContent=error.message}
+  }catch(error){if(!write.isCurrent())return;if(out)out.textContent=error.message}
+}finally{write.finish()}
 });
 $('storageInventoryId')?.addEventListener('change',loadStorageEditorItem);
 for(const id of ['storageCondition','storageAreaType','storageLocationLabel'])$(id)?.addEventListener('change',updateStorageEditorSafety);
 $('storageLocationLabel')?.addEventListener('input',updateStorageEditorSafety);
 $('storageSegregated')?.addEventListener('change',updateStorageEditorSafety);
 $('storageForm')?.addEventListener('submit',async e=>{
-  e.preventDefault();const out=$('storageMessage');if(out)out.textContent='Saving…';
+  e.preventDefault();const write=beginInventoryWrite($('storageForm'));if(!write)return;try{const out=$('storageMessage');if(out)out.textContent='Saving…';
   try{
     const id=Number($('storageInventoryId').value);
     if(!Number.isInteger(id))throw new Error('Choose an Inventory item.');
@@ -1629,27 +1778,113 @@ $('storageForm')?.addEventListener('submit',async e=>{
       storage_area_type:$('storageAreaType').value,
       storage_location_label:$('storageLocationLabel').value,
       storage_segregated:$('storageSegregated').checked
-    })});
+    })});if(!write.accept())return;
     if(out)out.textContent=`Storage saved for ${updated.item}.`;
-    await loadStock();
+    await refreshStockTool('storage');if(!write.isCurrent())return;
     invalidateMerchantToday();
-  }catch(error){if(out)out.textContent=error.message}
+  }catch(error){if(!write.isCurrent())return;if(out)out.textContent=error.message}
+}finally{write.finish()}
 });
 $('restockSettingsInventory')?.addEventListener('change',loadRestockSettingsItem);
 for(const id of ['restockSettingsAlert','restockSettingsTarget'])$(id)?.addEventListener('input',updateRestockSettingsPreview);
 $('restockSettingsUnit')?.addEventListener('change',updateRestockSettingsPreview);
 $('restockSettingsForm')?.addEventListener('submit',async e=>{
-  e.preventDefault();const out=$('restockSettingsMessage');if(out)out.textContent='Saving…';
+  e.preventDefault();const write=beginInventoryWrite($('restockSettingsForm'));if(!write)return;try{const out=$('restockSettingsMessage');if(out)out.textContent='Saving…';
   try{
     const id=Number($('restockSettingsInventory').value);if(!Number.isInteger(id))throw new Error('Choose an Inventory item.');
     const alert=Number($('restockSettingsAlert').value||0),target=Number($('restockSettingsTarget').value||0),unit=$('restockSettingsUnit').value;
     if(target>0&&target<alert)throw new Error('Restock target must be equal to or higher than the low-stock alert.');
-    await api(`/api/inventory/${id}/reorder-settings`,{method:'PUT',body:JSON.stringify({reorder_quantity:alert,target_quantity:target,unit})});
+    await api(`/api/inventory/${id}/reorder-settings`,{method:'PUT',body:JSON.stringify({reorder_quantity:alert,target_quantity:target,unit})});if(!write.accept())return;
     if(out)out.textContent='Restock settings saved.';
-    await loadStock();invalidateMerchantToday();
-  }catch(error){if(out)out.textContent=error.message}
+    await refreshStockTool('restockSettings');if(!write.isCurrent())return;invalidateMerchantToday();
+  }catch(error){if(!write.isCurrent())return;if(out)out.textContent=error.message}
+}finally{write.finish()}
 });
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({inventory_id:$('stockInventoryId').value?Number($('stockInventoryId').value):null,item:$('stockItem').value,inventory_type:$('stockInventoryType').value,inventory_domain:$('stockInventoryDomain').value,stock_role:$('stockStockRole').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,target_quantity:Number($('stockTargetQty').value||0),target_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockInventoryId').value='';$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockTargetQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockInventoryDomain').value='food';syncInventoryRoleOptions('ingredient');$('stockStockRole').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
+$('stockForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const form=$('stockForm'),message=$('stockMessage'),write=beginInventoryWrite(form);
+  if(!write)return;
+  try{
+    const context=merchantReadContext();
+    if(!context?.businessId)throw new Error('Reopen your Merchant business to confirm this Inventory change.');
+    const draft={
+      inventory_id:$('stockInventoryId').value?Number($('stockInventoryId').value):null,
+      item:$('stockItem').value,
+      inventory_type:$('stockInventoryType').value,
+      inventory_domain:$('stockInventoryDomain').value,
+      stock_role:$('stockStockRole').value,
+      storage_condition:$('stockStorageCondition').value,
+      storage_area_type:$('stockStorageArea').value,
+      storage_location_label:$('stockStorageLocation').value,
+      storage_segregated:$('stockStorageSegregated').checked,
+      purchase_quantity:Number($('stockPurchaseQty').value),
+      purchase_unit:$('stockPurchaseUnit').value,
+      total_cost:Number($('stockTotalCost').value),
+      reorder_quantity:Number($('stockReorderQty').value||0),
+      reorder_unit:$('stockReorderUnit').value,
+      target_quantity:Number($('stockTargetQty').value||0),
+      target_unit:$('stockReorderUnit').value,
+      lot_code:$('stockLotCode').value,
+      expires_at:$('stockExpiry').value,
+      account:$('stockAccount').value,
+      note:$('stockNote').value,
+      record_expense:true
+    };
+    // A lost response may follow a committed purchase. Retry this unchanged
+    // form in its original context with the same key until it is confirmed.
+    const signature=JSON.stringify(draft);
+    if(!pendingStockPurchase||pendingStockPurchase.form!==form||
+      pendingStockPurchase.signature!==signature||!merchantReadIsCurrent(pendingStockPurchase.context)){
+      pendingStockPurchase={form,context,signature,key:crypto.randomUUID()};
+    }
+    const intent=pendingStockPurchase;
+    message.textContent='Saving purchase…';
+    const result=await api('/api/inventory/purchase',{
+      method:'POST',body:JSON.stringify({...draft,purchase_intent_key:intent.key})
+    },{isCurrent:()=>write.isCurrent()&&pendingStockPurchase===intent});
+    if(!write.accept())return;
+    if(!result?.conversion?.stored||!result.inventory){
+      throw new Error('Could not confirm the purchase. Try again without changing the draft.');
+    }
+    pendingStockPurchase=null;
+    const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';
+    message.textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;
+    form.reset();
+    $('stockInventoryId').value='';
+    $('stockPurchaseQty').value=1;
+    $('stockPurchaseUnit').value='kg';
+    $('stockTotalCost').value=0;
+    $('stockAccount').value='cash';
+    $('stockReorderQty').value=0;
+    $('stockTargetQty').value=0;
+    $('stockReorderUnit').value='g';
+    $('stockLotCode').value='';
+    $('stockExpiry').value='';
+    $('stockInventoryType').value='ingredient';
+    $('stockInventoryDomain').value='food';
+    syncInventoryRoleOptions('ingredient');
+    $('stockStockRole').value='ingredient';
+    $('stockStorageCondition').value='other';
+    $('stockStorageArea').value='other';
+    $('stockStorageLocation').value='';
+    $('stockStorageSegregated').checked=false;
+    $('stockCategoryPicker').value='';
+    $('stockItemPicker').replaceChildren(new Option('Choose a category first',''));
+    $('stockItemPicker').disabled=true;
+    updateStockStorageHint();
+    stockPurchasePreview();
+    // Other views load Products on demand; do not prefetch it from Stock.
+    await refreshStockTool('purchase');
+    if(!write.isCurrent())return;
+    invalidateMerchantToday();
+  }catch(error){
+    if(write.isCurrent()&&!error.staleMerchantRead){
+      message.textContent=error.merchantTransportFailure
+        ?'Could not confirm the purchase. Reconnect and retry this unchanged draft in this page.'
+        :error.message;
+    }
+  }finally{write.finish()}
+});
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
 $('closeForm').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/close-day',{method:'POST',body:JSON.stringify({actual_cash:Number($('actualCash').value)})});$('closeResult').innerHTML=`Expected ${money(r.expected_cash)} • Actual ${money(r.actual_cash)} • <strong class="${Number(r.variance)<0?'negative':Number(r.variance)>0?'positive':''}">Difference ${money(r.variance)}</strong>`;await loadDay()}catch(err){$('closeResult').textContent=err.message}});
@@ -1659,16 +1894,17 @@ $('productForm').addEventListener('submit',async e=>{e.preventDefault();$('produ
 $('productCancel').onclick=resetProductForm;
 $('ingredientAllergenInventory')?.addEventListener('change',()=>loadIngredientAllergens().catch(error=>{if(!error.staleMerchantRead)$('ingredientAllergenMessage').textContent=error.message}));
 $('ingredientAllergenForm')?.addEventListener('submit',async e=>{
-  e.preventDefault();const out=$('ingredientAllergenMessage');if(out)out.textContent='Saving…';
+  e.preventDefault();const write=beginInventoryWrite($('ingredientAllergenForm'));if(!write)return;try{const out=$('ingredientAllergenMessage');if(out)out.textContent='Saving…';
   try{
     const id=Number($('ingredientAllergenInventory').value);
     if(!Number.isInteger(id))throw new Error('Choose an ingredient.');
     const contains=checkedAllergens('ingredientContains');
     const may=checkedAllergens('ingredientMayContain').filter(code=>!contains.includes(code));
-    await api(`/api/inventory/${id}/allergens`,{method:'PUT',body:JSON.stringify({contains,may_contain:may,note:$('ingredientAllergenNote').value})});
+    await api(`/api/inventory/${id}/allergens`,{method:'PUT',body:JSON.stringify({contains,may_contain:may,note:$('ingredientAllergenNote').value})});if(!write.accept())return;
     if(out)out.textContent='Ingredient allergen evidence saved. Affected prepared products now require review.';
     await loadProducts();
-  }catch(error){if(out)out.textContent=error.message}
+  }catch(error){if(!write.isCurrent())return;if(out)out.textContent=error.message}
+}finally{write.finish()}
 });
 $('allergenProduct')?.addEventListener('change',()=>loadProductAllergens().catch(error=>{$('productAllergenMessage').textContent=error.message}));
 $('saveProductCrossContact')?.addEventListener('click',async()=>{
@@ -1698,6 +1934,58 @@ stockPurchasePreview();
 $('sellProduct').onchange=updateSellPreview;$('sellQty').oninput=updateSellPreview;
 $('sellForm').addEventListener('submit',async e=>{e.preventDefault();$('sellMessage').textContent='Saving sale…';try{const r=await api('/api/product-sales',{method:'POST',body:JSON.stringify({product_id:Number($('sellProduct').value),quantity:Number($('sellQty').value),account:$('sellAccount').value,note:$('sellNote').value})});$('sellMessage').innerHTML=`Saved ${num(r.quantity)} portion(s). Revenue <strong>${money(r.revenue)}</strong>, estimated gross <strong>${money(r.gross_profit)}</strong>.`;e.target.reset();$('sellQty').value=1;$('sellAccount').value='cash';await Promise.all([loadTransactions(),loadStock(),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)]);invalidateMerchantToday();updateSellPreview()}catch(err){if(err.data?.shortages?.length){$('sellMessage').innerHTML=`<span class="negative">Not enough stock:</span> ${err.data.shortages.map(s=>`${esc(s.item)} needs ${num(s.required)} ${esc(s.unit)}, available ${num(s.available)}`).join(' • ')}`}else $('sellMessage').textContent=err.message}});
 
+
+for(const id of ['preparedRemovalProduct','preparedRemovalReason','preparedRemovalQty','preparedRemovalNote']){
+  $(id)?.addEventListener('input',()=>{preparedRemovalPendingKey=null;updatePreparedRemovalPreview()});
+  $(id)?.addEventListener('change',()=>{preparedRemovalPendingKey=null;updatePreparedRemovalPreview()});
+}
+$('preparedRemovalForm')?.addEventListener('submit',async event=>{
+  event.preventDefault();
+  const form=$('preparedRemovalForm'),message=$('preparedRemovalMessage'),button=$('preparedRemovalSubmit');
+  if(button?.disabled)return;
+  // Reuse the origin-bound Inventory controller for non-sale prepared portions.
+  // It serializes duplicate submits and revokes stale UI authority on edit,
+  // business/session/profile changes or navigation. The server write itself
+  // still completes in its original Merchant business.
+  const write=beginInventoryWrite(form);
+  if(!write)return;
+  try{
+    const context=merchantReadContext();
+    if(!context?.businessId){if(write.isCurrent()&&message)message.textContent='Reopen your Merchant business to confirm this Inventory change.';return}
+    const productId=Number($('preparedRemovalProduct').value),quantity=Number($('preparedRemovalQty').value);
+    const reason=$('preparedRemovalReason').value;
+    if(!confirm('Remove '+num(quantity,4)+' prepared portion(s) from Inventory as '+(preparedRemovalReasons[reason]||reason)+'? No cash or sale will be recorded.'))return;
+    if(!preparedRemovalPendingKey)preparedRemovalPendingKey=crypto.randomUUID();
+    const originatingKey=preparedRemovalPendingKey;
+    if(message&&write.isCurrent())message.textContent='Recording removal and ingredient cost…';
+    try{
+      const result=await api('/api/prepared-product-removals',{method:'POST',body:JSON.stringify({
+        business_id:context.businessId,product_id:productId,quantity,reason,
+        idempotency_key:originatingKey,note:$('preparedRemovalNote').value
+      })},{isCurrent:()=>write.isCurrent()});
+      // A completed A write must not render, clear the new B form/key, or
+      // start B refreshes. A late 401 also cannot log out the new session.
+      if(!write.accept())return;
+      const saved=result.removal;
+      if(message)message.textContent=(result.already_recorded?'Already recorded: ':'Recorded: ')+
+        num(saved.quantity,4)+' portion(s), '+money(saved.estimated_cost)+
+        ' ingredient cost, no sale or cash movement.';
+      preparedRemovalPendingKey=null;
+      form.reset();
+      $('preparedRemovalQty').value=1;
+      await Promise.all([loadStock(),loadProducts(),loadPreparedRemovals()]);
+      if(!write.isCurrent())return;
+      invalidateMerchantToday();
+      updatePreparedRemovalPreview();
+    }catch(error){
+      if(!write.isCurrent())return;
+      if(message)message.textContent=error.data?.shortages?.length
+        ?'Insufficient ingredients: '+error.data.shortages.map(s=>s.item+' needs '+num(s.required,4)+' '+s.unit+'; usable '+num(s.available,4)).join(' • ')
+        :error.message;
+    }
+  }finally{write.finish()}
+});
+
 function openEdit(tx){$('editId').value=tx.id;$('editType').value=tx.type;$('editAmount').value=Number(tx.amount);$('editAccount').value=tx.account||'cash';$('editCategory').value=tx.category||'';$('editNote').value=tx.note||'';$('editReason').value='';$('editMessage').textContent='';$('editDialog').showModal()}
 async function voidManualEntry(tx){
   if(!confirm(`Void this manual/test entry of ${money(tx.amount)}? Its audit history will be preserved.`))return;
@@ -1706,6 +1994,7 @@ async function voidManualEntry(tx){
 $('editCancel').onclick=()=>$('editDialog').close();$('editForm').addEventListener('submit',async e=>{e.preventDefault();$('editMessage').textContent='Saving correction…';try{await api(`/api/transactions/${$('editId').value}`,{method:'PATCH',body:JSON.stringify({type:$('editType').value,amount:Number($('editAmount').value),account:$('editAccount').value,category:$('editCategory').value,note:$('editNote').value,reason:$('editReason').value})});$('editDialog').close();await loadTransactions();invalidateMerchantToday()}catch(err){$('editMessage').textContent=err.message}});
 
 function setView(name){
+  inventoryWrites.invalidate();
   const view=$(`view${name}`);if(!view)return;
   if(name==='Stock')resetStockTools();
   document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));

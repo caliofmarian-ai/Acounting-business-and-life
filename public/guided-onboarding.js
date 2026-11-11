@@ -45,8 +45,14 @@ const SUPPORTED_LOCALES=new Set(['en-PH','fil-PH']);
 const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
 let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH',selectedProfileJourneyRole='',languagePickerReturnMode='';
 const copyCache=new Map();
+let copyLoadEpoch=0;
+let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,guideWriteTail=null;
+let guideSessionIdentity=null,guideSessionEpoch=0;
 const profileDraftSavedForRole=new Set();
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
+// Use the browser's current readable CSRF session token only as an in-memory
+// identity boundary. Never persist or log this value; never treat it as auth.
+const sessionIdentity=()=>String(window.ABLSession?.csrfToken?.()||'');
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const normalizeLocale=value=>SUPPORTED_LOCALES.has(String(value||''))?String(value):'en-PH';
 const activeLocale=()=>normalizeLocale(guide?.preferred_locale||guide?.facts?.preferred_locale||copyLocale);
@@ -59,20 +65,35 @@ const suggestedLocale=()=>{
   const langs=[...(navigator.languages||[]),navigator.language||''].map(x=>String(x).toLowerCase());
   return langs.some(x=>x.startsWith('fil')||x.startsWith('tl'))?'fil-PH':'en-PH';
 };
-async function loadCopy(locale=activeLocale()){
+async function loadCopy(locale=activeLocale(),expectedSession=sessionIdentity()){
   const normalized=normalizeLocale(locale);
-  if(copyCache.has(normalized)){copy=copyCache.get(normalized);copyLocale=normalized;document.documentElement.lang=normalized;return copy}
+  // A previous fetch must never override a newer language choice or fallback.
+  // Increment even for a cache hit: a pending older fetch may still complete.
+  const requestEpoch=++copyLoadEpoch;
+  const activate=pack=>{
+    if(requestEpoch===copyLoadEpoch&&expectedSession===sessionIdentity()&&token()){
+      copy=pack;copyLocale=normalized;document.documentElement.lang=normalized;
+    }
+    return pack;
+  };
+  if(copyCache.has(normalized))return activate(copyCache.get(normalized));
   try{
     const response=await fetch('/locales/guided-onboarding.'+normalized+'.json',{cache:'no-store'});
     if(!response.ok)throw new Error('Locale pack unavailable');
     const pack=await response.json();
-    copyCache.set(normalized,pack);copy=pack;copyLocale=normalized;document.documentElement.lang=normalized;return pack;
+    // A stale completion cannot evict a newer cached revision of the same pack.
+    if(expectedSession===sessionIdentity()&&(requestEpoch===copyLoadEpoch||!copyCache.has(normalized)))copyCache.set(normalized,pack);
+    return activate(pack);
   }catch(error){
+    // A stale network failure must not trigger an English fallback for a
+    // different language selection made while this request was pending.
+    if(requestEpoch!==copyLoadEpoch||expectedSession!==sessionIdentity())return null;
+    // The session guard above runs synchronously before the fallback
+    // captures the same session in its own loadCopy() call.
     if(normalized!=='en-PH')return loadCopy('en-PH');
-    copy={};copyLocale='en-PH';document.documentElement.lang='en-PH';return copy;
+    return activate({});
   }
 }
-
 
 async function api(path,options={}){
   const headers={'Content-Type':'application/json',...(options.headers||{})};
@@ -106,22 +127,71 @@ function firstVisible(...selectors){
 function scheduleRender(delay=80){clearTimeout(renderTimer);renderTimer=setTimeout(()=>Promise.resolve().then(()=>renderGuide()).catch(error=>console.error('Guided onboarding render:',error)),delay)}
 function scheduleRefresh(delay=250){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>refreshGuide().catch(()=>{}),delay)}
 
+function reconcileGuideSession(){
+  const current=sessionIdentity();
+  if(current!==guideSessionIdentity){
+    guideSessionIdentity=current;
+    ++guideSessionEpoch;
+    ++guideReadEpoch;++guideMutationEpoch;++copyLoadEpoch;
+    // Old-account operations can finish after this event; their finally
+    // blocks must not decrement the new session's pending-write count.
+    guideMutationsPending=0;guideWriteTail=null;
+    guide=null;copy={};copyLocale='en-PH';copyCache.clear();
+    selectedProfileJourneyRole='';languagePickerReturnMode='';
+    profileDraftSavedForRole.clear();missionCenterOpen=false;lastAutoStep='';
+    removeOverlay();syncLauncher();
+  }
+  return current;
+}
+function sameGuideSession(expected){
+  return reconcileGuideSession()===expected&&Boolean(token());
+}
 async function refreshGuide({render=true}={}){
+  const expectedSession=reconcileGuideSession();
   if(!token())return null;
-  guide=await api('/api/onboarding/guide');
-  await loadCopy(guide.preferred_locale);
+  const readEpoch=++guideReadEpoch,mutationEpoch=guideMutationEpoch;
+  const startedDuringMutation=guideMutationsPending>0;
+  const snapshot=await api('/api/onboarding/guide');
+  if(!sameGuideSession(expectedSession)||readEpoch!==guideReadEpoch||
+     mutationEpoch!==guideMutationEpoch||startedDuringMutation||
+     guideMutationsPending>0)return null;
+  guide=snapshot;
+  await loadCopy(snapshot.preferred_locale,expectedSession);
+  if(!sameGuideSession(expectedSession)||readEpoch!==guideReadEpoch||
+     mutationEpoch!==guideMutationEpoch||guideMutationsPending>0)return null;
   syncLauncher();
   decorateAccountSettings();
   if(render)scheduleRender(20);
   return guide;
 }
 async function updateGuide(input,{render=true}={}){
-  guide=await api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
-  await loadCopy(guide.preferred_locale);
-  syncLauncher();
-  decorateAccountSettings();
-  if(render)scheduleRender(20);
-  return guide;
+  const expectedSession=reconcileGuideSession(),expectedSessionEpoch=guideSessionEpoch;
+  if(!token())throw new Error('Sign in again to update your tutorial.');
+  const mutationEpoch=++guideMutationEpoch;
+  ++guideReadEpoch;++copyLoadEpoch;++guideMutationsPending;
+  // An old-account PUT that was queued behind another request must not be
+  // dispatched using the new account's cookies after logout/login.
+  const dispatch=()=>{
+    if(!sameGuideSession(expectedSession))
+      throw new Error('Onboarding session changed. Reopen the tutorial.');
+    return api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
+  };
+  const request=guideWriteTail?guideWriteTail.then(dispatch,dispatch):dispatch();
+  guideWriteTail=request;
+  request.finally(()=>{if(guideWriteTail===request)guideWriteTail=null}).catch(()=>{});
+  try{
+    const updated=await request;
+    if(!sameGuideSession(expectedSession)||mutationEpoch!==guideMutationEpoch)return null;
+    guide=updated;
+    await loadCopy(updated.preferred_locale,expectedSession);
+    if(!sameGuideSession(expectedSession)||mutationEpoch!==guideMutationEpoch)return null;
+    syncLauncher();
+    decorateAccountSettings();
+    if(render)scheduleRender(20);
+    return guide;
+  }finally{
+    if(expectedSessionEpoch===guideSessionEpoch)--guideMutationsPending;
+  }
 }
 function removeOverlay(){
   overlay?.remove();overlay=null;
@@ -1075,7 +1145,8 @@ async function handleProfileChoice(target){
   scheduleRefresh(450);
 }
 function bindLifecycle(){
-  document.addEventListener('abl:profile-state',()=>scheduleRefresh(120));
+  document.addEventListener('abl:profile-state',()=>{reconcileGuideSession();scheduleRefresh(120)});
+  document.addEventListener('abl:auth-expired',()=>reconcileGuideSession());
   document.addEventListener('abl:account-settings-rendered',event=>{
     const view=event.detail?.view;
     if(view==='home')decorateAccountSettings();

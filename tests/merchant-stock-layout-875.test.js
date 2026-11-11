@@ -1,6 +1,7 @@
 // #875 — Merchant Stock button grid, on-demand tools, and identical receipt actions.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
@@ -75,4 +76,43 @@ test('Merchant receipt controls and stock write authorizations remain intact',()
   assert.match(inventory,/if\(isCurrent\(\)\)\{\s*inventoryReadState\('ready'\)/);
   assert.match(inventory,/if\(toolMenu\)view\.dataset\.inventoryReadState=state/);
   assert.match(css,/#viewStock\[data-inventory-read-state="error"\] \.stockToolPanel/);
+});
+
+// Regression: a successful write from one Stock disclosure must not reload all
+// other tools. This invokes the real helper, not a duplicate implementation.
+test('Stock post-write refresh is scoped to the currently open instrument',async()=>{
+  const start=inventory.indexOf('function refreshStockTool(tool){');
+  const end=inventory.indexOf('\n// One expanded instrument at a time.',start);
+  assert.ok(start>0&&end>start,'the scoped refresh implementation exists');
+  const code=inventory.slice(start,end);
+  const calls=[];
+  let visible=true;
+  const panels=new Map([['purchase',{open:true}],['locations',{open:true}]]);
+  const view={classList:{contains:name=>name==='hidden'&&!visible}};
+  const runtime={stockToolActive:'purchase',Promise,
+    $:key=>key==='viewStock'?view:key==='stockToolDeck'?{}:panels.get(key.slice('stockTool-'.length)),
+    loadStock:opts=>{calls.push(opts||'full');return Promise.resolve()}};
+  vm.createContext(runtime);
+  vm.runInContext(code,runtime);
+  await runtime.refreshStockTool('purchase');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{tool:'purchase'}]);
+  await runtime.refreshStockTool('locations');
+  assert.equal(calls.length,1,'a closed/unselected Stock tool must not refresh');
+  panels.get('purchase').open=false;
+  await runtime.refreshStockTool('purchase');
+  assert.equal(calls.length,1,'no refreshing after tool closes');
+  visible=false;
+  await runtime.refreshStockTool('purchase');
+  assert.equal(calls[1],'full','Sell/Menu outside Stock retain their full Inventory refresh');
+});
+
+test('Stock write/refresh callbacks never invoke bare all-tool loadStock',()=>{
+  for(const tool of ['locations','count','scanner']){
+    assert.ok(inventory.includes("refreshInventory:()=>refreshStockTool('"+tool+"')"),'missing scoped '+tool+' callback');
+  }
+  for(const tool of ['unavailable','adjustments','storage','restockSettings','purchase','restock']){
+    assert.ok(inventory.includes("refreshStockTool('"+tool+"')"),'missing scoped '+tool+' refresh');
+  }
+  assert.ok(inventory.includes("if(name==='Stock'){\n      if(stockToolActive)await refreshStockTool(stockToolActive);"));
+  assert.ok(!inventory.includes("if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock()"));
 });
