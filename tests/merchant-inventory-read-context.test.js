@@ -1,5 +1,7 @@
+import {createInventoryWriteController} from '../public/inventory-write-context.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
@@ -24,7 +26,7 @@ function functionSource(name){
 }
 
 function dom(){
-  const nodes=new Map();
+  const nodes=new Map(),events=new Map();
   class Element{
     constructor(tag='div',id=''){this.tagName=tag.toUpperCase();this._id='';this.id=id;this.children=[];this.parentElement=null;this.className='';this.textContent='';this.innerHTML='';this.value='';this.disabled=false;this.hidden=false;this.dataset={};this.attributes={};this.listeners=new Map();this.style={};}
     set id(value){this._id=value;if(value)nodes.set(value,this)}get id(){return this._id}
@@ -39,6 +41,8 @@ function dom(){
     querySelectorAll(selector){const choices=selector.split(',').map(x=>x.trim());return this.children.flatMap(child=>[...(choices.some(x=>x.startsWith('.')?child.classList.contains(x.slice(1)):child.tagName.toLowerCase()===x)?[child]:[]),...child.querySelectorAll(selector)])}
     insertAdjacentElement(position,child){const parent=this.parentElement;if(!parent)return;const index=parent.children.indexOf(this);parent.children.splice(position==='afterend'?index+1:index,0,child);child.parentElement=parent}
     addEventListener(name,handler){this.listeners.set(name,handler)}
+    removeEventListener(name,handler){if(this.listeners.get(name)===handler)this.listeners.delete(name)}
+    reset(){this.resets=(this.resets||0)+1}
     scrollIntoView(){}focus(){}
   }
   const node=id=>nodes.get(id)||(['inventoryReadStatus','inventoryReadContent'].includes(id)?null:new Element('div',id));
@@ -47,7 +51,7 @@ function dom(){
   const advanced=new Element();advanced.className='card';view.appendChild(advanced);
   const editable=new Element('input','purchaseInput'),submit=new Element('button','purchaseSubmit'),intentionalDisabled=new Element('button','intentionalDisabled');intentionalDisabled.disabled=true;
   advanced.appendChild(editable);advanced.appendChild(submit);advanced.appendChild(intentionalDisabled);
-  return{node,view,stock,advanced,editable,submit,intentionalDisabled,document:{cookie:'__Host-abl_csrf=dummy-session-a',getElementById:node,createElement:tag=>new Element(tag),addEventListener(){},querySelectorAll(){return[]}},Element};
+  return{node,view,stock,advanced,editable,submit,intentionalDisabled,document:{cookie:'__Host-abl_csrf=dummy-session-a',getElementById:node,createElement:tag=>new Element(tag),addEventListener(type,fn){if(!events.has(type))events.set(type,[]);events.get(type).push(fn)},dispatchEvent(event){for(const fn of events.get(event.type)||[])fn(event)},querySelectorAll(){return[]}},Element};
 }
 
 function harness({businessId=1,legacy={}}={}){
@@ -56,7 +60,7 @@ function harness({businessId=1,legacy={}}={}){
   let authenticated=true,allergenWait=null,locationWait=null,logoutCalls=0;
   const window={scrollTo(){},ABLSession:{authenticated:()=>authenticated,clearReadableSession(){authenticated=false}},BusinessLifeProfileState:{surface:'profile',activeRole:'merchant',accountId:1,navigationEpoch:1},BusinessLifeAccounting:{getState:()=>accounting}};
   const nestedCall=name=>(...args)=>{nested.push({name,args});return Promise.resolve([])};
-  const context={window,document:ui.document,console:{...console,error:(...args)=>consoleErrors.push(args)},Date,Intl,Map,WeakMap,JSON,Number,Error,TypeError,Promise,$:ui.node,
+  const context={createInventoryWriteController,window,document:ui.document,crypto:{randomUUID},console:{...console,error:(...args)=>consoleErrors.push(args)},Date,Intl,Map,WeakMap,JSON,Number,Error,TypeError,Promise,$:ui.node,
     localStorage:{get length(){return storage.size},key:index=>[...storage.keys()][index],getItem:key=>storage.get(key)??null,setItem(key,value){writes.push({key,value});storage.set(key,value)},removeItem:key=>storage.delete(key)},
     fetch:(path,options)=>new Promise((resolve,reject)=>requests.push({path,options,resolve,reject})),
     logout(){logoutCalls+=1;authenticated=false;if(context.readApi?.invalidate)context.readApi.invalidate()},
@@ -75,7 +79,7 @@ function harness({businessId=1,legacy={}}={}){
   const helperSource=hasNewHelpers?section('let merchantReadGeneration=','function setOnline'):section('const cacheKey =','function setOnline');
   const inventorySource=source.includes('let inventoryLoadGeneration=')?section('let inventoryLoadGeneration=','function lotExpiryCopy'):functionSource('loadStock');
   context.Option=class extends ui.Element{constructor(label,value){super('option');this.textContent=label;this.value=value}};
-  vm.runInContext('let inventory=[],products=[],transactions=[],restockSuggestions=[],stockAdjustmentLots=[];\n'+helperSource+section('function setOnline','let baseActiveRole=')+inventorySource+`\n globalThis.readApi={read:cachedJson,raw:api,online:setOnline,load:loadStock,inventory:()=>inventory,adjustmentLots:()=>stockAdjustmentLots,setAdjustmentLots:rows=>{stockAdjustmentLots=rows},context:()=>typeof merchantReadContext==='function'?merchantReadContext():null,reconcile:()=>{if(typeof reconcileMerchantReads==='function')reconcileMerchantReads()},invalidate:typeof invalidateMerchantReads==='function'?invalidateMerchantReads:null,state:typeof inventoryReadState==='function'?inventoryReadState:null,guard:()=>typeof inventoryReadGuard==='function'?inventoryReadGuard():()=>true};`,context);
+  vm.runInContext('let inventory=[],products=[],transactions=[],restockSuggestions=[],stockAdjustmentLots=[];\n'+helperSource+section('function setOnline','let baseActiveRole=')+inventorySource+`\n globalThis.readApi={read:cachedJson,raw:api,online:setOnline,load:loadStock,inventory:()=>inventory,adjustmentLots:()=>stockAdjustmentLots,setAdjustmentLots:rows=>{stockAdjustmentLots=rows},context:()=>typeof merchantReadContext==='function'?merchantReadContext():null,reconcile:()=>{if(typeof reconcileMerchantReads==='function')reconcileMerchantReads()},invalidate:typeof invalidateMerchantReads==='function'?invalidateMerchantReads:null,state:typeof inventoryReadState==='function'?inventoryReadState:null,beginWrite:beginInventoryWrite,confirm:()=>{inventoryConfirmedContext=merchantReadContext()},guard:()=>typeof inventoryReadGuard==='function'?inventoryReadGuard():()=>true};`,context);
   const defer=()=>{let resolve;const promise=new Promise(done=>{resolve=done});return{promise,resolve}};
   return{...ui,context,window,accounting,storage,writes,requests,renders,nested,consoleErrors,api:context.readApi,
     async respond(index,data,status=200){const r=requests[index];assert.ok(r,`Expected request ${index}`);r.resolve({ok:status>=200&&status<300,status,headers:{get:()=> 'application/json'},json:async()=>data,text:async()=>JSON.stringify(data)});await tick()},
@@ -84,8 +88,15 @@ function harness({businessId=1,legacy={}}={}){
     profile(detail){Object.assign(window.BusinessLifeProfileState,detail);context.readApi.reconcile()},
     session(marker){ui.document.cookie=marker?`__Host-abl_csrf=${marker}`:'';context.readApi.reconcile()},
     pauseAllergens(){allergenWait=defer();return allergenWait.resolve},pauseLocations(){locationWait=defer();return locationWait.resolve},
+    installMutation(form){
+      const prefix=`$('${form}')${form==='stockForm'?'.':'?.'}addEventListener('submit',async`;
+      const from=source.indexOf(prefix);assert.ok(from>=0);
+      const to=source.indexOf('\n});',from)+4;
+      vm.runInContext(source.slice(from,to),context);
+      return()=>ui.node(form).listeners.get('submit')({preventDefault(){},target:ui.node(form)});
+    },
     installLoader(name){vm.runInContext(functionSource(name),context);return(...args)=>vm.runInContext(name,context)(...args)},
-    installComponent(file,factory){const create=vm.runInContext(`(function(){${readSource(file).replace('export function','function')}\nreturn ${factory};})()`,context);return create({api:context.readApi.raw,getReadGuard:context.readApi.guard,getInventory:context.readApi.inventory,getLocations:()=>[],refreshInventory:async()=>{},escapeHtml:String,formatNumber:String})},
+    installComponent(file,factory){const create=vm.runInContext(`(function(){${readSource(file).replace('export function','function')}\nreturn ${factory};})()`,context);return create({beginWrite:context.readApi.beginWrite,api:context.readApi.raw,getReadGuard:context.readApi.guard,getInventory:context.readApi.inventory,getLocations:()=>[],refreshInventory:async()=>{},escapeHtml:String,formatNumber:String})},
     logoutCalls:()=>logoutCalls,
     mutationsDisabled:()=>ui.node('inventoryReadContent')?.disabled??ui.submit.disabled,
     status(){return ui.node('inventoryReadStatus')?.children.map(x=>x.textContent).join(' ')||''}
@@ -98,6 +109,36 @@ test('startup removes legacy Merchant cache while successful reads never persist
   const h=harness({legacy:{abl_cache_inventory:'old private inventory',abl_cache_summary:'old finances',preference:'keep'}});
   assert.deepEqual([...h.storage.keys()],['preference']);
   await warm(h);assert.deepEqual(h.writes,[]);assert.deepEqual([...h.storage], [['preference','keep']]);
+});
+
+test('Stock menu does not fetch on tab navigation; each opened tool loads only its own data',async()=>{
+  const h=harness();
+  const navigate=h.installLoader('loadMerchantView');
+  await navigate('Stock');
+  assert.equal(h.requests.length,0,'opening Stock must not trigger Inventory or advanced reads');
+
+  const inventoryOnly=h.api.load({tool:'inventory'});
+  assert.equal(h.requests.length,1);
+  assert.equal(h.requests[0].path,'/api/inventory');
+  await h.respond(0,inventoryRows(1));await inventoryOnly;
+  assert.equal(h.nested.some(x=>['lots','restock','locations','allergens','count','rules','waste'].includes(x.name)),false);
+  assert.equal(h.mutationsDisabled(),false);
+
+  h.nested.length=0;
+  const lots=h.api.load({tool:'lots'});
+  assert.equal(h.requests.length,2);
+  await h.respond(1,inventoryRows(1));await lots;
+  assert.ok(h.nested.some(x=>x.name==='lots'),'opening Lots loads its own details');
+  assert.equal(h.nested.some(x=>['restock','locations','allergens','count','rules','waste'].includes(x.name)),false);
+  assert.equal(h.mutationsDisabled(),false);
+
+  h.nested.length=0;
+  const restock=h.api.load({tool:'restock'});
+  assert.equal(h.requests.length,3);
+  await h.respond(2,inventoryRows(1));await restock;
+  assert.ok(h.nested.some(x=>x.name==='restock'),'opening Restock loads the supplier suggestions');
+  assert.equal(h.nested.some(x=>['lots','locations','allergens','count','rules','waste'].includes(x.name)),false);
+  assert.equal(h.writes.length,0,'no account data or credentials persisted');
 });
 
 test('only explicit same-context transport fallback returns an independent page-local Inventory snapshot',async()=>{
@@ -383,7 +424,7 @@ for(const component of ['locations','count','scan'])test(`actual ${component} co
     const target=component==='locations'?'inventoryTransferMessage':component==='count'?'countSessionMessage':'inventoryLookupMessage';
     h.switchBusiness(2);h.node(target).textContent='Current component state';
     if(fail)await h.reject(0,new Error('Previous component failure'));
-    else if(component==='locations'){await h.respond(0,[{id:1,name:'Prior location'}]);await h.respond(1,[]);await h.respond(2,[])}
+    else if(component==='locations'){await h.respond(0,{locations:[{id:1,name:'Prior location'}],balances:[],transfers:[]})}
     else await h.respond(0,component==='count'?{id:1,status:'posted'}:[]);
     await old;assert.equal(h.node(target).textContent,'Current component state');
     if(component==='locations')assert.deepEqual(plain(ui.getLocations()),[]);
@@ -398,10 +439,10 @@ test('location and count reset clear confirmed private closure state and invalid
   for(const component of ['locations','count']){
     const h=harness(),ui=component==='locations'?h.installComponent('inventory-location-ui.js','createInventoryLocationUi'):h.installComponent('inventory-count-ui.js','createInventoryCountUi');
     const initial=ui.load();
-    if(component==='locations'){await h.respond(0,[{id:1,name:'Synthetic confirmed location'}]);await h.respond(1,[]);await h.respond(2,[]);await initial;assert.equal(ui.getLocations().length,1)}
+    if(component==='locations'){await h.respond(0,{locations:[{id:1,name:'Synthetic confirmed location'}],balances:[],transfers:[]});await initial;assert.equal(ui.getLocations().length,1)}
     else{await h.respond(0,{id:1,status:'posted'});await initial;assert.equal(ui.getSession().id,1)}
     const index=h.requests.length,pending=ui.load();ui.reset();
-    if(component==='locations'){await h.respond(index,[{id:2,name:'Synthetic late location'}]);await h.respond(index+1,[]);await h.respond(index+2,[])}
+    if(component==='locations'){await h.respond(index,{locations:[{id:2,name:'Synthetic late location'}],balances:[],transfers:[]})}
     else await h.respond(index,{id:2,status:'posted'});
     await pending;
     if(component==='locations')assert.deepEqual(plain(ui.getLocations()),[]);else assert.equal(ui.getSession(),null);
@@ -412,16 +453,17 @@ const confirmedCount={id:44,status:'in_progress',items:[{inventory_id:10,item:'S
 const confirmedLocations=[{id:11,name:'Synthetic private location'}];
 const confirmedBalances=[{inventory_id:10,location_id:11,item:'Synthetic private stock',location_name:'Synthetic private location',quantity:4,unit:'unit'}];
 const confirmedTransfers=[{id:12,item:'Synthetic private stock',quantity:1,unit:'unit',source_location:'Synthetic private source',destination_location:'Synthetic private destination'}];
+const confirmedStorage={locations:confirmedLocations,balances:confirmedBalances,transfers:confirmedTransfers};
 
 for(const component of ['locations','count'])for(const status of [403,500])test(`actual ${component} HTTP ${status} after success clears retained private state and reports failed read evidence`,async()=>{
   const h=harness(),ui=component==='locations'?h.installComponent('inventory-location-ui.js','createInventoryLocationUi'):h.installComponent('inventory-count-ui.js','createInventoryCountUi');
   const first=ui.load();
   if(component==='locations'){
-    await h.respond(0,confirmedLocations);await h.respond(1,confirmedBalances);await h.respond(2,confirmedTransfers);await first;
+    await h.respond(0,confirmedStorage);await first;
     assert.equal(ui.getLocations().length,1);assert.equal(ui.getBalances().length,1);assert.equal(h.node('inventoryTransferList').children.length,1);
   }else{await h.respond(0,confirmedCount);await first;assert.equal(ui.getSession().id,44);assert.equal(h.node('countSessionActivePane').classList.contains('hidden'),false)}
   const start=h.requests.length,failed=ui.load();await h.respond(start,{error:'Synthetic current read denied'},status);
-  if(component==='locations'){await h.respond(start+1,confirmedBalances);await h.respond(start+2,confirmedTransfers)}
+
   const result=await failed;assert.equal(result?.readError,true);
   if(component==='locations'){
     assert.deepEqual(plain(ui.getLocations()),[]);assert.deepEqual(plain(ui.getBalances()),[]);
@@ -432,12 +474,11 @@ for(const component of ['locations','count'])for(const status of [403,500])test(
 
 async function completeRealInventoryRead(h,{failedComponent=null,status=200}={}){
   const start=h.requests.length,pending=h.api.load();await h.respond(start,inventoryRows(1));
-  assert.match(h.requests[start+1]?.path||'',/\/inventory\/locations$/);
-  await h.respond(start+1,failedComponent==='locations'?{error:'Synthetic current locations denied'}:confirmedLocations,failedComponent==='locations'?status:200);
-  await h.respond(start+2,confirmedBalances);await h.respond(start+3,confirmedTransfers);
+  assert.match(h.requests[start+1]?.path||'',/\/inventory\/location-summary$/);
+  await h.respond(start+1,failedComponent==='locations'?{error:'Synthetic current locations denied'}:confirmedStorage,failedComponent==='locations'?status:200);
   if(failedComponent!=='locations'){
-    assert.match(h.requests[start+4]?.path||'',/\/count-sessions\/active$/);
-    await h.respond(start+4,failedComponent==='count'?{error:'Synthetic current count denied'}:confirmedCount,failedComponent==='count'?status:200);
+    assert.match(h.requests[start+2]?.path||'',/\/count-sessions\/active$/);
+    await h.respond(start+2,failedComponent==='count'?{error:'Synthetic current count denied'}:confirmedCount,failedComponent==='count'?status:200);
   }
   await pending;
 }
@@ -450,4 +491,238 @@ for(const failedComponent of ['locations','count'])for(const status of [403,500]
   if(failedComponent==='locations')assert.deepEqual(plain(locations.getLocations()),[]);else assert.equal(count.getSession(),null);
   const requestsBeforeWrite=h.requests.length;await assert.rejects(h.api.raw('/api/inventory/purchase',{method:'POST'}),/Reload Inventory online/);assert.equal(h.requests.length,requestsBeforeWrite);
   await completeRealInventoryRead(h);assert.equal(h.mutationsDisabled(),false);assert.equal(h.advanced.hidden,false);assert.match(h.status(),/confirmed just now/i);assert.equal(count.getSession().id,44);assert.equal(locations.getLocations().length,1);
+});
+
+test('confirmed Inventory list appears read-only while slow Storage is still being verified',async()=>{
+  const h=harness(),release=h.pauseLocations(),pending=h.api.load();
+  assert.equal(h.stock.hidden,true,'do not show old Inventory before the scoped GET');
+  assert.equal(h.mutationsDisabled(),true);
+  await h.respond(0,inventoryRows(1));
+  assert.deepEqual(h.renders,[inventoryRows(1)]);
+  assert.equal(h.stock.hidden,false,'show newly verified item list without waiting on Storage');
+  assert.equal(h.advanced.hidden,true,'advanced actions remain gated');
+  assert.equal(h.mutationsDisabled(),true,'no stock mutations while Storage checks are pending');
+  assert.match(h.status(),/Inventory items loaded\. Checking storage locations/i);
+  release();
+  await pending;
+  assert.equal(h.mutationsDisabled(),false);
+  assert.equal(h.advanced.hidden,false);
+  assert.match(h.status(),/confirmed just now/i);
+});
+
+
+// #821: execute the shipped mutation callbacks with a deferred real API boundary.
+for(const [form,message] of [
+  ['stockForm','stockMessage'],['stockAdjustmentForm','stockAdjustmentMessage'],
+  ['consumableRuleForm','consumableRuleMessage'],['storageForm','storageMessage'],
+  ['restockSettingsForm','restockSettingsMessage'],['ingredientAllergenForm','ingredientAllergenMessage']
+]){
+  for(const outcome of ['success','failure','expired-session']){
+    test(`${form}: stale ${outcome} cannot repaint/reset/refresh the new business`,async()=>{
+      const h=harness();h.api.confirm();
+      h.node('stockAdjustmentInventory').value='10';h.node('stockAdjustmentQty').value='1';
+      h.node('storageInventoryId').value='10';h.node('restockSettingsInventory').value='10';
+      h.node('ingredientAllergenInventory').value='10';
+      h.context.checkedAllergens=()=>[];
+      const submit=h.installMutation(form),pending=submit();
+      assert.equal(h.requests.length,1);
+      assert.equal(h.requests[0].options.headers['x-abl-inventory-origin-business'],'1');
+      h.switchBusiness(2);
+      h.node(message).textContent='New business draft';h.node(form).resets=0;
+      await h.respond(0,{error:'old failure'},outcome==='success'?201:outcome==='expired-session'?401:500);
+      await pending;
+      assert.equal(h.node(message).textContent,'New business draft');
+      assert.equal(h.node(form).resets,0);
+      assert.equal(h.requests.length,1,'old completion must not launch reads in B');
+      assert.equal(h.logoutCalls(),0,'old 401 must not log out the replacement identity');
+    });
+  }
+}
+test('Stock purchase reuses an unchanged intent after ambiguous replies and renews it after confirmation',async()=>{
+  const h=harness(),deck=new h.Element('div','stockToolDeck'),panel=new h.Element('details','stockTool-purchase');
+  deck.className='stockToolDeck';panel.className='stockTool';deck.appendChild(panel);h.view.appendChild(deck);
+  const opened=h.context.openStockTool('purchase');
+  await h.respond(0,inventoryRows(1));await opened;
+  Object.assign(h.context,{
+    loadProducts:async()=>{},invalidateMerchantToday(){},
+    syncInventoryRoleOptions(){},updateStockStorageHint(){},stockPurchasePreview(){}
+  });
+  const fillDraft=()=>{
+    for(const [field,value] of Object.entries({
+      stockItem:'Rice',stockInventoryType:'ingredient',stockInventoryDomain:'food',
+      stockStockRole:'ingredient',stockStorageCondition:'other',stockStorageArea:'other',
+      stockPurchaseQty:1,stockPurchaseUnit:'kg',stockTotalCost:0,stockAccount:'cash',
+      stockReorderQty:0,stockTargetQty:0,stockReorderUnit:'g'
+    }))h.node(field).value=value;
+    h.node('stockStorageSegregated').checked=false;
+  };
+  fillDraft();
+  const submit=h.installMutation('stockForm'),first=submit();
+  const body=index=>JSON.parse(h.requests[index].options.body);
+  const original=body(1);
+  assert.match(original.purchase_intent_key,/^[0-9a-f-]{36}$/);
+  await submit();assert.equal(h.requests.length,2,'double submit must not send a second request');
+  await h.reject(1);await first;
+  assert.equal(h.mutationsDisabled(),true);
+  assert.match(h.status(),/submit the unchanged purchase in this page/i);
+  const reloadButton=h.node('inventoryReadStatus').children.find(child=>child.tagName==='BUTTON');
+  assert.equal(reloadButton?.textContent,'Retry this tool');
+  assert.equal(h.node('inventoryReadContent').contains(reloadButton),false);
+  const reopened=reloadButton.onclick();
+  assert.equal(h.requests[2].path,'/api/inventory');
+  await h.respond(2,inventoryRows(1));await reopened;
+  assert.equal(h.mutationsDisabled(),false);
+  assert.match(h.node('stockMessage').textContent,/retry this unchanged draft/i);
+  const unclear=submit();
+  assert.deepEqual(body(3),original);
+  await h.respond(3,{unexpected:true});await unclear;
+  assert.match(h.node('stockMessage').textContent,/Could not confirm the purchase/);
+  h.context.loadStock=async()=>{}; // The next successful purchase triggers a separate refresh.
+  const retry=submit();
+  assert.deepEqual(body(4),original);
+  await h.respond(4,{inventory:{unit_cost:0,unit:'g'},conversion:{stored:'1000 g'}},201);await retry;
+  assert.equal(h.node('stockForm').resets,1);
+  fillDraft();
+  const next=submit();
+  assert.notEqual(body(5).purchase_intent_key,original.purchase_intent_key);
+  assert.deepEqual({...body(5),purchase_intent_key:original.purchase_intent_key},original);
+  await h.respond(5,{error:'Controlled rejection'},409);await next;
+  assert.equal(h.writes.length,0,'purchase intent and draft remain page-local');
+});
+
+test('Stock purchase abandons its intent on deliberate edits or a different Merchant business',async()=>{
+  const h=harness();h.api.confirm();
+  const form=h.node('stockForm'),name=h.node('stockItem');
+  form.appendChild(name);name.value='Rice';
+  const submit=h.installMutation('stockForm'),first=submit();
+  const key=index=>JSON.parse(h.requests[index].options.body).purchase_intent_key;
+  await h.respond(0,{error:'Unknown save outcome'},500);await first;
+  for(const value of ['Corn','Rice']){
+    name.value=value;
+    h.document.dispatchEvent({type:'input',target:name});
+  }
+  const edited=submit();
+  assert.notEqual(key(1),key(0),'reverting an edit does not resurrect an old intent');
+  await h.respond(1,{error:'Unknown save outcome'},500);await edited;
+  h.switchBusiness(2);h.api.confirm();
+  const switched=submit();
+  assert.notEqual(key(2),key(1));
+  assert.equal(h.requests[2].options.headers['x-abl-inventory-origin-business'],'2');
+  await h.respond(2,{error:'Controlled rejection'},409);await switched;
+});
+
+test('Inventory pending operation rejects duplicate submit; current storage save refreshes once',async()=>{
+  const h=harness();h.api.confirm();h.node('storageInventoryId').value='10';
+  let refreshed=0;h.context.loadStock=async()=>{refreshed++};h.context.invalidateMerchantToday=()=>{};
+  const submit=h.installMutation('storageForm'),first=submit();
+  await submit();assert.equal(h.requests.length,1);
+  await h.respond(0,{item:'Rice'},200);await first;
+  assert.equal(h.node('storageMessage').textContent,'Storage saved for Rice.');
+  assert.equal(refreshed,1);
+  const next=submit();assert.equal(h.requests.length,2);
+  await h.respond(1,{error:'controlled rejection'},409);await next;
+  assert.equal(h.node('storageMessage').textContent,'controlled rejection');
+});
+for(const replacement of ['account','session','profile','form','edit']){
+  test(`storage save ignores completion after ${replacement} replacement`,async()=>{
+    const h=harness();h.api.confirm();h.node('storageInventoryId').value='10';
+    const submit=h.installMutation('storageForm'),pending=submit();
+    if(replacement==='account')h.profile({accountId:99});
+    if(replacement==='session')h.session('new-session');
+    if(replacement==='profile')h.profile({activeRole:'customer',navigationEpoch:2});
+    if(replacement==='form')new h.Element('form','storageForm');
+    if(replacement==='edit')h.node('storageForm').listeners.get('input')();
+    h.node('storageMessage').textContent='Replacement draft';
+    await h.respond(0,{item:'Old business item'});await pending;
+    assert.equal(h.node('storageMessage').textContent,'Replacement draft');
+    assert.equal(h.requests.length,1);
+  });
+}
+
+
+test('queued Storage prefetch cannot dispatch against B after its A context changes',async()=>{
+  const h=harness(),locations=h.installComponent('inventory-location-ui.js','createInventoryLocationUi');
+  const prefetched=locations.prefetch();h.switchBusiness(2);
+  const result=await prefetched;
+  assert.equal(result.ok,false);assert.equal(h.requests.length,0);
+});
+
+for(const type of ['abl:feature-workspace','abl:merchant-local-view']){
+  test(`storage completion cannot revive after ${type} leave and return`,async()=>{
+    const h=harness();h.api.confirm();h.node('storageInventoryId').value='10';
+    const submit=h.installMutation('storageForm'),pending=submit();
+    h.context.document.dispatchEvent({type});h.context.document.dispatchEvent({type});
+    h.node('storageMessage').textContent='Returned draft';
+    await h.respond(0,{item:'Old hidden save'});await pending;
+    assert.equal(h.node('storageMessage').textContent,'Returned draft');assert.equal(h.requests.length,1);
+  });
+}
+
+function preparedRemovalMutationHarness(){
+  const h=harness();
+  // Execute the literal v03 submit callback, not a rewritten behavioral mock.
+  // Synthetic Merchant session, document, DOM, gateway and recorded responses.
+  vm.runInContext('let preparedRemovalPendingKey=null;',h.context);
+  h.context.preparedRemovalReasons={damaged:'Damaged prepared food'};
+  h.context.crypto={randomUUID:()=> 'test-removal-123456789012'};
+  h.context.confirm=()=>true;
+  h.node('preparedRemovalProduct').value='11';
+  h.node('preparedRemovalQty').value='2';
+  h.node('preparedRemovalReason').value='damaged';
+  h.node('preparedRemovalNote').value='Synthetic portion removal';
+  h.api.confirm();
+  const submit=h.installMutation('preparedRemovalForm');
+  return{...h,submit,key:()=>vm.runInContext('preparedRemovalPendingKey',h.context)};
+}
+
+test('prepared-removal completion from business A never rewrites a later B form, key or refresh',async()=>{
+  const h=preparedRemovalMutationHarness(),pending=h.submit();
+  assert.equal(h.requests.length,1,'one authorized original POST');
+  assert.equal(h.requests[0].path,'/api/prepared-product-removals');
+  assert.equal(JSON.parse(h.requests[0].options.body).business_id,1);
+  h.switchBusiness(2);
+  h.node('preparedRemovalMessage').textContent='Business B draft';
+  h.node('preparedRemovalQty').value='3';
+  vm.runInContext("preparedRemovalPendingKey='B-original-intent-key';",h.context);
+  await h.respond(0,{removal:{quantity:2,estimated_cost:136.84},already_recorded:false});
+  await pending;
+  assert.equal(h.node('preparedRemovalMessage').textContent,'Business B draft');
+  assert.equal(h.node('preparedRemovalQty').value,'3');
+  assert.equal(h.key(),'B-original-intent-key');
+  assert.equal(h.node('preparedRemovalForm').resets||0,0);
+  assert.equal(h.requests.length,1,'no Stock refresh initiated for B');
+  assert.equal(h.node('preparedRemovalSubmit').disabled,false,'B submit remains usable');
+});
+
+test('prepared-removal late 401 from old business cannot log out a replacement session',async()=>{
+  const h=preparedRemovalMutationHarness(),pending=h.submit();
+  assert.equal(h.requests.length,1);
+  h.switchBusiness(2);
+  h.node('preparedRemovalMessage').textContent='Business B active';
+  await h.respond(0,{error:'Old Merchant session expired'},401);
+  await pending;
+  assert.equal(h.logoutCalls(),0,'stale HTTP 401 must not log out business B');
+  assert.equal(h.node('preparedRemovalMessage').textContent,'Business B active');
+});
+
+test('prepared-removal same-business success keeps one idempotency key and refreshes once',async()=>{
+  const h=preparedRemovalMutationHarness();
+  vm.runInContext('loadStock=async()=>{globalThis.removalStockRefreshes=(globalThis.removalStockRefreshes||0)+1;}',h.context);
+  h.context.loadProducts=async()=>{h.context.productRefreshes=(h.context.productRefreshes||0)+1};
+  h.context.loadPreparedRemovals=async()=>{h.context.removalRefreshes=(h.context.removalRefreshes||0)+1};
+  h.context.invalidateMerchantToday=()=>{};
+  h.context.updatePreparedRemovalPreview=()=>{};
+  const pending=h.submit();
+  const duplicate=h.submit();await duplicate;
+  assert.equal(h.requests.length,1,'duplicate submit suppressed while in flight');
+  const sent=JSON.parse(h.requests[0].options.body);
+  assert.equal(sent.idempotency_key,'test-removal-123456789012');
+  await h.respond(0,{removal:{quantity:2,estimated_cost:136.84},already_recorded:false});
+  await pending;
+  assert.match(h.node('preparedRemovalMessage').textContent,/Recorded:/);
+  assert.equal(h.key(),null);
+  assert.equal(h.node('preparedRemovalForm').resets,1);
+  assert.equal(vm.runInContext('removalStockRefreshes',h.context),1);
+  assert.equal(h.context.productRefreshes,1);
+  assert.equal(h.context.removalRefreshes,1);
 });

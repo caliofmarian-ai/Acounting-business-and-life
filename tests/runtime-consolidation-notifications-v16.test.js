@@ -69,7 +69,8 @@ test('PayMongo preserves PWA gating without a localhost asset proxy',()=>{
 });
 
 test('Notifications polling verifies the signed session locally and runs read policy with data in parallel',()=>{
-  assert.match(auth,/app\.get\('\/api\/auth\/session\/identity', auth/);
+  assert.match(auth,/app\.get\('\/api\/auth\/session\/identity',markPrivateIdentity,auth,/);
+  assert.match(auth,/sendPrivateIdentityJson\(res,\{account_id:Number\(req\.accountId\)\}\)/);
   assert.match(auth,/authenticatedAccountContext/);
   assert.match(notifications,/verifyV2SessionTokenSignature/);
   assert.match(notifications,/sessionCredentialFromHeaders/);

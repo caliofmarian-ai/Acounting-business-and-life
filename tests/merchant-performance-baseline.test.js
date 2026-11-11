@@ -21,10 +21,17 @@ test('Merchant cold profile state loads Today and reuses its workspace metadata'
   assert.match(merchantUi,/BusinessLifeMerchantToday=Object\.freeze/);
   assert.match(merchantUi,/workspace:data\.workspace\|\|null/);
 
-  assert.match(accountingUi,/document\.addEventListener\('abl:profile-state',event=>bootAccountingWorkspace/);
+  assert.match(accountingUi,/document\.addEventListener\('abl:profile-state',event=>\{/);
+  assert.match(accountingUi,/bootAccountingWorkspace\(detail\)/);
+  assert.match(accountingUi,/merchantNavPresentationScope/);
+  assert.match(accountingUi,/resetMerchantNavPresentation\(\)/);
   assert.match(accountingUi,/if\(role==='merchant'\)\{/);
-  assert.match(accountingUi,/BusinessLifeMerchantToday\?\.getState\?\.\(\)\?\.workspace/);
-  assert.match(accountingUi,/if\(cached\)applyWorkspaceState\(cached\)/);
+  assert.match(accountingUi,/const today=window\.BusinessLifeMerchantToday\?\.getState\?\.\(\)/);
+  assert.match(accountingUi,/today\.profileKey===String\(accountId\?\?''\)\+':merchant'/);
+  assert.match(accountingUi,/const verifiedCache=Boolean\(/);
+  assert.match(accountingUi,/today\.profileKey===String\(accountId\?\?''\)\+':merchant'/);
+  assert.match(accountingUi,/if\(verifiedCache\)\{/);
+  assert.match(accountingUi,/applyWorkspaceState\(today\.workspace\)/);
   assert.match(accountingUi,/if\(event\.detail\?\.workspace\)applyWorkspaceState/);
 
   const bootStart=accountingUi.indexOf('async function bootAccountingWorkspace');
@@ -48,7 +55,9 @@ test('Merchant Today keeps deep finance stock history and analysis deferred by t
   assert.match(block,/loadRemittances\(\)/);
   assert.match(block,/loadAnalysis\(7\)/);
   assert.match(block,/loadAnalysis\(30\)/);
-  assert.match(block,/if\(name==='Stock'\)return loadStock\(\)/);
+  // #875: the Stock navigation is a tool menu; opening a tool owns its data read.
+  assert.match(block,/if\(name==='Stock'\)return;/);
+  assert.doesNotMatch(block,/if\(name==='Stock'\)return loadStock\(\)/);
   assert.match(block,/if\(name==='History'\)return loadTransactions\(\)/);
 });
 

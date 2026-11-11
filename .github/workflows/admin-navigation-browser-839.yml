@@ -1,0 +1,40 @@
+name: Admin Navigation Browser 839
+on:
+  pull_request:
+    paths:
+      - 'public/admin-console.css'
+      - 'public/admin-console.js'
+      - 'tests/admin-mobile-ux.test.js'
+      - 'scripts/admin-navigation-browser-839.mjs'
+      - '.github/workflows/admin-navigation-browser-839.yml'
+permissions:
+  contents: read
+concurrency:
+  group: admin-navigation-839-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Literal head and existing permission/navigation contracts
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --test tests/admin-mobile-ux.test.js
+      - name: Real Chrome phone, desktop-site, tablet and desktop CSS
+        run: node scripts/admin-navigation-browser-839.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-navigation-839
+          path: artifacts/admin-navigation-839/
+          if-no-files-found: warn
