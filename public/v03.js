@@ -1157,7 +1157,7 @@ async function loadStock({tool=null}={}){
 // while Stock is visible. The write controller invalidates obsolete contexts.
 function refreshStockTool(tool){
   const view=$('viewStock');
-  if($('stockToolDeck')&&view&&!view.classList.contains('hidden')){
+  if($('stockToolDeck')?.querySelector('.stockTool')&&view&&!view.classList.contains('hidden')){
     if(stockToolActive!==tool||!$('stockTool-'+tool)?.open)return Promise.resolve();
     return loadStock({tool});
   }
