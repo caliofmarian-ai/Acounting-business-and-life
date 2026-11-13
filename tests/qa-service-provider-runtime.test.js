@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {resolveCredentialQaTerritories,captureQaCredentialAdminBaseline,restoreQaCredentialAdminBaseline} from '../qa-service-provider-acceptance.js';
+import {resolveCredentialQaTerritories,captureQaCredentialAdminBaseline,restoreQaCredentialAdminBaseline,buildQaCredentialAdminRecoverySnapshot} from '../qa-service-provider-acceptance.js';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const qa=read('qa-acceptance.js');
@@ -160,6 +160,7 @@ function credentialAdminFixture(){
     if(sql.startsWith('SELECT g.assignment_id,g.permission_code'))return{rows:[
       {assignment_id:'6',permission_code:'members.view',reason:'before',territory_id:'11'},
       {assignment_id:'7',permission_code:'credential.verify',reason:'Controlled QA in-scope credential authority',territory_id:'23'},
+      {assignment_id:'7',permission_code:'members.view',reason:'Controlled QA in-scope credential authority',territory_id:'23'},
       ...(unknownPermission?[{assignment_id:'6',permission_code:'finance.payout',reason:'Unrelated agent grant',territory_id:'11'}]:[])
     ]};
     if(sql.startsWith('SELECT g.assignment_id,g.function_code'))return{rows:[
@@ -182,12 +183,66 @@ test('credential review wave restores company_test Admin assignment and grant ba
   assert.ok(f.calls.some(q=>q.sql?.startsWith('UPDATE admin_permission_grants SET status=$3')&&q.params[2]==='active'));
   assert.ok(f.calls.some(q=>q.sql?.startsWith('UPDATE admin_function_assignments SET status=$3')&&q.params[2]==='revoked'));
   assert.ok(f.calls.some(q=>q.sql?.startsWith("UPDATE admin_permission_grants SET status='revoked'")&&String(q.params[0])==='7'&&q.params[1]==='credential.verify'));
+  assert.ok(f.calls.some(q=>q.sql?.startsWith("UPDATE admin_permission_grants SET status='revoked'")&&String(q.params[0])==='7'&&q.params[1]==='members.view'));
   assert.ok(!f.calls.some(q=>q.sql?.includes('WHERE assignment_id=ANY($1::bigint[])')&&q.sql.startsWith('UPDATE')),'must not bulk-revoke grants');
   const method=service.slice(service.indexOf('async function verifyCredentialAdminScope('),service.indexOf('async function serviceNotifications'));
   assert.match(method,/captureQaCredentialAdminBaseline/);
   assert.match(method,/finally\s*\{\s*await restoreQaCredentialAdminBaseline/);
   assert.match(service,/credential_qa_admin_authorization_restored:/);
+  assert.match(service,/recoverStaleQaCredentialAdminBaseline\(/);
+  assert.match(service,/credential_qa_admin_preflight_recovery:/);
 });
+
+test('Local Services QA recovers only the known stale company_test Territory Admin baseline',()=>{
+  const OUTSIDE='Controlled QA out-of-scope credential authority';
+  const INSIDE='Controlled QA in-scope credential authority';
+  const OWNER='Controlled Owner Control Tower delegated-scope acceptance';
+  const assignments=[
+    {id:'102',territory_id:'2',authority_rank:'territory_admin',status:'active',assigned_by_account_id:'1',reason:OUTSIDE,effective_from:'2026-09-21T16:04:51.936Z',effective_until:null,created_at:'2026-09-21T16:04:51.936Z'},
+    {id:'103',territory_id:'1',authority_rank:'territory_admin',status:'revoked',assigned_by_account_id:'1',reason:INSIDE,effective_from:'2026-09-21T16:04:58.347Z',effective_until:null,created_at:'2026-09-21T16:04:58.347Z'},
+    {id:'902',territory_id:'6',authority_rank:'territory_admin',status:'active',assigned_by_account_id:'1',reason:INSIDE,effective_from:'2026-11-13T15:04:21.279Z',effective_until:null,created_at:'2026-11-13T15:04:21.279Z'}
+  ];
+  const permissions=[
+    {assignment_id:'102',permission_code:'members.view',status:'active',reason:OUTSIDE},
+    {assignment_id:'102',permission_code:'credential.verify',status:'active',reason:OUTSIDE},
+    {assignment_id:'103',permission_code:'members.view',status:'active',reason:INSIDE},
+    {assignment_id:'103',permission_code:'credential.verify',status:'active',reason:INSIDE},
+    {assignment_id:'103',permission_code:'admin.console',status:'revoked',reason:OWNER},
+    {assignment_id:'103',permission_code:'incident.triage',status:'revoked',reason:OWNER},
+    {assignment_id:'103',permission_code:'profile.suspend',status:'revoked',reason:OWNER},
+    {assignment_id:'902',permission_code:'members.view',status:'active',reason:INSIDE},
+    {assignment_id:'902',permission_code:'credential.verify',status:'active',reason:INSIDE}
+  ];
+  const functions=[{assignment_id:'103',function_code:'trust_safety',status:'revoked',reason:OWNER}];
+  const plan=buildQaCredentialAdminRecoverySnapshot({
+    accountId:8,pilotTerritoryId:6,assignments,permissions,functions
+  });
+  assert.equal(plan.needsRestore,true);
+  assert.deepEqual(plan.scopeIds,[2,6]);
+  assert.equal(plan.temporaryAssignments,1);
+  assert.deepEqual(plan.snapshot.assignments.map(row=>[String(row.id),row.status]),[
+    ['102','active'],['103','active']
+  ]);
+
+  const clean=buildQaCredentialAdminRecoverySnapshot({
+    accountId:8,pilotTerritoryId:6,
+    assignments:assignments.map(row=>({...row,status:String(row.id)==='103'?'active':'revoked'})),
+    permissions:permissions.map(row=>({...row,status:String(row.assignment_id)==='902'?'revoked':row.status})),
+    functions
+  });
+  assert.equal(clean.needsRestore,false);
+
+  assert.throws(()=>buildQaCredentialAdminRecoverySnapshot({
+    accountId:8,pilotTerritoryId:6,
+    assignments:[...assignments,{...assignments[2],id:'903',reason:'Unrelated executor assignment'}],
+    permissions,functions
+  }),/Unexpected QA Territory Admin assignment/);
+  assert.throws(()=>buildQaCredentialAdminRecoverySnapshot({
+    accountId:8,pilotTerritoryId:6,
+    assignments,permissions:[...permissions,{assignment_id:'902',permission_code:'finance.payout',status:'active',reason:INSIDE}],functions
+  }),/Unexpected temporary QA Territory Admin grant/);
+});
+
 test('credential review fixture fails closed on unauthorized account and other agent scope',async()=>{
   const f=credentialAdminFixture();f.allow(false);
   await assert.rejects(captureQaCredentialAdminBaseline(f.pool,21),/not an active company_test/);
