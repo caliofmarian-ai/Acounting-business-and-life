@@ -225,8 +225,9 @@
         ['order_slip','Order slip'],['other','Other purchase proof']];
       const options=kinds.map(([value,label])=>'<option value="'+value+'"'+(doc.document_kind===value?' selected':'')+'>'+label+'</option>').join('');
       const history=result.metadata_history.map(item=>{
-        const fields=Array.isArray(item.changed_fields)?item.changed_fields.join(', '):'metadata';
-        return '<li>'+escape(fields)+' · '+escape(new Date(item.created_at).toLocaleString())+'</li>';
+        const fields=Array.isArray(item.changed_fields)?item.changed_fields:[];
+        const details=fields.map(field=>field+': '+String(item.before_metadata?.[field]??'—')+' → '+String(item.after_metadata?.[field]??'—')).join('; ');
+        return '<li>'+escape(details||'Metadata updated')+' · '+escape(new Date(item.created_at).toLocaleString())+'</li>';
       }).join('')||'<li>No metadata changes recorded.</li>';
       target.innerHTML=
         '<form class="mpdForm" data-mpd-metadata-form>'+
@@ -245,9 +246,9 @@
       form.addEventListener('submit',event=>saveMetadata(event,id,target));
     }catch(error){
       if(panel===overlay&&biz===businessId&&request===metadataEditRequest){
-        if(error.status===401||error.status===403){close(true);return;}
-        target.innerHTML='<p class="mpdHelp">'+escape(error.message||'Could not load document details.')+'</p>';
-        message(error.message,true);
+        // A failed detail read cannot prove that the cached archive still belongs
+        // to the selected Merchant. Hide all private rows and require a fresh open.
+        close(true);
       }
     }
   }
@@ -288,9 +289,16 @@
       const result=await api(ROOT+'/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(panel!==overlay||biz!==businessId)return;
       const doc=result?.document;
-      const amount=payload.gross_amount===''?null:Number(payload.gross_amount);
-      const sameAmount=amount===null?doc?.gross_amount==null:
-        Number.isFinite(Number(doc?.gross_amount))&&Math.round(Number(doc.gross_amount)*100)===Math.round(amount*100);
+      const cents=value=>{
+        if(value==null)return null;
+        const text=String(value);
+        if(!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(text))return false;
+        const [whole,fraction='']=text.split('.');
+        return BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0')||'0');
+      };
+      const expected=payload.gross_amount===''?null:cents(payload.gross_amount);
+      const saved=cents(doc?.gross_amount);
+      const sameAmount=expected!==false&&saved!==false&&expected===saved;
       if(!doc||typeof doc!=='object'||Array.isArray(doc)||doc.id!==id||doc.business_id!==biz||
          doc.document_kind!==payload.document_kind||String(doc.issue_date).slice(0,10)!==payload.issue_date||
          doc.issuer_name!==payload.issuer_name.trim()||doc.document_number!==payload.document_number.trim()||

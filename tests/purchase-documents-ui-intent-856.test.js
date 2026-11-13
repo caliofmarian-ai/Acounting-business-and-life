@@ -957,7 +957,7 @@ test('metadata editor uses the literal PATCH controller, current Merchant identi
   const fields={
     expected_updated_at:'2026-11-13T12:00:00.000Z',document_kind:'purchase_receipt',
     issue_date:'2026-11-13',issuer_name:'Corrected shop',document_number:'R-22',
-    gross_amount:'150.00',currency_code:'PHP',note:'Corrected note'
+    gross_amount:'999999999999.99',currency_code:'PHP',note:'Corrected note'
   };
   const button={disabled:false};
   const form={querySelector:()=>button};
@@ -974,7 +974,7 @@ test('metadata editor uses the literal PATCH controller, current Merchant identi
     return{already_applied:false,document:{
       id:23,business_id:14,document_kind:payload.document_kind,issue_date:payload.issue_date,
       issuer_name:payload.issuer_name,document_number:payload.document_number,
-      gross_amount:150,currency_code:'PHP',note:payload.note,has_attachment:true,
+      gross_amount:999999999999.99,currency_code:'PHP',note:payload.note,has_attachment:true,
       updated_at:'2026-11-13T12:00:01.000Z'
     }};
   };
@@ -1013,6 +1013,8 @@ test('metadata editor source exposes revision history and refuses stale or cross
   const save=source.slice(saveStart,readStart);
   assert.match(archive,/data-mpd-edit=/);
   assert.match(edit,/metadata_history/);
+  assert.match(edit,/item\.before_metadata/);
+  assert.match(edit,/item\.after_metadata/);
   assert.match(edit,/verifiedMerchantRead/);
   assert.match(edit,/doc\.business_id!==biz/);
   assert.match(save,/expected_updated_at/);
