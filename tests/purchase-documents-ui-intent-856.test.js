@@ -1128,7 +1128,7 @@ test('supplementary POST acknowledgement after Merchant A→B switch is ignored'
   };
   const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
     'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
-    \`const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;\${code};return saveSupplementaryEvidence;\`
+    `const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;${code};return saveSupplementaryEvidence;`
   )(api,()=>('supporting-intent-1'),(text,isError)=>messages.push({text,isError}),
     async()=>{archives++},async()=>{edits++},()=>{closed++},
     async()=>{reads++;return'data:image/png;base64,AAAA'},pending,6*1024*1024,panel,14);

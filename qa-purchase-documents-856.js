@@ -139,10 +139,10 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     supportingFileName='qa856-support-'+marker+'.png';
     const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';
     const supportingInput={client_request_key:supportingKey,file_name:supportingFileName,data_url:png};
-    const economicBefore=await pool.query(\`
+    const economicBefore=await pool.query(`
       SELECT (SELECT COUNT(*)::int FROM inventory_purchases WHERE business_id=$1) purchase_count,
              (SELECT COUNT(*)::int FROM transactions WHERE business_id=$1) transaction_count
-    \`,[a]);
+    `,[a]);
     const supporting=await post(supportingPath,supportingInput);
     exact(supporting.status,201,'new supplementary private evidence');
     exact(supporting.json?.already_saved,false,'new supplementary intent');
@@ -166,12 +166,12 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(supportFile.status,200,'authorized supplementary download');
     exact(supportFile.headers.get('cache-control'),'private, no-store, max-age=0','supplementary download is no-store');
     truth(supportFile.bytes.length>8&&supportFile.bytes.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')),'supplementary PNG signature');
-    const attachmentObject=await pool.query(\`
+    const attachmentObject=await pool.query(`
       SELECT e.id,e.private_evidence_object_id,p.owner_account_id,p.source_type,p.source_id,p.original_file_name
         FROM merchant_purchase_document_evidence e
         JOIN private_evidence_objects p ON p.id=e.private_evidence_object_id
        WHERE e.id=$1 AND e.document_id=$2 AND e.business_id=$3
-    \`,[supportingEvidenceId,fileId,a]);
+    `,[supportingEvidenceId,fileId,a]);
     exact(attachmentObject.rowCount,1,'supplementary object is bound to evidence row');
     exact(Number(attachmentObject.rows[0]?.owner_account_id),merchant.accountId,'supplementary object owner is authenticated Merchant');
     exact(attachmentObject.rows[0]?.source_type,'merchant_purchase_document_attachment','supplementary object has final source type');
@@ -179,10 +179,10 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(attachmentObject.rows[0]?.original_file_name,supportingFileName,'supplementary object filename is exact');
     const originalAfterSupport=await pool.query('SELECT private_evidence_object_id FROM merchant_purchase_documents WHERE id=$1 AND business_id=$2',[fileId,a]);
     exact(Number(originalAfterSupport.rows[0]?.private_evidence_object_id),Number(originalObject.rows[0]?.private_evidence_object_id),'supplementary append preserves original scan');
-    const economicAfter=await pool.query(\`
+    const economicAfter=await pool.query(`
       SELECT (SELECT COUNT(*)::int FROM inventory_purchases WHERE business_id=$1) purchase_count,
              (SELECT COUNT(*)::int FROM transactions WHERE business_id=$1) transaction_count
-    \`,[a]);
+    `,[a]);
     exact(economicAfter.rows[0]?.purchase_count,economicBefore.rows[0]?.purchase_count,'supplementary evidence does not change Inventory purchases');
     exact(economicAfter.rows[0]?.transaction_count,economicBefore.rows[0]?.transaction_count,'supplementary evidence does not create transactions');
     await select(b);
@@ -191,11 +191,11 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
       business_id:b,client_request_key:newKey(),file_name:foreignFileName,data_url:png
     });
     exact(foreignAppend.status,404,'B cannot append evidence to A receipt');
-    const foreignObjects=await pool.query(\`
+    const foreignObjects=await pool.query(`
       SELECT COUNT(*)::int n FROM private_evidence_objects
        WHERE owner_account_id=$1 AND original_file_name=$2
          AND source_type IN ('merchant_purchase_document_attachment_pending','merchant_purchase_document_attachment')
-    \`,[merchant.accountId,foreignFileName]);
+    `,[merchant.accountId,foreignFileName]);
     exact(foreignObjects.rows[0]?.n,0,'foreign receipt denial occurs before private upload');
     const foreignDetail=await call('/api/procurement/purchase-documents/'+fileId+'?business_id='+b);
     exact(foreignDetail.status,404,'B cannot read A receipt detail');
@@ -223,12 +223,12 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
         if(!owned.rows[0]?.name?.startsWith(scope+' '))throw new Error('QA 856 cleanup business ownership mismatch');
         const docs=await pool.query("SELECT id,private_evidence_object_id FROM merchant_purchase_documents WHERE business_id=$1",[id]);
         if(supportingDocumentId&&id===supportingBusinessId){
-          const attachments=await pool.query(\`
+          const attachments=await pool.query(`
             SELECT e.id,e.private_evidence_object_id,p.owner_account_id,p.source_type,p.source_id,p.original_file_name
               FROM merchant_purchase_document_evidence e
               LEFT JOIN private_evidence_objects p ON p.id=e.private_evidence_object_id
              WHERE e.business_id=$1 AND e.document_id=$2 AND e.created_by_account_id=$3
-          \`,[id,supportingDocumentId,merchant.accountId]);
+          `,[id,supportingDocumentId,merchant.accountId]);
           if(attachments.rowCount>1)throw new Error('QA 856 cleanup found unexpected supplementary evidence rows');
           for(const attachment of attachments.rows){
             const objectId=Number(attachment.private_evidence_object_id);
@@ -244,29 +244,29 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
             await pool.query('DELETE FROM merchant_purchase_document_evidence WHERE id=$1 AND business_id=$2 AND created_by_account_id=$3',
               [attachment.id,id,merchant.accountId]);
             await pool.query('DELETE FROM private_evidence_access_audit WHERE object_id=$1',[objectId]);
-            await pool.query(\`
+            await pool.query(`
               DELETE FROM private_evidence_objects
                WHERE id=$1 AND owner_account_id=$2
                  AND source_type='merchant_purchase_document_attachment' AND source_id=$3
                  AND original_file_name=$4
-            \`,[objectId,merchant.accountId,String(attachment.id),supportingFileName]);
+            `,[objectId,merchant.accountId,String(attachment.id),supportingFileName]);
           }
-          const pending=await pool.query(\`
+          const pending=await pool.query(`
             SELECT id FROM private_evidence_objects
              WHERE owner_account_id=$1 AND source_type='merchant_purchase_document_attachment_pending'
                AND source_id=$2 AND original_file_name=$3
-          \`,[merchant.accountId,String(supportingDocumentId)+':'+String(supportingKey),supportingFileName]);
+          `,[merchant.accountId,String(supportingDocumentId)+':'+String(supportingKey),supportingFileName]);
           if(pending.rowCount>1)throw new Error('QA 856 cleanup found duplicate pending private objects');
           for(const object of pending.rows){
             const objectId=Number(object.id);
             await deletePrivateEvidence(pool,{objectId,actorAccountId:merchant.accountId,purpose:'qa_856_fixture_cleanup'});
             await pool.query('DELETE FROM private_evidence_access_audit WHERE object_id=$1',[objectId]);
-            await pool.query(\`
+            await pool.query(`
               DELETE FROM private_evidence_objects
                WHERE id=$1 AND owner_account_id=$2
                  AND source_type='merchant_purchase_document_attachment_pending'
                  AND source_id=$3 AND original_file_name=$4
-            \`,[objectId,merchant.accountId,String(supportingDocumentId)+':'+String(supportingKey),supportingFileName]);
+            `,[objectId,merchant.accountId,String(supportingDocumentId)+':'+String(supportingKey),supportingFileName]);
           }
         }
         await pool.query('DELETE FROM merchant_purchase_document_metadata_audit WHERE business_id=$1',[id]);
