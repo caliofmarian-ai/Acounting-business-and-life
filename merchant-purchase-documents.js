@@ -313,7 +313,7 @@ async function updatePurchaseDocumentMetadata(pool,{actorAccountId,businessId,do
     const updated=await client.query(
       'UPDATE merchant_purchase_documents\n'+
       '   SET document_kind=$3,issuer_name=$4,document_number=$5,issue_date=$6,\n'+
-      '       currency_code=$7,gross_amount=$8,note=$9,updated_at=clock_timestamp()\n'+
+      '       currency_code=$7,gross_amount=$8,note=$9,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 millisecond')\n'+
       ' WHERE id=$1 AND business_id=$2\n'+
       ' RETURNING *',
       [id,businessId,after.document_kind,after.issuer_name,after.document_number,

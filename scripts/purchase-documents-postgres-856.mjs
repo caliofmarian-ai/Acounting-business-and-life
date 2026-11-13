@@ -267,3 +267,41 @@ test('supplementary evidence is separately persisted, idempotent and business-bo
     await pool.end();
   }
 });
+
+
+// JavaScript Date exposes PostgreSQL TIMESTAMPTZ at millisecond precision.
+// The production update must therefore advance the stored version by at least
+// one millisecond even when clock_timestamp() is behind the row or inside the
+// same millisecond; otherwise a stale optimistic version can be accepted.
+test('metadata version advances monotonically at JavaScript millisecond precision',async()=>{
+  const pool=new pg.Pool({max:1});
+  const client=await pool.connect();
+  try{
+    await client.query(`CREATE TEMP TABLE purchase_document_version_precision_856(
+      id BIGINT PRIMARY KEY, updated_at TIMESTAMPTZ NOT NULL
+    )`);
+    await client.query(`INSERT INTO purchase_document_version_precision_856(id,updated_at)
+      VALUES(1,'2099-01-01 00:00:00.123456+00')`);
+    const before=(await client.query(`SELECT updated_at::text AS version
+      FROM purchase_document_version_precision_856 WHERE id=1`)).rows[0].version;
+    const first=(await client.query(`UPDATE purchase_document_version_precision_856
+      SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 millisecond')
+      WHERE id=1 RETURNING updated_at::text AS version`)).rows[0].version;
+    const second=(await client.query(`UPDATE purchase_document_version_precision_856
+      SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 millisecond')
+      WHERE id=1 RETURNING updated_at::text AS version`)).rows[0].version;
+    const beforeVisible=new Date(before).toISOString();
+    const firstVisible=new Date(first).toISOString();
+    const secondVisible=new Date(second).toISOString();
+    assert.equal(beforeVisible,'2099-01-01T00:00:00.123Z');
+    assert.equal(firstVisible,'2099-01-01T00:00:00.124Z');
+    assert.equal(secondVisible,'2099-01-01T00:00:00.125Z');
+    assert.ok(Date.parse(firstVisible)>Date.parse(beforeVisible));
+    assert.ok(Date.parse(secondVisible)>Date.parse(firstVisible));
+    console.log(JSON.stringify({status:'PASS',database:'isolated PostgreSQL 16',
+      subMillisecondStoredPrecision:true,javaScriptVisibleVersionsStrictlyIncrease:true}));
+  }finally{
+    client.release();
+    await pool.end();
+  }
+});

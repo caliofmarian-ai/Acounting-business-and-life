@@ -696,7 +696,7 @@ test('metadata edit locks Merchant grant and receipt row, audits before/after an
   }]);
   assert.ok(calls.some(x=>x.sql.includes('FOR SHARE OF pb,bm')),'current Merchant grant is locked');
   assert.ok(calls.some(x=>x.sql.includes('FOR UPDATE')),'the exact receipt row is locked');
-  assert.ok(calls.some(x=>x.sql.includes('clock_timestamp()')),'version changes use the database wall clock');
+  assert.ok(calls.some(x=>/GREATEST\(clock_timestamp\(\),\s*updated_at\s*\+\s*INTERVAL '1 millisecond'\)/i.test(x.sql)),'metadata version advances monotonically at JavaScript millisecond precision');
   assert.ok(calls.some(x=>x.sql.includes('merchant_purchase_document_metadata_audit')),'audit is in the same transaction');
   assert.ok(!calls.some(x=>/inventory_purchases|transactions|supply_lots/i.test(x.sql)),
     'metadata editing must not write or reread financial/stock sources');
