@@ -59,6 +59,32 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     const docId=Number(created.json?.document?.id);
     truth(Number.isSafeInteger(docId)&&docId>0,'new receipt ID');
     exact(created.json?.document?.has_attachment,false,'save without photo');
+    truth(typeof created.json?.document?.updated_at==='string','metadata version is exposed');
+    const metadataPatch={business_id:a,expected_updated_at:created.json.document.updated_at,
+      issuer_name:'Controlled QA corrected merchant',document_number:'QA856-EDIT-'+marker.slice(0,8),
+      gross_amount:'13.45',note:'Corrected receipt metadata only'};
+    const metadataUpdated=await call('/api/procurement/purchase-documents/'+docId,{method:'PATCH',body:metadataPatch});
+    exact(metadataUpdated.status,200,'metadata-only correction');
+    exact(metadataUpdated.json?.already_applied,false,'new metadata revision');
+    exact(metadataUpdated.json?.document?.id,docId,'metadata keeps the same receipt');
+    exact(metadataUpdated.json?.document?.issuer_name,metadataPatch.issuer_name,'issuer metadata corrected');
+    exact(metadataUpdated.json?.document?.gross_amount,13.45,'evidence amount corrected without accounting write');
+    exact(metadataUpdated.json?.document?.has_attachment,false,'metadata edit does not add or remove original');
+    const metadataDetail=await call('/api/procurement/purchase-documents/'+docId+'?business_id='+a);
+    exact(metadataDetail.status,200,'updated private detail');
+    exact(metadataDetail.json?.metadata_history?.length,1,'one immutable metadata revision');
+    truth(metadataDetail.json?.metadata_history?.[0]?.changed_fields?.includes('issuer_name'),'audit names changed metadata');
+    const metadataReplay=await call('/api/procurement/purchase-documents/'+docId,{method:'PATCH',body:metadataPatch});
+    exact(metadataReplay.status,200,'same metadata PATCH replay');
+    exact(metadataReplay.json?.already_applied,true,'lost acknowledgement replay is idempotent');
+    const metadataAfterReplay=await call('/api/procurement/purchase-documents/'+docId+'?business_id='+a);
+    exact(metadataAfterReplay.json?.metadata_history?.length,1,'replay does not duplicate audit');
+    const staleMetadata=await call('/api/procurement/purchase-documents/'+docId,{method:'PATCH',body:{...metadataPatch,note:'stale conflicting edit'}});
+    exact(staleMetadata.status,409,'stale concurrent metadata edit rejected');
+    await select(b);
+    const foreignMetadata=await call('/api/procurement/purchase-documents/'+docId,{method:'PATCH',body:{...metadataPatch,business_id:b}});
+    exact(foreignMetadata.status,404,'foreign-business metadata edit denied');
+    await select(a);
     const replay=await post('/api/procurement/purchase-documents',input);
     exact(replay.status,200,'stable intent replay');
     exact(replay.json?.already_saved,true,'replay acknowledged');
@@ -86,6 +112,8 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(uploaded.status,201,'real scanned private QA PNG upload');
     truth(uploaded.json?.document?.has_attachment===true,'scanned object is bound to receipt');
     const fileId=Number(uploaded.json?.document?.id);
+    const originalObject=await pool.query('SELECT private_evidence_object_id FROM merchant_purchase_documents WHERE id=$1 AND business_id=$2',[fileId,a]);
+    truth(Number(originalObject.rows[0]?.private_evidence_object_id)>0,'original private object is linked');
     const file=await requestBinary(base,'/api/procurement/purchase-documents/'+fileId+'/file?business_id='+a,{token:merchant.token});
     exact(file.status,200,'authorized original download');
     exact(file.headers.get('cache-control'),'private, no-store, max-age=0','no-store original');
@@ -93,6 +121,17 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     const uploadReplay=await post('/api/procurement/purchase-documents',fileInput);
     exact(uploadReplay.status,200,'scanned original idempotent retry');
     exact(uploadReplay.json?.already_saved,true,'replay must not upload a second original');
+    const fileMetadata=await call('/api/procurement/purchase-documents/'+fileId,{method:'PATCH',body:{
+      business_id:a,expected_updated_at:uploaded.json.document.updated_at,
+      note:'Scanned original retained while metadata is corrected'
+    }});
+    exact(fileMetadata.status,200,'metadata correction on scanned receipt');
+    exact(fileMetadata.json?.document?.has_attachment,true,'scanned original remains attached');
+    const objectAfter=await pool.query('SELECT private_evidence_object_id FROM merchant_purchase_documents WHERE id=$1 AND business_id=$2',[fileId,a]);
+    exact(Number(objectAfter.rows[0]?.private_evidence_object_id),Number(originalObject.rows[0]?.private_evidence_object_id),'metadata edit preserves original evidence object');
+    const fileAfterEdit=await requestBinary(base,'/api/procurement/purchase-documents/'+fileId+'/file?business_id='+a,{token:merchant.token});
+    exact(fileAfterEdit.status,200,'original still downloads after metadata edit');
+    exact(fileAfterEdit.headers.get('cache-control'),'private, no-store, max-age=0','original remains private after edit');
     await select(b);
     const otherArchive=await call('/api/procurement/purchase-documents?business_id='+b);
     exact(otherArchive.status,200,'B scoped archive');
@@ -111,6 +150,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
         const owned=await pool.query('SELECT name FROM businesses WHERE id=$1',[id]);
         if(!owned.rows[0]?.name?.startsWith(scope+' '))throw new Error('QA 856 cleanup business ownership mismatch');
         const docs=await pool.query("SELECT id,private_evidence_object_id FROM merchant_purchase_documents WHERE business_id=$1",[id]);
+        await pool.query('DELETE FROM merchant_purchase_document_metadata_audit WHERE business_id=$1',[id]);
         await pool.query('DELETE FROM merchant_purchase_document_links WHERE document_id IN (SELECT id FROM merchant_purchase_documents WHERE business_id=$1)',[id]);
         await pool.query('DELETE FROM merchant_purchase_documents WHERE business_id=$1',[id]);
         for(const row of docs.rows){
@@ -135,6 +175,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
   if(problem)throw problem;
   return{status:'PASS',wave:PURCHASE_DOCUMENTS_856_WAVE,checks,authenticated_http:true,
     isolated_businesses:true,receipt_multi_purchase:true,replay_conflict_guard:true,
-    scanned_original_download:true,metadata_archive:true,cross_business_guest_denial:true,
+    scanned_original_download:true,metadata_archive:true,metadata_edit_audit:true,
+    scanned_original_preserved_on_edit:true,cross_business_guest_denial:true,
     exact_amount_date_denials:true,fixtures_removed:cleaned};
 }

@@ -596,7 +596,154 @@ test('private Merchant purchase-document HTTP routes refuse stale conditional 30
     });
     assert.equal(submit.status,401);
     assertPrivate(submit);
+    const patch=await fetch(baseUrl+'/api/procurement/purchase-documents/23',{
+      method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({business_id:14,expected_updated_at:'2026-11-13T12:00:00.000Z',issuer_name:'Denied'})
+    });
+    assert.equal(patch.status,401,'anonymous metadata editing is denied');
+    assertPrivate(patch);
   }finally{
     await new Promise((resolve,reject)=>server.close(err=>err?reject(err):resolve()));
   }
 });
+
+
+test('purchase-document metadata edits are strict, versioned and never accept file or financial links',async()=>{
+  const {normalizeMerchantPurchaseDocumentMetadata}=await import('../merchant-purchase-documents.js');
+  const row={
+    id:23,business_id:14,client_request_key:'purchase-2026-10-30-001',
+    document_kind:'purchase_receipt',issuer_name:'Old shop',document_number:'',
+    issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'145.25',note:'old note',
+    private_evidence_object_id:555,updated_at:new Date('2026-11-13T12:00:00.000Z')
+  };
+  const result=normalizeMerchantPurchaseDocumentMetadata(row,{
+    expected_updated_at:row.updated_at.toISOString(),
+    issuer_name:'Corrected shop',gross_amount:'150.00',note:'corrected note'
+  });
+  assert.equal(result.expectedUpdatedAt,'2026-11-13T12:00:00.000Z');
+  assert.deepEqual(result.metadata,{
+    document_kind:'purchase_receipt',issuer_name:'Corrected shop',document_number:'',
+    issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'150.00',note:'corrected note'
+  });
+  for(const extra of [
+    {business_id:99},{links:[]},{data_url:'data:image/png;base64,AAAA'},
+    {file_name:'other.png'},{private_evidence_object_id:777},{client_request_key:'different'}
+  ])assert.throws(()=>normalizeMerchantPurchaseDocumentMetadata(row,{
+    expected_updated_at:row.updated_at.toISOString(),...extra
+  }),/Only purchase document metadata can be edited/);
+  assert.throws(()=>normalizeMerchantPurchaseDocumentMetadata(row,{issuer_name:'No version'}),/expected_updated_at/);
+  assert.throws(()=>normalizeMerchantPurchaseDocumentMetadata(row,{
+    expected_updated_at:row.updated_at.toISOString(),gross_amount:'100.005'
+  }),/Invalid document amount/);
+  assert.throws(()=>normalizeMerchantPurchaseDocumentMetadata(row,{
+    expected_updated_at:row.updated_at.toISOString(),issue_date:'2026-10-30T00:00:00Z'
+  }),/Invalid issue date/);
+});
+
+test('metadata edit locks Merchant grant and receipt row, audits before/after and leaves file/links/finance untouched',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const original={
+    id:23,business_id:14,created_by_account_id:9,client_request_key:'purchase-2026-10-30-001',
+    document_kind:'purchase_receipt',issuer_name:'Old shop',document_number:'',
+    issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'145.25',note:'old note',
+    private_evidence_object_id:555,created_at:new Date('2026-10-30T00:00:00.000Z'),
+    updated_at:new Date('2026-11-13T12:00:00.000Z')
+  };
+  let current={...original},auditRows=[],released=null;
+  const calls=[];
+  const client={
+    query:async(sql,params=[])=>{
+      calls.push({sql,params});
+      if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+      if(sql.includes('SELECT * FROM merchant_purchase_documents'))return{rowCount:1,rows:[{...current}]};
+      if(sql.includes('UPDATE merchant_purchase_documents')){
+        current={...current,document_kind:params[2],issuer_name:params[3],document_number:params[4],
+          issue_date:params[5],currency_code:params[6],gross_amount:params[7],note:params[8],
+          updated_at:new Date('2026-11-13T12:00:01.000Z')};
+        return{rowCount:1,rows:[{...current}]};
+      }
+      if(sql.includes('INSERT INTO merchant_purchase_document_metadata_audit')){
+        auditRows.push({before:JSON.parse(params[3]),after:JSON.parse(params[4]),fields:params[5]});
+        return{rowCount:1,rows:[{id:1}]};
+      }
+      throw new Error('Unexpected metadata SQL '+sql);
+    },
+    release:error=>{released=error||'healthy'}
+  };
+  const pool={connect:async()=>client};
+  const result=await merchantPurchaseDocumentInternals.updatePurchaseDocumentMetadata(pool,{
+    actorAccountId:9,businessId:14,documentId:23,
+    input:{expected_updated_at:original.updated_at.toISOString(),issuer_name:'Corrected shop',gross_amount:'150.00'}
+  });
+  assert.equal(result.already_applied,false);
+  assert.equal(result.document.id,23);
+  assert.equal(result.document.issuer_name,'Corrected shop');
+  assert.equal(result.document.gross_amount,150);
+  assert.equal(result.document.has_attachment,true);
+  assert.equal(result.document.updated_at,'2026-11-13T12:00:01.000Z');
+  assert.equal(current.private_evidence_object_id,555,'the scanned original object is unchanged');
+  assert.deepEqual(auditRows,[{
+    before:{document_kind:'purchase_receipt',issuer_name:'Old shop',document_number:'',issue_date:'2026-10-30',
+      currency_code:'PHP',gross_amount:'145.25',note:'old note'},
+    after:{document_kind:'purchase_receipt',issuer_name:'Corrected shop',document_number:'',issue_date:'2026-10-30',
+      currency_code:'PHP',gross_amount:'150.00',note:'old note'},
+    fields:['issuer_name','gross_amount']
+  }]);
+  assert.ok(calls.some(x=>x.sql.includes('FOR SHARE OF pb,bm')),'current Merchant grant is locked');
+  assert.ok(calls.some(x=>x.sql.includes('FOR UPDATE')),'the exact receipt row is locked');
+  assert.ok(calls.some(x=>x.sql.includes('clock_timestamp()')),'version changes use the database wall clock');
+  assert.ok(calls.some(x=>x.sql.includes('merchant_purchase_document_metadata_audit')),'audit is in the same transaction');
+  assert.ok(!calls.some(x=>/inventory_purchases|transactions|supply_lots/i.test(x.sql)),
+    'metadata editing must not write or reread financial/stock sources');
+  assert.equal(calls.at(-1).sql,'COMMIT');
+  assert.equal(released,'healthy');
+});
+
+test('uncertain metadata PATCH acknowledgement is replay-safe and stale competing edits fail closed',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const initial={
+    id:31,business_id:14,client_request_key:'purchase-2026-10-30-002',
+    document_kind:'purchase_receipt',issuer_name:'Old shop',document_number:'',
+    issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'145.25',note:'old note',
+    private_evidence_object_id:null,created_at:new Date('2026-10-30T00:00:00.000Z'),
+    updated_at:new Date('2026-11-13T13:00:00.000Z')
+  };
+  let current={...initial},auditCount=0,loseCommit=true;
+  const makePool=()=>({connect:async()=>({
+    query:async(sql,params=[])=>{
+      if(sql==='BEGIN'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql==='COMMIT'){
+        if(loseCommit){loseCommit=false;throw new Error('COMMIT acknowledgement lost');}
+        return{rowCount:0,rows:[]};
+      }
+      if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+      if(sql.includes('SELECT * FROM merchant_purchase_documents'))return{rowCount:1,rows:[{...current}]};
+      if(sql.includes('UPDATE merchant_purchase_documents')){
+        current={...current,document_kind:params[2],issuer_name:params[3],document_number:params[4],
+          issue_date:params[5],currency_code:params[6],gross_amount:params[7],note:params[8],
+          updated_at:new Date('2026-11-13T13:00:01.000Z')};
+        return{rowCount:1,rows:[{...current}]};
+      }
+      if(sql.includes('INSERT INTO merchant_purchase_document_metadata_audit')){auditCount++;return{rowCount:1,rows:[]};}
+      throw new Error('Unexpected metadata SQL '+sql);
+    },
+    release:error=>{if(error){}}
+  })});
+  const input={expected_updated_at:initial.updated_at.toISOString(),issuer_name:'Corrected shop'};
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.updatePurchaseDocumentMetadata(makePool(),{
+    actorAccountId:9,businessId:14,documentId:31,input
+  }),/COMMIT acknowledgement lost/);
+  assert.equal(auditCount,1,'the uncertain first attempt may have committed once');
+  const replay=await merchantPurchaseDocumentInternals.updatePurchaseDocumentMetadata(makePool(),{
+    actorAccountId:9,businessId:14,documentId:31,input
+  });
+  assert.equal(replay.already_applied,true,'same metadata is recognized after a lost acknowledgement');
+  assert.equal(auditCount,1,'replay does not duplicate the audit revision');
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.updatePurchaseDocumentMetadata(makePool(),{
+    actorAccountId:9,businessId:14,documentId:31,
+    input:{expected_updated_at:initial.updated_at.toISOString(),note:'different concurrent edit'}
+  }),error=>error.status===409);
+  assert.equal(auditCount,1,'stale competing metadata does not append an audit row');
+});
+

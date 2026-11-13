@@ -932,7 +932,8 @@ test('legitimate selected Merchant can still render archive and linkable purchas
       inventory_name:'My sugar',total_cost:10,created_at:'2026-11-07',
       purchase_quantity:2,purchase_unit:'kg'}]};
     return{documents:[{id:71,business_id:14,document_kind:'invoice',issuer_name:'My receipt',
-      issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true}]};
+      issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true,
+      updated_at:'2026-11-07T00:00:00.000Z'}]};
   };
   const ui=new Function('api','panel','boxes',`
     const ROOT='/api/procurement/purchase-documents';
@@ -946,3 +947,79 @@ test('legitimate selected Merchant can still render archive and linkable purchas
   assert.match(boxes['#mpdSaved'].innerHTML,/My receipt/);
   assert.match(boxes['#mpdLinkable'].innerHTML,/My sugar/);
 });
+
+
+test('metadata editor uses the literal PATCH controller, current Merchant identity and preserves attachment authority',async()=>{
+  const start=source.indexOf('  async function saveMetadata(event,id,target){');
+  const end=source.indexOf('\n  function close(',start);
+  assert.ok(start>=0&&end>start,'literal metadata save controller exists');
+  const code=source.slice(start,end);
+  const fields={
+    expected_updated_at:'2026-11-13T12:00:00.000Z',document_kind:'purchase_receipt',
+    issue_date:'2026-11-13',issuer_name:'Corrected shop',document_number:'R-22',
+    gross_amount:'150.00',currency_code:'PHP',note:'Corrected note'
+  };
+  const button={disabled:false};
+  const form={querySelector:()=>button};
+  const panel={};
+  const target={dataset:{hasAttachment:'true'}};
+  const calls=[],messages=[];
+  let archives=0,edits=0,closed=0;
+  const api=async(path,options)=>{
+    calls.push({path,options});
+    if(path==='/api/accounting/workspaces')return{role:'merchant',active_business_id:14};
+    assert.equal(path,'/api/procurement/purchase-documents/23');
+    assert.equal(options.method,'PATCH');
+    const payload=JSON.parse(options.body);
+    return{already_applied:false,document:{
+      id:23,business_id:14,document_kind:payload.document_kind,issue_date:payload.issue_date,
+      issuer_name:payload.issuer_name,document_number:payload.document_number,
+      gross_amount:150,currency_code:'PHP',note:payload.note,has_attachment:true,
+      updated_at:'2026-11-13T12:00:01.000Z'
+    }};
+  };
+  const FormDataStub=function(){this.get=name=>fields[name]??null};
+  const run=new Function('api','FormData','message','archive','editDocument','close','panel','biz','target',
+    'const ROOT=\'/api/procurement/purchase-documents\';let overlay=panel,businessId=biz,metadataSaveInProgress=false,metadataSaveAttempt=0;'+
+    code+';return saveMetadata;'
+  )(api,FormDataStub,(text,isError)=>messages.push({text,isError}),async()=>{archives++},
+    async()=>{edits++},()=>{closed++},panel,14,target);
+  await run({preventDefault(){},currentTarget:form},23,target);
+  const patch=calls.find(item=>item.options?.method==='PATCH');
+  assert.ok(patch);
+  const payload=JSON.parse(patch.options.body);
+  assert.equal(payload.expected_updated_at,fields.expected_updated_at);
+  assert.equal(payload.business_id,14);
+  assert.equal(payload.issuer_name,'Corrected shop');
+  assert.equal(Object.hasOwn(payload,'data_url'),false);
+  assert.equal(Object.hasOwn(payload,'file_name'),false);
+  assert.equal(Object.hasOwn(payload,'private_evidence_object_id'),false);
+  assert.equal(Object.hasOwn(payload,'links'),false);
+  assert.equal(archives,1);
+  assert.equal(edits,1);
+  assert.equal(closed,0);
+  assert.match(messages.at(-1).text,/original, purchase links and financial records are unchanged/);
+  assert.equal(button.disabled,false);
+});
+
+test('metadata editor source exposes revision history and refuses stale or cross-business responses',()=>{
+  const archiveStart=source.indexOf('  async function archive(){');
+  const editStart=source.indexOf('  async function editDocument(id){');
+  const saveStart=source.indexOf('  async function saveMetadata(event,id,target){');
+  const readStart=source.indexOf('  function readFile(file){');
+  assert.ok(archiveStart>=0&&editStart>archiveStart&&saveStart>editStart&&readStart>saveStart);
+  const archive=source.slice(archiveStart,editStart);
+  const edit=source.slice(editStart,saveStart);
+  const save=source.slice(saveStart,readStart);
+  assert.match(archive,/data-mpd-edit=/);
+  assert.match(edit,/metadata_history/);
+  assert.match(edit,/verifiedMerchantRead/);
+  assert.match(edit,/doc\.business_id!==biz/);
+  assert.match(save,/expected_updated_at/);
+  assert.match(save,/method:'PATCH'/);
+  assert.match(save,/doc\.has_attachment!==\(target\.dataset\.hasAttachment==='true'\)/);
+  assert.match(save,/after=await api\('\/api\/accounting\/workspaces'\)/);
+  assert.match(save,/close\(true\)/);
+  assert.doesNotMatch(save,/data_url|file_name|private_evidence_object_id/);
+});
+

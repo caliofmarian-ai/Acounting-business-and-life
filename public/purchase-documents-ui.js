@@ -4,7 +4,7 @@
   const MAX_FILE=6*1024*1024;
   let overlay=null,businessId=null,saveInProgress=false,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
   let openAttempt=0,opening=false,saveAttempt=0;
-  let archiveRequest=0,linkableRequest=0;
+  let archiveRequest=0,linkableRequest=0,metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
   const $=(selector,root=document)=>root.querySelector(selector);
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const currency=(value,code='PHP')=>value==null?'Amount not recorded':new Intl.NumberFormat('en-PH',{style:'currency',currency:code||'PHP'}).format(Number(value));
@@ -17,7 +17,10 @@
   async function api(path,options={}){
     const response=await fetch(path,{credentials:'same-origin',...options});
     const result=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(result.error||'Purchase documents request failed ('+response.status+')');
+    if(!response.ok){
+      const failure=new Error(result.error||'Purchase documents request failed ('+response.status+')');
+      failure.status=response.status;throw failure;
+    }
     return result;
   }
   function message(text,error=false){
@@ -52,6 +55,7 @@
     .mpdRecords input{height:18px;width:18px;flex-shrink:0}
     .mpdDoc{border-top:1px solid #e6eaef;padding:12px 0;display:grid;gap:5px;font:14px system-ui}
     .mpdDoc strong{font-size:14px}.mpdDoc small{color:#677482}.mpdDoc a{color:#075fa1;text-decoration:underline;width:max-content}
+    .mpdEdit{margin-top:8px;padding:10px;background:#f7fafb;border:1px solid #e1e8ee;border-radius:10px}.mpdHistory{font:12px/1.5 system-ui;color:#53616e}.mpdHistory ol{padding-left:20px}
     @media(max-width:600px){.mpdPanel{height:100dvh;border-radius:0}.mpdHead{padding:14px}.mpdMain{padding:12px 14px 30px}.mpdGrid{grid-template-columns:1fr}}
     `;
     document.head.append(style);
@@ -84,6 +88,10 @@
     $('#mpdFile',overlay).onchange=event=>selectFile(event.target.files?.[0]);
     $('#mpdCamera',overlay).onchange=event=>selectFile(event.target.files?.[0]);
     $('#mpdForm',overlay).onsubmit=save;
+    $('#mpdSaved',overlay).addEventListener('click',event=>{
+      const button=event.target?.closest?.('[data-mpd-edit]');
+      if(button)editDocument(Number(button.dataset.mpdEdit));
+    });
   }
   function selectFile(file){
     // Clearing either native picker revokes the previous attachment. An empty
@@ -178,7 +186,8 @@
       !Number.isSafeInteger(d.id)||d.id<=0||
       !Number.isSafeInteger(d.business_id)||d.business_id!==biz||
       !allowedKinds.includes(d.document_kind)||
-      typeof d.has_attachment!=='boolean')){
+      typeof d.has_attachment!=='boolean'||
+      typeof d.updated_at!=='string'||!Number.isFinite(Date.parse(d.updated_at)))){
       box.innerHTML='<p class="mpdHelp">Could not verify the Merchant purchase archive. Reopen after checking your business.</p>';
       throw new Error('Purchase archive business or document identity could not be verified.');
     }
@@ -188,7 +197,128 @@
       '<span>'+escape(String(d.issue_date).slice(0,10))+' · '+escape(currency(d.gross_amount,d.currency_code))+'</span>'+
       '<small>'+escape(d.document_number?'Document #'+d.document_number:'No reference number')+'</small>'+
       (d.has_attachment?'<a href="'+ROOT+'/'+Number(d.id)+'/file?business_id='+encodeURIComponent(businessId)+'">Download saved original</a>':
-        '<small>Record saved without a file</small>')+'</div>').join('');
+        '<small>Record saved without a file</small>')+
+      '<button class="mpdBtn mpdSecondary" type="button" data-mpd-edit="'+Number(d.id)+'">Edit details</button>'+
+      '<div class="mpdEdit" data-mpd-edit-panel="'+Number(d.id)+'" hidden></div></div>').join('');
+  }
+
+  async function editDocument(id){
+    const panel=overlay,biz=businessId;
+    if(!panel||!biz||!Number.isSafeInteger(id)||id<1)return;
+    const request=++metadataEditRequest;
+    const target=$('[data-mpd-edit-panel="'+id+'"]',panel);
+    if(!target)return;
+    target.hidden=false;
+    target.innerHTML='<p class="mpdHelp">Loading document details…</p>';
+    try{
+      const result=await api(ROOT+'/'+id+'?business_id='+encodeURIComponent(biz));
+      if(panel!==overlay||biz!==businessId||request!==metadataEditRequest)return;
+      if(!await verifiedMerchantRead(panel,biz,()=>request===metadataEditRequest))return;
+      const doc=result?.document;
+      if(!doc||typeof doc!=='object'||Array.isArray(doc)||doc.id!==id||doc.business_id!==biz||
+         typeof doc.has_attachment!=='boolean'||typeof doc.updated_at!=='string'||
+         !Number.isFinite(Date.parse(doc.updated_at))||!Array.isArray(result.links)||!Array.isArray(result.metadata_history)){
+        throw new Error('Purchase document details could not be verified. Reopen the archive.');
+      }
+      target.dataset.hasAttachment=String(doc.has_attachment);
+      const kinds=[['purchase_receipt','Purchase receipt'],['invoice','Supplier invoice'],
+        ['order_slip','Order slip'],['other','Other purchase proof']];
+      const options=kinds.map(([value,label])=>'<option value="'+value+'"'+(doc.document_kind===value?' selected':'')+'>'+label+'</option>').join('');
+      const history=result.metadata_history.map(item=>{
+        const fields=Array.isArray(item.changed_fields)?item.changed_fields.join(', '):'metadata';
+        return '<li>'+escape(fields)+' · '+escape(new Date(item.created_at).toLocaleString())+'</li>';
+      }).join('')||'<li>No metadata changes recorded.</li>';
+      target.innerHTML=
+        '<form class="mpdForm" data-mpd-metadata-form>'+
+        '<input type="hidden" name="expected_updated_at" value="'+escape(doc.updated_at)+'">'+
+        '<label>Document type<select name="document_kind">'+options+'</select></label>'+
+        '<label>Date on document<input type="date" name="issue_date" required value="'+escape(String(doc.issue_date).slice(0,10))+'"></label>'+
+        '<label>Shop / Supplier<input name="issuer_name" maxlength="180" value="'+escape(doc.issuer_name||'')+'"></label>'+
+        '<div class="mpdGrid"><label>Document number<input name="document_number" maxlength="120" value="'+escape(doc.document_number||'')+'"></label>'+
+        '<label>Total amount<input type="number" step=".01" min="0" name="gross_amount" value="'+escape(doc.gross_amount==null?'':String(doc.gross_amount))+'"></label></div>'+
+        '<label>Currency code<input name="currency_code" maxlength="3" value="'+escape(doc.currency_code||'PHP')+'"></label>'+
+        '<label>Private note<textarea name="note" maxlength="1000">'+escape(doc.note||'')+'</textarea></label>'+
+        '<p class="mpdHelp">Editing changes receipt metadata only. The scanned original, linked purchases and financial records remain unchanged.</p>'+
+        '<button class="mpdBtn" type="submit">Save details</button></form>'+
+        '<details class="mpdHistory"><summary>Change history ('+result.metadata_history.length+')</summary><ol>'+history+'</ol></details>';
+      const form=$('[data-mpd-metadata-form]',target);
+      form.addEventListener('submit',event=>saveMetadata(event,id,target));
+    }catch(error){
+      if(panel===overlay&&biz===businessId&&request===metadataEditRequest){
+        if(error.status===401||error.status===403){close(true);return;}
+        target.innerHTML='<p class="mpdHelp">'+escape(error.message||'Could not load document details.')+'</p>';
+        message(error.message,true);
+      }
+    }
+  }
+
+  async function saveMetadata(event,id,target){
+    event.preventDefault();
+    if(metadataSaveInProgress)return;
+    const panel=overlay,biz=businessId,form=event.currentTarget;
+    if(!panel||!biz||!form)return;
+    metadataSaveInProgress=true;
+    const owner=++metadataSaveAttempt;
+    const button=form.querySelector('button[type="submit"]');
+    if(button)button.disabled=true;
+    const matches=current=>{
+      const active=current?.active_business_id;
+      const valid=(typeof active==='number'&&Number.isSafeInteger(active)&&active>0)||
+        (typeof active==='string'&&/^[1-9][0-9]*$/.test(active)&&Number.isSafeInteger(Number(active)));
+      return current?.role==='merchant'&&valid&&Number(active)===biz;
+    };
+    try{
+      let before;
+      try{before=await api('/api/accounting/workspaces')}
+      catch{close(true);return;}
+      if(panel!==overlay||biz!==businessId)return;
+      if(!matches(before)){close(true);return;}
+      const data=new FormData(form);
+      const payload={
+        business_id:biz,
+        expected_updated_at:String(data.get('expected_updated_at')||''),
+        document_kind:String(data.get('document_kind')||''),
+        issue_date:String(data.get('issue_date')||''),
+        issuer_name:String(data.get('issuer_name')||''),
+        document_number:String(data.get('document_number')||''),
+        gross_amount:String(data.get('gross_amount')||''),
+        currency_code:String(data.get('currency_code')||''),
+        note:String(data.get('note')||'')
+      };
+      const result=await api(ROOT+'/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(panel!==overlay||biz!==businessId)return;
+      const doc=result?.document;
+      const amount=payload.gross_amount===''?null:Number(payload.gross_amount);
+      const sameAmount=amount===null?doc?.gross_amount==null:
+        Number.isFinite(Number(doc?.gross_amount))&&Math.round(Number(doc.gross_amount)*100)===Math.round(amount*100);
+      if(!doc||typeof doc!=='object'||Array.isArray(doc)||doc.id!==id||doc.business_id!==biz||
+         doc.document_kind!==payload.document_kind||String(doc.issue_date).slice(0,10)!==payload.issue_date||
+         doc.issuer_name!==payload.issuer_name.trim()||doc.document_number!==payload.document_number.trim()||
+         doc.currency_code!==payload.currency_code.trim().toUpperCase()||doc.note!==payload.note.trim()||
+         !sameAmount||doc.has_attachment!==(target.dataset.hasAttachment==='true')||
+         typeof doc.updated_at!=='string'||!Number.isFinite(Date.parse(doc.updated_at))||
+         typeof result.already_applied!=='boolean'){
+        throw new Error('Metadata acknowledgement did not match this document. Refresh before retrying.');
+      }
+      let after;
+      try{after=await api('/api/accounting/workspaces')}
+      catch{close(true);return;}
+      if(panel!==overlay||biz!==businessId)return;
+      if(!matches(after)){close(true);return;}
+      const notice=result.already_applied?'These document details were already saved.':'Purchase document details updated.';
+      message(notice+' The scanned original, purchase links and financial records are unchanged.');
+      try{await archive()}
+      catch{message(notice+' The archive could not refresh; close and reopen Purchase receipts to reload it.',true);return;}
+      if(panel===overlay&&biz===businessId)await editDocument(id);
+    }catch(error){
+      if(panel===overlay){
+        if(error.status===401||error.status===403)close(true);
+        else message(error.message,true);
+      }
+    }
+    finally{
+      if(owner===metadataSaveAttempt){metadataSaveInProgress=false;if(button)button.disabled=false;}
+    }
   }
   function readFile(file){
     return new Promise((resolve,reject)=>{
@@ -367,6 +497,7 @@
     // a late finally from that dialog cannot clear a replacement save.
     saveAttempt++;
     saveInProgress=false;
+    metadataEditRequest++;metadataSaveAttempt++;metadataSaveInProgress=false;
     overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;
     document.body.style.overflow=previousOverflow;
     return true;
