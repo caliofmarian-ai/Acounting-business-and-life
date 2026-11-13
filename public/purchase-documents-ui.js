@@ -224,7 +224,7 @@
             !item||typeof item!=='object'||!Number.isSafeInteger(item.id)||item.id<1||
             item.document_id!==id||item.business_id!==biz||typeof item.file_name!=='string'||
             typeof item.mime_type!=='string'||!Number.isSafeInteger(item.byte_size)||item.byte_size<1||
-            typeof item.created_at!=='string'||!Number.isFinite(Date.parse(item.created_at))){
+            typeof item.created_at!=='string'||!Number.isFinite(Date.parse(item.created_at)))){
         throw new Error('Purchase document details could not be verified. Reopen the archive.');
       }
       target.dataset.hasAttachment=String(doc.has_attachment);
