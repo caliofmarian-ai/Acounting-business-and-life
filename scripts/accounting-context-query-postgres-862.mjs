@@ -34,8 +34,8 @@ try{
   let before=calls;
   let result=await resolveAccountingContext(db,71,'merchant');
   assert.equal(calls-before,1,'one round trip for bindings, preference reconciliation and budget ensure');
-  assert.equal(result.business.id,102,'valid saved preference wins over primary binding');
-  assert.deepEqual(result.businesses.map(x=>x.id),[101,102]);
+  assert.equal(result.business.id,'102','valid saved preference wins over primary binding');
+  assert.deepEqual(result.businesses.map(x=>x.id),['101','102']);
   assert.equal((await connection.query('SELECT COUNT(*)::int n FROM budgets WHERE business_id=102')).rows[0].n,1);
   assert.equal((await connection.query('SELECT COUNT(*)::int n FROM budgets WHERE business_id=101')).rows[0].n,0);
   const unchanged=(await connection.query("SELECT updated_at::text FROM account_business_preferences WHERE account_id=71 AND role='merchant'")).rows[0].updated_at;
@@ -45,15 +45,15 @@ try{
   before=calls;
   result=await resolveAccountingContext(db,71,'merchant');
   assert.equal(calls-before,1);
-  assert.equal(result.business.id,101,'invalid preference falls back to primary active binding');
+  assert.equal(result.business.id,'101','invalid preference falls back to primary active binding');
   assert.equal((await connection.query("SELECT business_id FROM account_business_preferences WHERE account_id=71 AND role='merchant'")).rows[0].business_id,'101');
   assert.equal((await connection.query('SELECT COUNT(*)::int n FROM budgets WHERE business_id=101')).rows[0].n,1);
 
   before=calls;
   result=await resolveAccountingContext(db,72,'merchant');
   assert.equal(calls-before,1);
-  assert.equal(result.business.id,103,'business membership remains account-scoped');
-  assert.deepEqual(result.businesses.map(x=>x.id),[103]);
+  assert.equal(result.business.id,'103','business membership remains account-scoped');
+  assert.deepEqual(result.businesses.map(x=>x.id),['103']);
 
   before=calls;
   result=await resolveAccountingContext(db,73,'merchant');
