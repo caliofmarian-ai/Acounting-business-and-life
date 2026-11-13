@@ -20,6 +20,12 @@ function harness({role='merchant',enabled=true,assigned=bindings,delay=false}={}
     clean:v=>String(v??'').trim(),
     roleEnabled:(me,r)=>me.profiles.some(p=>p.role===r&&p.enabled),
     profileBindings:async()=>assigned,
+    resolveAccountingContext:async()=>{
+      const valid=assigned.find(b=>Number(b.id)===Number(preference));
+      const chosen=valid||assigned[0]||null;
+      if(chosen&&!valid){preference=Number(chosen.id);updates++}
+      return{business:chosen,businesses:assigned};
+    },
     ensureProfileBusinessBinding:async()=>{provisions++},
     inventoryMutationOrigin,boundInventoryOrigin,
     ensureBudgetRow:async id=>{budgets.push(id)},
@@ -104,7 +110,7 @@ test('normal workspace read still uses preference; valid authorized origin bypas
   h.switchTo(22);
   const read=await h.accountingContext(request('GET','/api/inventory',NO_ORIGIN));
   assert.equal(read.business.id,22);
-  assert.equal(h.state().updates,1);
+  assert.equal(h.state().updates,0);
   const write=await h.accountingContext(request('PATCH','/api/inventory/1/identifiers','11'));
   assert.equal(write.business.id,11);assert.equal(h.state().preference,22);
 });

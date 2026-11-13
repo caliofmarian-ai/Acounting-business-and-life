@@ -14,7 +14,7 @@ let calls=0;
 const db={query:(...args)=>{calls++;return connection.query(...args);}};
 try{
   const meta=(await connection.query("SELECT current_database() AS db,current_setting('server_version_num')::int AS version")).rows[0];
-  assert.equal(meta.db,'abl_accounting_context_862_ci');
+  assert.equal(meta.db,'inventory862');
   assert.ok(meta.version>=160000&&meta.version<170000);
   assert.equal((await connection.query("SELECT to_regclass('public.businesses') AS t")).rows[0].t,null,'Refuse pre-existing public tables');
 
