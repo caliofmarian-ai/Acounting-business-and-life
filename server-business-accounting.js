@@ -28,6 +28,7 @@ import {
 import {directProductCostEstimate} from './food-cost-core.js';
 import {buildWasteAnalytics} from './inventory-waste-core.js';
 import {parsePreparedRemoval,estimatedPreparedRemovalCost} from './prepared-portion-removal-core.js';
+import {resolveAccountingContext} from './accounting-context-query-core.js';
 import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} from './inventory-count-sessions.js';
 import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from './inventory-identifiers.js';
 import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance,reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions} from './inventory-locations.js';
@@ -445,27 +446,32 @@ async function accountingContext(req){
   const me=await identity(req);
   const role=clean(me.account?.active_role,40);
   if(!['merchant','supplier'].includes(role)) throw Object.assign(new Error('Switch to Merchant or Supplier to use Accounting'),{status:403});
-  if(!roleEnabled(me,role)) throw Object.assign(new Error(`${role} profile is not active`),{status:403});
+  if(!roleEnabled(me,role)) throw Object.assign(new Error(role+' profile is not active'),{status:403});
   const originBusinessId=inventoryMutationOrigin(req);
-  let bindings=await profileBindings(Number(me.account.id),role);
-  if(!bindings.length&&originBusinessId==null){
-    await ensureProfileBusinessBinding(Number(me.account.id),role,null,'');
-    bindings=await profileBindings(Number(me.account.id),role);
-  }
-  if(!bindings.length&&originBusinessId==null) throw Object.assign(new Error('No accounting workspace is bound to this profile'),{status:409});
-  let selected;
+  const accountId=Number(me.account.id);
+  let bindings,selected;
   if(originBusinessId==null){
-    const pref=await pool.query(`SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role=$2`,[me.account.id,role]);
-    selected=bindings.find(b=>Number(b.id)===Number(pref.rows[0]?.business_id))||bindings[0];
-    await pool.query(`INSERT INTO account_business_preferences(account_id,role,business_id) VALUES($1,$2,$3) ON CONFLICT(account_id,role) DO UPDATE SET business_id=EXCLUDED.business_id,updated_at=NOW()`,[me.account.id,role,selected.id]);
+    // One parameterized statement resolves active bindings + current preference,
+    // reconciles only a stale/missing preference, and ensures the budget row.
+    let resolved=await resolveAccountingContext(pool,accountId,role);
+    if(!resolved.businesses.length){
+      await ensureProfileBusinessBinding(accountId,role,null,'');
+      resolved=await resolveAccountingContext(pool,accountId,role);
+    }
+    bindings=resolved.businesses;
+    selected=resolved.business;
+    if(!selected) throw Object.assign(new Error('No accounting workspace is bound to this profile'),{status:409});
   }else{
+    // Inventory mutations keep the original request-origin authority path and
+    // never let a delayed request rewrite the user's newer workspace preference.
+    bindings=await profileBindings(accountId,role);
     if(role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
     selected=boundInventoryOrigin(bindings,originBusinessId);
-    // A delayed A request must not reset the user's newer B preference.
+    await ensureBudgetRow(Number(selected.id));
   }
-  await ensureBudgetRow(Number(selected.id));
   return {me,role,business:selected,businesses:bindings};
 }
+
 async function specificBusiness(req,businessId){
   const ctx=await accountingContext(req);
   const b=ctx.businesses.find(x=>Number(x.id)===Number(businessId));

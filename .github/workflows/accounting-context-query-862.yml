@@ -1,0 +1,59 @@
+name: Accounting Context Query — exact head #862
+on:
+  pull_request:
+    paths:
+      - 'server-business-accounting.js'
+      - 'accounting-context-query-core.js'
+      - 'tests/accounting-context-query-862.test.js'
+      - 'scripts/accounting-context-query-postgres-862.mjs'
+      - '.github/workflows/accounting-context-query-862.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'server-business-accounting.js'
+      - 'accounting-context-query-core.js'
+      - 'tests/accounting-context-query-862.test.js'
+      - 'scripts/accounting-context-query-postgres-862.mjs'
+      - '.github/workflows/accounting-context-query-862.yml'
+permissions:
+  contents: read
+jobs:
+  isolated-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_accounting_context_862_only
+          POSTGRES_DB: abl_accounting_context_862_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_accounting_context_862_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      NODE_ENV: test
+      ABL_ACCOUNTING_CONTEXT_862_CI: '1'
+      PGHOST: 127.0.0.1
+      PGUSER: postgres
+      PGPASSWORD: ci_accounting_context_862_only
+      PGDATABASE: abl_accounting_context_862_ci
+      PAYMONGO_LIVE_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert literal PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Unit and actual PostgreSQL 16 resolver checks
+        run: node --test tests/accounting-context-query-862.test.js scripts/accounting-context-query-postgres-862.mjs
