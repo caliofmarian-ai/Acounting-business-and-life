@@ -4,7 +4,7 @@ import pg from 'pg';
 import {resolveAccountingContext} from '../accounting-context-query-core.js';
 
 if(process.env.NODE_ENV!=='test'||process.env.ABL_ACCOUNTING_CONTEXT_862_CI!=='1'||
-   process.env.PGHOST!=='127.0.0.1'||process.env.PGDATABASE!=='abl_accounting_context_862_ci'||
+   process.env.PGHOST!=='127.0.0.1'||process.env.PGDATABASE!=='inventory862'||
    process.env.DATABASE_URL||process.env.PAYMONGO_LIVE_ENABLED!=='false'){
   throw Error('Refusing any non-disposable accounting-context database or live provider.');
 }
