@@ -234,7 +234,7 @@ test('Local Services QA recovers only the known stale company_test Territory Adm
   assert.equal(clean.needsRestore,false);
 
   assert.throws(()=>buildQaCredentialAdminRecoverySnapshot({
-    accountId:8,pilotTerritoryId:6,
+    accountId:8,...scope,
     assignments:[...assignments,{...assignments[2],id:'903',reason:'Unrelated executor assignment'}],
     permissions,functions
   }),/Unexpected QA Territory Admin assignment/);
