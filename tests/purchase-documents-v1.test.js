@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import {readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {
   normalizeMerchantPurchaseDocument,normalizeMerchantPurchaseDocumentEvidence,philippinesPurchaseDocumentDate,MERCHANT_PURCHASE_FILE_MAX_BYTES,
   registerMerchantPurchaseDocumentRoutes
@@ -902,6 +903,8 @@ test('supplementary evidence is removed when the post-upload Merchant grant or r
 
 test('authenticated purchase-document wave covers supplementary evidence and exact private-object cleanup',()=>{
   const qa=read('qa-purchase-documents-856.js');
+  assert.equal((qa.match(/const otherArchive=/g)||[]).length,1,'one B archive read is declared');
+  execFileSync(process.execPath,['--check',new URL('../qa-purchase-documents-856.js',import.meta.url).pathname]);
   for(const fragment of [
     "const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';",
     "exact(supporting.status,201",

@@ -202,7 +202,6 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     const foreignSupportFile=await call('/api/procurement/purchase-documents/'+fileId+'/evidence/'+supportingEvidenceId+'/file?business_id='+b);
     exact(foreignSupportFile.status,404,'B cannot download A supplementary evidence');
     const otherArchive=await call('/api/procurement/purchase-documents?business_id='+b);
-    const otherArchive=await call('/api/procurement/purchase-documents?business_id='+b);
     exact(otherArchive.status,200,'B scoped archive');
     truth(!(otherArchive.json?.documents||[]).some(x=>Number(x.id)===docId||Number(x.id)===fileId),'B archive excludes A originals');
     exact((await call('/api/procurement/purchase-documents/'+docId+'?business_id='+b)).status,404,'B cannot read A detail');
