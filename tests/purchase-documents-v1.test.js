@@ -102,6 +102,9 @@ test('exact Merchant authorization, cross-business linked-record checks, and pri
   assert.match(core,/expense_transaction.*transactions/);
   assert.match(core,/type='business_expense'/);
   assert.match(core,/storePrivateEvidence\(pool/);
+  assert.match(core,/p\.owner_account_id=e\.created_by_account_id/);
+  assert.match(core,/p\.source_type='merchant_purchase_document_attachment'/);
+  assert.match(core,/p\.source_id=e\.id::text/);
   assert.match(core,/bindPrivateEvidenceSource\(client/);
   assert.match(core,/readPrivateEvidence\(pool/);
   assert.match(core,/sendPrivateEvidence\(res,file\)/);
