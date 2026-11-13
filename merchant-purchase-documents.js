@@ -428,6 +428,13 @@ async function appendPurchaseDocumentEvidence(pool,{
      record.documentId!==positiveId(documentId,'Document identifier')){
     throw error(403,'Merchant business or document mismatch');
   }
+  // Avoid scanning/storing a file for a missing or foreign-business receipt.
+  // The post-upload row lock below remains authoritative against concurrent reassignment.
+  const visible=await pool.query(
+    'SELECT id FROM merchant_purchase_documents WHERE id=$1 AND business_id=$2',
+    [record.documentId,record.businessId]
+  );
+  if(!visible.rowCount)throw error(404,'Purchase document not found');
   const prior=await pool.query(
     'SELECT 1 FROM merchant_purchase_document_evidence WHERE document_id=$1 AND business_id=$2 AND client_request_key=$3',
     [record.documentId,record.businessId,record.key]
