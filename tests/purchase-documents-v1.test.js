@@ -797,6 +797,10 @@ test('supplementary evidence appends a distinct private object under Merchant an
   };
   const pool={
     query:async(sql,params)=>{
+      if(sql.includes('SELECT id FROM merchant_purchase_documents')){
+        assert.deepEqual(params,[23,14]);
+        return{rowCount:1,rows:[{id:23}]};
+      }
       assert.match(sql,/merchant_purchase_document_evidence/);
       assert.deepEqual(params,[23,14,record.key]);
       return{rowCount:0,rows:[]};
@@ -883,7 +887,10 @@ test('supplementary evidence is removed when the post-upload Merchant grant or r
     },
     release:error=>{if(error)throw error}
   };
-  const pool={query:async()=>({rowCount:0,rows:[]}),connect:async()=>client};
+  const pool={query:async(sql)=>{
+    if(sql.includes('SELECT id FROM merchant_purchase_documents'))return{rowCount:1,rows:[{id:23}]};
+    return{rowCount:0,rows:[]};
+  },connect:async()=>client};
   await assert.rejects(()=>merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,{
     actorAccountId:9,businessId:14,documentId:23,record,
     storeEvidence:async()=>({id:777,original_file_name:record.fileName,detected_mime:'image/png',byte_size:68}),
