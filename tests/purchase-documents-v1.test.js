@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import {readFileSync} from 'node:fs';
 import {
-  normalizeMerchantPurchaseDocument,philippinesPurchaseDocumentDate,MERCHANT_PURCHASE_FILE_MAX_BYTES,
+  normalizeMerchantPurchaseDocument,normalizeMerchantPurchaseDocumentEvidence,philippinesPurchaseDocumentDate,MERCHANT_PURCHASE_FILE_MAX_BYTES,
   registerMerchantPurchaseDocumentRoutes
 } from '../merchant-purchase-documents.js';
 
@@ -747,3 +747,145 @@ test('uncertain metadata PATCH acknowledgement is replay-safe and stale competin
   assert.equal(auditCount,1,'stale competing metadata does not append an audit row');
 });
 
+
+
+test('supplementary receipt evidence normalization is strict and bound to one document/business intent',()=>{
+  const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII=';
+  const input={client_request_key:'supporting-20261113-001',file_name:'delivery-note.png',data_url:png};
+  const record=normalizeMerchantPurchaseDocumentEvidence(input,{businessId:14,documentId:23});
+  assert.equal(record.businessId,14);
+  assert.equal(record.documentId,23);
+  assert.equal(record.key,input.client_request_key);
+  assert.equal(record.fileName,input.file_name);
+  assert.match(record.fingerprint,/^[a-f0-9]{64}$/);
+  for(const invalid of [
+    {...input,client_request_key:'short'},
+    {...input,client_request_key:'x'.repeat(101)},
+    {...input,file_name:42},
+    {...input,file_name:' '},
+    {...input,data_url:[]},
+    {...input,data_url:'data:text/html;base64,PHNjcmlwdD4='},
+    {...input,private_evidence_object_id:777},
+    {...input,business_id:99}
+  ])assert.throws(()=>normalizeMerchantPurchaseDocumentEvidence(invalid,{businessId:14,documentId:23}));
+  assert.throws(()=>normalizeMerchantPurchaseDocumentEvidence(input,{businessId:15,documentId:0}),/positive integer/);
+});
+
+test('supplementary evidence appends a distinct private object under Merchant and receipt locks',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const record=normalizeMerchantPurchaseDocumentEvidence({
+    client_request_key:'supporting-20261113-002',file_name:'supplier-slip.png',
+    data_url:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII='
+  },{businessId:14,documentId:23});
+  const calls=[],bound=[],deleted=[];
+  const client={
+    query:async(sql,params=[])=>{
+      calls.push({sql,params});
+      if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+      if(sql.includes('SELECT id FROM merchant_purchase_documents'))return{rowCount:1,rows:[{id:23}]};
+      if(sql.includes('INSERT INTO merchant_purchase_document_evidence')){
+        assert.deepEqual(params.slice(0,5),[23,14,9,record.key,record.fingerprint]);
+        return{rowCount:1,rows:[{id:501,document_id:23,business_id:14,created_at:new Date('2026-11-13T12:00:00.000Z')}]};
+      }
+      throw new Error('Unexpected supplementary evidence SQL '+sql);
+    },
+    release:error=>{if(error)throw error}
+  };
+  const pool={
+    query:async(sql,params)=>{
+      assert.match(sql,/merchant_purchase_document_evidence/);
+      assert.deepEqual(params,[23,14,record.key]);
+      return{rowCount:0,rows:[]};
+    },
+    connect:async()=>client
+  };
+  const result=await merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,{
+    actorAccountId:9,businessId:14,documentId:23,record,
+    storeEvidence:async(db,input)=>{
+      assert.equal(db,pool);
+      assert.equal(input.sourceType,'merchant_purchase_document_attachment_pending');
+      assert.equal(input.sourceId,'23:'+record.key);
+      assert.equal(input.maxBytes,MERCHANT_PURCHASE_FILE_MAX_BYTES);
+      return{id:777,original_file_name:record.fileName,detected_mime:'image/png',byte_size:68};
+    },
+    bindEvidence:async(db,input)=>bound.push({db,input}),
+    deleteEvidence:async(db,input)=>deleted.push(input)
+  });
+  assert.equal(result.already_saved,false);
+  assert.deepEqual(result.evidence,{
+    id:501,document_id:23,business_id:14,file_name:'supplier-slip.png',
+    mime_type:'image/png',byte_size:68,created_at:'2026-11-13T12:00:00.000Z'
+  });
+  assert.equal(bound.length,1);
+  assert.equal(bound[0].db,client);
+  assert.equal(bound[0].input.objectId,777);
+  assert.equal(bound[0].input.sourceType,'merchant_purchase_document_attachment');
+  assert.equal(bound[0].input.sourceId,'501');
+  assert.equal(deleted.length,0);
+  assert.ok(calls.some(x=>x.sql.includes('FOR SHARE OF pb,bm')),'current Merchant grant is locked');
+  assert.ok(calls.some(x=>x.sql.includes('FOR UPDATE')),'exact receipt is locked');
+  assert.ok(calls.at(-1).sql==='COMMIT');
+  assert.ok(!calls.some(x=>/inventory_purchases|transactions|UPDATE merchant_purchase_documents/i.test(x.sql)),
+    'supplementary evidence never changes original receipt, stock or financial records');
+});
+
+test('supplementary evidence replay reauthorizes, returns the same attachment and rejects a changed file',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII=';
+  const input={client_request_key:'supporting-20261113-003',file_name:'supplier-slip.png',data_url:png};
+  const record=normalizeMerchantPurchaseDocumentEvidence(input,{businessId:14,documentId:23});
+  const existing={id:501,document_id:23,business_id:14,request_fingerprint:record.fingerprint,
+    file_name:input.file_name,mime_type:'image/png',byte_size:68,created_at:new Date('2026-11-13T12:00:00.000Z')};
+  let stored=0,commits=0;
+  const pool={
+    query:async()=>({rowCount:1,rows:[{id:501}]}),
+    connect:async()=>({
+      query:async(sql)=>{
+        if(sql==='BEGIN'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+        if(sql==='COMMIT'){commits++;return{rowCount:0,rows:[]};}
+        if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+        if(sql.includes('SELECT id FROM merchant_purchase_documents'))return{rowCount:1,rows:[{id:23}]};
+        if(sql.includes('FROM merchant_purchase_document_evidence e'))return{rowCount:1,rows:[existing]};
+        throw new Error('Unexpected replay SQL '+sql);
+      },
+      release:error=>{if(error)throw error}
+    })
+  };
+  const options={actorAccountId:9,businessId:14,documentId:23,record,
+    storeEvidence:async()=>{stored++;throw new Error('Replay must not upload another file')}};
+  const replay=await merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,options);
+  assert.equal(replay.already_saved,true);
+  assert.equal(replay.evidence.id,501);
+  assert.equal(stored,0);
+  assert.equal(commits,1);
+  const changed=normalizeMerchantPurchaseDocumentEvidence({...input,file_name:'different.png'},{businessId:14,documentId:23});
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,{...options,record:changed}),
+    error=>error.status===409);
+  assert.equal(stored,0,'a conflicting key is rejected before another upload');
+});
+
+test('supplementary evidence is removed when the post-upload Merchant grant or receipt check fails',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const record=normalizeMerchantPurchaseDocumentEvidence({
+    client_request_key:'supporting-20261113-004',file_name:'supplier-slip.png',
+    data_url:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII='
+  },{businessId:14,documentId:23});
+  let deleted=0;
+  const client={
+    query:async(sql)=>{
+      if(sql==='BEGIN'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql.includes('FROM profile_business_bindings'))return{rowCount:0,rows:[]};
+      throw new Error('Receipt row must not be read after grant revocation');
+    },
+    release:error=>{if(error)throw error}
+  };
+  const pool={query:async()=>({rowCount:0,rows:[]}),connect:async()=>client};
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,{
+    actorAccountId:9,businessId:14,documentId:23,record,
+    storeEvidence:async()=>({id:777,original_file_name:record.fileName,detected_mime:'image/png',byte_size:68}),
+    bindEvidence:async()=>{throw new Error('Must not bind after revoked grant')},
+    deleteEvidence:async(db,input)=>{assert.equal(input.objectId,777);deleted++}
+  }),error=>error.status===403);
+  assert.equal(deleted,1,'uncommitted private upload is cleaned after the grant check fails');
+});

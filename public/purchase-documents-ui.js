@@ -5,6 +5,8 @@
   let overlay=null,businessId=null,saveInProgress=false,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
   let openAttempt=0,opening=false,saveAttempt=0;
   let archiveRequest=0,linkableRequest=0,metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
+  let supplementarySaveAttempt=0,supplementarySaveInProgress=false;
+  const pendingSupplementaryUploads=new Map();
   const $=(selector,root=document)=>root.querySelector(selector);
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const currency=(value,code='PHP')=>value==null?'Amount not recorded':new Intl.NumberFormat('en-PH',{style:'currency',currency:code||'PHP'}).format(Number(value));
@@ -217,7 +219,12 @@
       const doc=result?.document;
       if(!doc||typeof doc!=='object'||Array.isArray(doc)||doc.id!==id||doc.business_id!==biz||
          typeof doc.has_attachment!=='boolean'||typeof doc.updated_at!=='string'||
-         !Number.isFinite(Date.parse(doc.updated_at))||!Array.isArray(result.links)||!Array.isArray(result.metadata_history)){
+         !Number.isFinite(Date.parse(doc.updated_at))||!Array.isArray(result.links)||!Array.isArray(result.metadata_history)||
+          !Array.isArray(result.supplementary_evidence)||result.supplementary_evidence.some(item=>
+            !item||typeof item!=='object'||!Number.isSafeInteger(item.id)||item.id<1||
+            item.document_id!==id||item.business_id!==biz||typeof item.file_name!=='string'||
+            typeof item.mime_type!=='string'||!Number.isSafeInteger(item.byte_size)||item.byte_size<1||
+            typeof item.created_at!=='string'||!Number.isFinite(Date.parse(item.created_at))){
         throw new Error('Purchase document details could not be verified. Reopen the archive.');
       }
       target.dataset.hasAttachment=String(doc.has_attachment);
@@ -244,6 +251,29 @@
         '<details class="mpdHistory"><summary>Change history ('+result.metadata_history.length+')</summary><ol>'+history+'</ol></details>';
       const form=$('[data-mpd-metadata-form]',target);
       form.addEventListener('submit',event=>saveMetadata(event,id,target));
+      const evidenceSection=document.createElement('section');
+      evidenceSection.className='mpdEdit';
+      const supplementary=result.supplementary_evidence.map(item=>
+        '<li><a href="'+ROOT+'/'+id+'/evidence/'+Number(item.id)+'/file?business_id='+encodeURIComponent(biz)+'">'+
+        escape(item.file_name)+'</a> · '+escape(item.mime_type)+' · '+escape(item.byte_size)+' bytes · '+
+        escape(new Date(item.created_at).toLocaleString())+'</li>'
+      ).join('')||'<li>No supporting files added.</li>';
+      evidenceSection.innerHTML=
+        '<strong>Supporting evidence</strong><ol class="mpdHistory">'+supplementary+'</ol>'+
+        '<form class="mpdForm" data-mpd-evidence-form>'+
+        '<label>Add a supporting photo or PDF<input type="file" name="supplementary_file" accept="image/jpeg,image/png,image/webp,application/pdf" required></label>'+
+        '<p class="mpdHelp">Adds a separate private file. It never replaces the original scan or changes Inventory, expenses or payments.</p>'+
+        '<button class="mpdBtn" type="submit">Attach supporting file</button></form>';
+      target.appendChild(evidenceSection);
+      const evidenceForm=$('[data-mpd-evidence-form]',evidenceSection);
+      evidenceForm.addEventListener('submit',event=>saveSupplementaryEvidence(event,id,evidenceSection));
+      const pending=pendingSupplementaryUploads.get(biz+':'+id);
+      if(pending){
+        const fileInput=evidenceForm.querySelector('input[type="file"]');
+        const button=evidenceForm.querySelector('button[type="submit"]');
+        if(fileInput)fileInput.disabled=true;
+        if(button)button.textContent='Retry same supporting file';
+      }
     }catch(error){
       if(panel===overlay&&biz===businessId&&request===metadataEditRequest){
         // A failed detail read cannot prove that the cached archive still belongs
@@ -326,6 +356,85 @@
     }
     finally{
       if(owner===metadataSaveAttempt){metadataSaveInProgress=false;if(button)button.disabled=false;}
+    }
+  }
+
+  async function saveSupplementaryEvidence(event,id,target){
+    event.preventDefault();
+    if(supplementarySaveInProgress)return;
+    const panel=overlay,biz=businessId,form=event.currentTarget;
+    if(!panel||!biz||!form)return;
+    supplementarySaveInProgress=true;
+    const owner=++supplementarySaveAttempt;
+    const button=form.querySelector('button[type="submit"]');
+    const input=form.querySelector('input[type="file"]');
+    if(button)button.disabled=true;
+    const intent=biz+':'+id;
+    const matches=current=>{
+      const active=current?.active_business_id;
+      const valid=(typeof active==='number'&&Number.isSafeInteger(active)&&active>0)||
+        (typeof active==='string'&&/^[1-9][0-9]*$/.test(active)&&Number.isSafeInteger(Number(active)));
+      return current?.role==='merchant'&&valid&&Number(active)===biz;
+    };
+    try{
+      const before=await api('/api/accounting/workspaces');
+      if(panel!==overlay||biz!==businessId)return;
+      if(!matches(before)){close(true);return;}
+      let pending=pendingSupplementaryUploads.get(intent);
+      if(!pending){
+        const file=input?.files?.[0];
+        if(!file||typeof file.name!=='string'||!file.name||!Number.isFinite(file.size)||file.size<1){
+          throw new Error('Choose a supporting photo or PDF first.');
+        }
+        if(file.size>MAX_FILE)throw new Error('Supporting evidence must be 6 MB or smaller.');
+        if(!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type)){
+          throw new Error('Only JPEG, PNG, WEBP or PDF files are accepted.');
+        }
+        const dataUrl=await readFile(file);
+        if(panel!==overlay||biz!==businessId)return;
+        const afterRead=await api('/api/accounting/workspaces');
+        if(panel!==overlay||biz!==businessId)return;
+        if(!matches(afterRead)){close(true);return;}
+        pending={client_request_key:requestKey(),file_name:file.name,data_url:dataUrl};
+        pendingSupplementaryUploads.set(intent,pending);
+        if(input)input.disabled=true;
+        if(button)button.textContent='Retry same supporting file';
+      }
+      const result=await api(ROOT+'/'+id+'/evidence',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({business_id:biz,...pending})
+      });
+      if(panel!==overlay||biz!==businessId)return;
+      const item=result?.evidence;
+      if(!item||typeof item!=='object'||Array.isArray(item)||
+         !Number.isSafeInteger(item.id)||item.id<1||item.document_id!==id||item.business_id!==biz||
+         item.file_name!==pending.file_name||typeof item.mime_type!=='string'||
+         !Number.isSafeInteger(item.byte_size)||item.byte_size<1||
+         typeof item.created_at!=='string'||!Number.isFinite(Date.parse(item.created_at))||
+         typeof result.already_saved!=='boolean'){
+        throw new Error('Supporting evidence acknowledgement did not match this receipt. Retry the same file.');
+      }
+      const after=await api('/api/accounting/workspaces');
+      if(panel!==overlay||biz!==businessId)return;
+      if(!matches(after)){close(true);return;}
+      pendingSupplementaryUploads.delete(intent);
+      form.reset();
+      if(input)input.disabled=false;
+      if(button){button.textContent='Attach supporting file';button.disabled=false;}
+      const notice=result.already_saved?'Supporting file was already saved.':'Supporting file saved securely.';
+      message(notice+' The original scan and financial records are unchanged.');
+      try{await archive();if(panel===overlay&&biz===businessId)await editDocument(id)}
+      catch{message(notice+' The receipt archive could not refresh; close and reopen it.',true);}
+    }catch(error){
+      if(panel===overlay){
+        if(error.status===401||error.status===403)close(true);
+        else message(error.message+' Retry with the same selected file; its request key is preserved.',true);
+      }
+    }finally{
+      if(owner===supplementarySaveAttempt){
+        supplementarySaveInProgress=false;
+        if(button)button.disabled=false;
+      }
     }
   }
   function readFile(file){

@@ -149,6 +149,23 @@ export async function ensureMerchantPurchaseDocumentSchema(pool){
     );
     CREATE INDEX IF NOT EXISTS merchant_purchase_document_metadata_audit_idx
       ON merchant_purchase_document_metadata_audit(business_id,document_id,id DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS merchant_purchase_documents_id_business_unique
+      ON merchant_purchase_documents(id,business_id);
+    CREATE TABLE IF NOT EXISTS merchant_purchase_document_evidence(
+      id BIGSERIAL PRIMARY KEY,
+      document_id BIGINT NOT NULL,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
+      created_by_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      client_request_key TEXT NOT NULL,
+      request_fingerprint TEXT NOT NULL CHECK(request_fingerprint ~ '^[a-f0-9]{64}$'),
+      private_evidence_object_id BIGINT NOT NULL UNIQUE REFERENCES private_evidence_objects(id) ON DELETE RESTRICT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      FOREIGN KEY(document_id,business_id)
+        REFERENCES merchant_purchase_documents(id,business_id) ON DELETE RESTRICT,
+      UNIQUE(document_id,client_request_key)
+    );
+    CREATE INDEX IF NOT EXISTS merchant_purchase_document_evidence_scope_idx
+      ON merchant_purchase_document_evidence(business_id,document_id,id);
   `);
 }
 
@@ -318,6 +335,163 @@ async function updatePurchaseDocumentMetadata(pool,{actorAccountId,businessId,do
     throw e;
   }finally{
     client?.release(connectionUnsafe?new Error('UNSAFE_PURCHASE_DOCUMENT_METADATA_DB_CLIENT'):undefined);
+  }
+}
+
+
+export function normalizeMerchantPurchaseDocumentEvidence(input={},context={}){
+  if(!input||typeof input!=='object'||Array.isArray(input))throw error(400,'Supplementary evidence must be an object');
+  const allowed=new Set(['client_request_key','file_name','data_url']);
+  if(Object.keys(input).some(key=>!allowed.has(key)))throw error(400,'Only supplementary evidence fields are accepted');
+  const key=input.client_request_key;
+  if(typeof key!=='string'||!/^[a-zA-Z0-9_-]{12,100}$/.test(key)){
+    throw error(400,'A stable supplementary evidence request key is required');
+  }
+  const fileName=evidenceField(input.file_name,220,'Supplementary evidence file name');
+  if(!fileName)throw error(400,'A file name is required for supplementary evidence');
+  const dataUrl=input.data_url;
+  if(typeof dataUrl!=='string'||!dataUrl)throw error(400,'Supplementary evidence data is required');
+  if(!/^data:(image\/jpeg|image\/png|image\/webp|application\/pdf);base64,/i.test(dataUrl)){
+    throw error(400,'Only JPEG, PNG, WEBP or PDF files are accepted');
+  }
+  if(dataUrl.length>8*1024*1024+100)throw error(413,'Supplementary evidence file is too large');
+  const businessId=positiveId(context.businessId,'business_id');
+  const documentId=positiveId(context.documentId,'Document identifier');
+  const dataDigest=crypto.createHash('sha256').update(dataUrl).digest('hex');
+  const fingerprint=crypto.createHash('sha256').update(JSON.stringify({
+    businessId,documentId,key,fileName,dataDigest
+  })).digest('hex');
+  return{businessId,documentId,key,fileName,dataUrl,fingerprint};
+}
+
+function shapeSupplementaryEvidence(row){
+  return{
+    id:Number(row.id),document_id:Number(row.document_id),business_id:Number(row.business_id),
+    file_name:String(row.file_name||''),mime_type:String(row.mime_type||''),
+    byte_size:Number(row.byte_size),created_at:new Date(row.created_at).toISOString()
+  };
+}
+
+async function findSupplementaryEvidence(db,record){
+  const q=await db.query(`
+    SELECT e.id,e.document_id,e.business_id,e.request_fingerprint,e.created_at,
+           p.original_file_name file_name,p.detected_mime mime_type,p.byte_size
+      FROM merchant_purchase_document_evidence e
+      JOIN private_evidence_objects p ON p.id=e.private_evidence_object_id
+     WHERE e.document_id=$1 AND e.business_id=$2 AND e.client_request_key=$3
+  `,[record.documentId,record.businessId,record.key]);
+  return q.rows[0]||null;
+}
+
+async function replaySupplementaryEvidence(pool,{actorAccountId,record}){
+  let client=null,transactionStarted=false,commitAttempted=false,connectionUnsafe=false;
+  try{
+    client=await pool.connect();
+    try{await client.query('BEGIN');transactionStarted=true}
+    catch(e){connectionUnsafe=true;throw e}
+    await lockMerchantDocumentWriteAuthority(client,actorAccountId,record.businessId);
+    const doc=await client.query(
+      'SELECT id FROM merchant_purchase_documents WHERE id=$1 AND business_id=$2 FOR UPDATE',
+      [record.documentId,record.businessId]
+    );
+    if(!doc.rowCount)throw error(404,'Purchase document not found');
+    const existing=await findSupplementaryEvidence(client,record);
+    if(!existing){
+      commitAttempted=true;await client.query('COMMIT');transactionStarted=false;
+      return null;
+    }
+    if(existing.request_fingerprint!==record.fingerprint){
+      throw error(409,'This evidence request key already belongs to a different file');
+    }
+    commitAttempted=true;await client.query('COMMIT');transactionStarted=false;
+    return{evidence:shapeSupplementaryEvidence(existing),already_saved:true};
+  }catch(e){
+    if(commitAttempted)connectionUnsafe=true;
+    if(transactionStarted){
+      try{await client.query('ROLLBACK');transactionStarted=false}
+      catch{connectionUnsafe=true}
+    }
+    throw e;
+  }finally{
+    client?.release(connectionUnsafe?new Error('UNSAFE_PURCHASE_DOCUMENT_EVIDENCE_DB_CLIENT'):undefined);
+  }
+}
+
+async function appendPurchaseDocumentEvidence(pool,{
+  actorAccountId,businessId,documentId,record,
+  storeEvidence=storePrivateEvidence,bindEvidence=bindPrivateEvidenceSource,deleteEvidence=deletePrivateEvidence
+}){
+  if(record.businessId!==positiveId(businessId,'business_id')||
+     record.documentId!==positiveId(documentId,'Document identifier')){
+    throw error(403,'Merchant business or document mismatch');
+  }
+  const prior=await pool.query(
+    'SELECT 1 FROM merchant_purchase_document_evidence WHERE document_id=$1 AND business_id=$2 AND client_request_key=$3',
+    [record.documentId,record.businessId,record.key]
+  );
+  if(prior.rowCount){
+    const replay=await replaySupplementaryEvidence(pool,{actorAccountId,record});
+    if(replay)return replay;
+  }
+  let evidence=null,client=null,transactionStarted=false,commitAttempted=false,connectionUnsafe=false;
+  try{
+    evidence=await storeEvidence(pool,{
+      dataUrl:record.dataUrl,fileName:record.fileName,allowedMimes:fileTypes,
+      maxBytes:MERCHANT_PURCHASE_FILE_MAX_BYTES,ownerAccountId:actorAccountId,actorAccountId,
+      sourceType:'merchant_purchase_document_attachment_pending',
+      sourceId:record.documentId+':'+record.key,
+      purpose:'purchase_accounting_supplement',classification:'purchase_accounting'
+    });
+    client=await pool.connect();
+    try{await client.query('BEGIN');transactionStarted=true}
+    catch(e){connectionUnsafe=true;throw e}
+    await lockMerchantDocumentWriteAuthority(client,actorAccountId,record.businessId);
+    const doc=await client.query(
+      'SELECT id FROM merchant_purchase_documents WHERE id=$1 AND business_id=$2 FOR UPDATE',
+      [record.documentId,record.businessId]
+    );
+    if(!doc.rowCount)throw error(404,'Purchase document not found');
+    const added=await client.query(`
+      INSERT INTO merchant_purchase_document_evidence(
+        document_id,business_id,created_by_account_id,client_request_key,request_fingerprint,private_evidence_object_id
+      ) VALUES($1,$2,$3,$4,$5,$6)
+      ON CONFLICT(document_id,client_request_key) DO NOTHING
+      RETURNING id,document_id,business_id,created_at
+    `,[record.documentId,record.businessId,actorAccountId,record.key,record.fingerprint,evidence.id]);
+    if(!added.rowCount){
+      const existing=await findSupplementaryEvidence(client,record);
+      if(!existing)throw error(409,'Supplementary evidence intent could not be reconciled');
+      if(existing.request_fingerprint!==record.fingerprint){
+        throw error(409,'This evidence request key already belongs to a different file');
+      }
+      commitAttempted=true;await client.query('COMMIT');transactionStarted=false;
+      try{await deleteEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'duplicate_purchase_document_attachment_cleanup'})}
+      catch{console.warn('MERCHANT_PURCHASE_ATTACHMENT_DUPLICATE_CLEANUP_FAILED')}
+      return{evidence:shapeSupplementaryEvidence(existing),already_saved:true};
+    }
+    await bindEvidence(client,{
+      objectId:evidence.id,sourceType:'merchant_purchase_document_attachment',
+      sourceId:String(added.rows[0].id),actorAccountId,purpose:'purchase_accounting_supplement_bind'
+    });
+    commitAttempted=true;await client.query('COMMIT');transactionStarted=false;
+    return{evidence:shapeSupplementaryEvidence({
+      ...added.rows[0],file_name:evidence.original_file_name,
+      mime_type:evidence.detected_mime,byte_size:evidence.byte_size
+    }),already_saved:false};
+  }catch(e){
+    if(commitAttempted)connectionUnsafe=true;
+    if(transactionStarted){
+      try{await client.query('ROLLBACK');transactionStarted=false}
+      catch{connectionUnsafe=true}
+    }
+    // A lost COMMIT acknowledgement is ambiguous: preserve the private object
+    // so a retry can discover the committed attachment instead of deleting it.
+    if(evidence&&!commitAttempted){
+      await deleteEvidence(pool,{objectId:evidence.id,actorAccountId,purpose:'failed_purchase_document_attachment_cleanup'}).catch(()=>{});
+    }
+    throw e;
+  }finally{
+    client?.release(connectionUnsafe?new Error('UNSAFE_PURCHASE_DOCUMENT_EVIDENCE_DB_CLIENT'):undefined);
   }
 }
 
@@ -518,7 +692,7 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
     try{
       const {businessId}=await requireMerchantDocumentBusiness(pool,identity,req);
       const doc=await scopedDocument(pool,req.params.id,businessId);
-      const [links,history]=await Promise.all([
+      const [links,history,supplementary]=await Promise.all([
         pool.query(
           'SELECT link_kind kind,linked_id id FROM merchant_purchase_document_links WHERE document_id=$1 ORDER BY link_kind,linked_id',
           [doc.id]
@@ -527,9 +701,34 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
           SELECT actor_account_id,before_metadata,after_metadata,changed_fields,created_at
             FROM merchant_purchase_document_metadata_audit
            WHERE document_id=$1 AND business_id=$2 ORDER BY id DESC LIMIT 50
+        `,[doc.id,businessId]),
+        pool.query(`
+          SELECT e.id,e.document_id,e.business_id,e.created_at,
+                 p.original_file_name file_name,p.detected_mime mime_type,p.byte_size
+            FROM merchant_purchase_document_evidence e
+            JOIN private_evidence_objects p ON p.id=e.private_evidence_object_id
+           WHERE e.document_id=$1 AND e.business_id=$2
+             AND p.scan_status='clean' AND p.retention_state='active'
+           ORDER BY e.id
         `,[doc.id,businessId])
       ]);
-      res.json({document:shape(doc),links:links.rows,metadata_history:history.rows});
+      res.json({
+        document:shape(doc),links:links.rows,metadata_history:history.rows,
+        supplementary_evidence:supplementary.rows.map(shapeSupplementaryEvidence)
+      });
+    }catch(e){next(e)}
+  });
+
+  app.post('/api/procurement/purchase-documents/:id/evidence',body,async(req,res,next)=>{
+    try{
+      if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))throw error(400,'Supplementary evidence must be an object');
+      const {me,businessId}=await requireMerchantDocumentBusiness(pool,identity,req,'body');
+      const input={...req.body};delete input.business_id;
+      const record=normalizeMerchantPurchaseDocumentEvidence(input,{businessId,documentId:req.params.id});
+      const outcome=await appendPurchaseDocumentEvidence(pool,{
+        actorAccountId:me.account.id,businessId,documentId:req.params.id,record
+      });
+      res.status(outcome.already_saved?200:201).json(outcome);
     }catch(e){next(e)}
   });
 
@@ -542,6 +741,25 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
         actorAccountId:me.account.id,businessId,documentId:req.params.id,input
       });
       res.json(outcome);
+    }catch(e){next(e)}
+  });
+
+  app.get('/api/procurement/purchase-documents/:id/evidence/:evidenceId/file',async(req,res,next)=>{
+    try{
+      const {me,businessId}=await requireMerchantDocumentBusiness(pool,identity,req);
+      const doc=await scopedDocument(pool,req.params.id,businessId);
+      const evidenceId=positiveId(req.params.evidenceId,'Evidence identifier');
+      const attached=await pool.query(`
+        SELECT private_evidence_object_id
+          FROM merchant_purchase_document_evidence
+         WHERE id=$1 AND document_id=$2 AND business_id=$3
+      `,[evidenceId,doc.id,businessId]);
+      if(!attached.rowCount)throw error(404,'Supplementary evidence not found');
+      const file=await readPrivateEvidence(pool,{
+        objectId:attached.rows[0].private_evidence_object_id,actorAccountId:me.account.id,
+        purpose:'merchant_purchase_document_supplementary_download'
+      });
+      sendPrivateEvidence(res,file);
     }catch(e){next(e)}
   });
 
@@ -561,5 +779,6 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
 
 export const merchantPurchaseDocumentInternals={
   validatePurchaseLinks,savePurchaseDocument,lockMerchantDocumentWriteAuthority,
-  updatePurchaseDocumentMetadata,metadataSnapshot
+  updatePurchaseDocumentMetadata,metadataSnapshot,
+  normalizeMerchantPurchaseDocumentEvidence,appendPurchaseDocumentEvidence
 };

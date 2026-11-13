@@ -1029,3 +1029,76 @@ test('metadata editor source exposes revision history and refuses stale or cross
   assert.doesNotMatch(save,/data_url|file_name|private_evidence_object_id/);
 });
 
+
+
+test('supplementary evidence upload keeps the same intent key after an uncertain response',async()=>{
+  const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  const end=source.indexOf('\n  function readFile(file){',start);
+  assert.ok(start>=0&&end>start,'literal supplementary upload controller exists');
+  const code=source.slice(start,end);
+  const panel={},input={files:[{name:'support.png',size:68,type:'image/png'}],disabled:false};
+  const button={disabled:false,textContent:'Attach supporting file'};
+  const form={querySelector:selector=>selector.includes('input')?input:button,reset(){input.files=[]}};
+  const pending=new Map(),posts=[],messages=[];
+  let failFirst=true,reads=0,archives=0,edits=0,closed=0,keys=0;
+  const api=async(path,options={})=>{
+    if(path==='/api/accounting/workspaces')return{role:'merchant',active_business_id:14};
+    assert.equal(path,'/api/procurement/purchase-documents/23/evidence');
+    const payload=JSON.parse(options.body);posts.push(payload);
+    if(failFirst){failFirst=false;throw new Error('Connection lost after submit');}
+    return{already_saved:false,evidence:{id:55,document_id:23,business_id:14,
+      file_name:payload.file_name,mime_type:'image/png',byte_size:68,created_at:'2026-11-13T12:00:00.000Z'}};
+  };
+  const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
+    'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
+    `const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;${code};return saveSupplementaryEvidence;`
+  )(api,()=>('supporting-intent-'+(++keys)),(text,isError)=>messages.push({text,isError}),
+    async()=>{archives++},async()=>{edits++},()=>{closed++},
+    async()=>{reads++;return'data:image/png;base64,AAAA'},pending,6*1024*1024,panel,14);
+  const event={preventDefault(){},currentTarget:form};
+  await run(event,23,{});
+  assert.equal(posts.length,1);
+  assert.equal(pending.size,1);
+  assert.equal(input.disabled,true);
+  assert.equal(button.disabled,false,'retry button remains usable');
+  const key=posts[0].client_request_key;
+  await run(event,23,{});
+  assert.equal(posts.length,2);
+  assert.equal(posts[1].client_request_key,key,'retry reuses the original intent key');
+  assert.equal(posts[1].data_url,posts[0].data_url,'retry reuses the same private file bytes');
+  assert.equal(reads,1,'retry does not reread a replacement file');
+  assert.equal(pending.size,0);
+  assert.equal(input.disabled,false);
+  assert.equal(button.disabled,false);
+  assert.equal(archives,1);
+  assert.equal(edits,1);
+  assert.equal(closed,0);
+  assert.match(messages.at(-1).text,/original scan and financial records are unchanged/);
+});
+
+test('supplementary evidence file read rechecks the active Merchant before upload',async()=>{
+  const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  const end=source.indexOf('\n  function readFile(file){',start);
+  const code=source.slice(start,end);
+  const panel={},input={files:[{name:'support.png',size:68,type:'image/png'}],disabled:false};
+  const button={disabled:false,textContent:'Attach supporting file'};
+  const form={querySelector:selector=>selector.includes('input')?input:button,reset(){}};
+  let workspace=0,posts=0,closed=0,reads=0;
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces'){
+      workspace++;
+      return{role:'merchant',active_business_id:workspace===1?14:15};
+    }
+    posts++;throw new Error('A changed Merchant must never receive the file');
+  };
+  const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
+    'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
+    `const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;${code};return saveSupplementaryEvidence;`
+  )(api,()=>('supporting-intent-1'),()=>{},async()=>{},async()=>{},()=>{closed++},
+    async()=>{reads++;return'data:image/png;base64,AAAA'},new Map(),6*1024*1024,panel,14);
+  await run({preventDefault(){},currentTarget:form},23,{});
+  assert.equal(workspace,2);
+  assert.equal(reads,1);
+  assert.equal(posts,0);
+  assert.equal(closed,1);
+});
