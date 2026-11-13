@@ -252,13 +252,14 @@ test('supplementary evidence is separately persisted, idempotent and business-bo
     await assert.rejects(()=>merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(db,{
       ...args,businessId:202,record:foreign
     }),error=>error.status===404);
-    assert.equal(deletions,1,'failed cross-business attachment removes the uncommitted private object');
+    assert.equal(uploads,1,'foreign-business receipt is rejected before private storage is invoked');
+    assert.equal(deletions,0,'no private object is created for a missing/foreign receipt');
     const counts=await connection.query(`
       SELECT (SELECT COUNT(*)::int FROM merchant_purchase_document_evidence) AS attachments,
              (SELECT COUNT(*)::int FROM merchant_purchase_documents WHERE private_evidence_object_id=700) AS original_links,
              (SELECT COUNT(*)::int FROM private_evidence_objects WHERE retention_state='deleted') AS deleted_uploads
     `);
-    assert.deepEqual(counts.rows[0],{attachments:1,original_links:1,deleted_uploads:1});
+    assert.deepEqual(counts.rows[0],{attachments:1,original_links:1,deleted_uploads:0});
     console.log(JSON.stringify({status:'PASS',db:'isolated PostgreSQL 16',append:true,replay:true,
       changedPayloadConflict:true,foreignBusinessDenied:true,originalPreserved:true,uploads,bindings,deletions}));
   }finally{
