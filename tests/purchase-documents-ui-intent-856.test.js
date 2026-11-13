@@ -74,7 +74,8 @@ function makeController(){
     'form','button','receiptLabel','panel',
     `const ROOT='/api/procurement/purchase-documents';
       let overlay=panel,businessId=14,pendingKey=null,pendingPayload=null,
-          pendingSubmitted=false,chosenFile=null,saveInProgress=false,openAttempt=0,opening=false,saveAttempt=0;
+          pendingSubmitted=false,chosenFile=null,saveInProgress=false,openAttempt=0,opening=false,saveAttempt=0,
+          metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
       const $=selector=>selector==='#mpdForm'?form:
         selector==='#mpdSave'?button:receiptLabel;
       let previousOverflow='';
@@ -461,7 +462,7 @@ function makeOpeningController(){
   const factory=new Function('api','document','window','queueMicrotask','created',`
     let overlay=null,businessId=null,openAttempt=0,opening=false,saveAttempt=0;
     let saveInProgress=false,pendingSubmitted=false,pendingKey=null,pendingPayload=null,
-        chosenFile=null,previousOverflow='';
+        chosenFile=null,previousOverflow='',metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
     const message=()=>{},injectCss=()=>{},linkable=async()=>{},archive=async()=>{},ensureButton=()=>{};
     const render=()=>{overlay={remove(){this.removed=true}};created()};
     ${closeSource}
@@ -598,7 +599,8 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
   const oldArchive=controller.archive(),newArchive=controller.archive();
   assert.equal(pending.length,2);
   pending[1].resolve({documents:[{id:71,business_id:14,issuer_name:'Newest receipt',document_kind:'invoice',
-    issue_date:'2026-11-07',gross_amount:27,currency_code:'PHP',has_attachment:false}]});
+    issue_date:'2026-11-07',gross_amount:27,currency_code:'PHP',has_attachment:false,
+    updated_at:'2026-11-07T00:00:00.000Z'}]});
   await newArchive;
   assert.match(boxes['#mpdSaved'].innerHTML,/Newest receipt/);
   const latestArchive=boxes['#mpdSaved'].innerHTML;
@@ -621,7 +623,8 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
 
   const failingOld=controller.archive(),goodNew=controller.archive();
   pending[5].resolve({documents:[{id:72,business_id:14,issuer_name:'Confirmed again',document_kind:'purchase_receipt',
-    issue_date:'2026-11-07',gross_amount:19,currency_code:'PHP',has_attachment:false}]});
+    issue_date:'2026-11-07',gross_amount:19,currency_code:'PHP',has_attachment:false,
+    updated_at:'2026-11-07T00:00:00.000Z'}]});
   await goodNew;
   pending[4].reject(new Error('Obsolete archive GET failed'));
   await failingOld;
@@ -769,7 +772,7 @@ test('private receipt archive rejects foreign-business and malformed HTTP 200 ro
   const archiveSource=source.slice(begin,end);
   const row={id:77,business_id:14,document_kind:'invoice',issuer_name:'My shop',
     document_number:'R-4',issue_date:'2026-11-07',gross_amount:15.50,
-    currency_code:'PHP',has_attachment:true};
+    currency_code:'PHP',has_attachment:true,updated_at:'2026-11-07T00:00:00.000Z'};
   const makeArchive=response=>{
     const box={innerHTML:'Loading Merchant receipts'},panel={};
     const archive=new Function('api','panel','box',`
@@ -879,7 +882,8 @@ test('silent Merchant A to B switch during archive GET clears both private lists
   const pending=ui.archive();
   selected=15; // The workspace switches without another loader/profile event.
   release({documents:[{id:71,business_id:14,document_kind:'invoice',issuer_name:'FOREIGN A RECEIPT',
-    issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true}]});
+    issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true,
+    updated_at:'2026-11-07T00:00:00.000Z'}]});
   await assert.rejects(pending,/workspace changed/);
   assert.equal(workspaceChecks,1);
   assert.doesNotMatch(boxes['#mpdSaved'].innerHTML,/FOREIGN A RECEIPT|OLD A FILE LINK|\/71\/file/);
