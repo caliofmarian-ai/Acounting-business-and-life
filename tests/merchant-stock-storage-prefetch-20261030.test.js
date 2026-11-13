@@ -14,11 +14,11 @@ function withInventoryCard(run){
   globalThis.document={getElementById:id=>id==='inventoryLocationsCard'?{}:null};
   return Promise.resolve().then(run).finally(()=>{globalThis.document=prior});
 }
-function controller(api,changes=[]){
+function controller(api,changes=[],refreshInventory=async()=>{}){
   return createInventoryLocationUi({
     api,
-    getInventory:()=>[{id:10,item:'Rice'}],
-    refreshInventory:async()=>{},
+    getInventory:()=>[{id:10,item:'Rice',unit:'kg'}],
+    refreshInventory,
     escapeHtml:String,
     formatNumber:String,
     onLocationsChanged:rows=>changes.push(rows),
@@ -91,4 +91,82 @@ test('opened Stock tools fetch only their required details; full refresh preserv
   assert.match(block,/if\(!tool\|\|tool==='lots'\)jobs\.push\(loadInventoryLots\(isCurrent\)\)/);
   assert.match(block,/if\(!tool\|\|tool==='consumables'\)jobs\.push\(loadConsumableRules\(isCurrent\)\)/);
   assert.ok(block.indexOf("inventoryReadState('ready')")>block.indexOf('await Promise.all'));
+});
+
+
+function withTransferForm(run){
+  const priorDocument=globalThis.document,priorOption=globalThis.Option;
+  const listeners=new Map();
+  const makeNode=(id,value='')=>({
+    id,value,className:'',textContent:'',
+    addEventListener(name,fn){listeners.set(id+':'+name,fn)},
+    replaceChildren(){},
+  });
+  const nodes={
+    inventoryLocationsCard:makeNode('inventoryLocationsCard'),
+    inventoryTransferForm:makeNode('inventoryTransferForm'),
+    inventoryTransferItem:makeNode('inventoryTransferItem','10'),
+    inventoryTransferSource:makeNode('inventoryTransferSource','11'),
+    inventoryTransferDestination:makeNode('inventoryTransferDestination','12'),
+    inventoryTransferQuantity:makeNode('inventoryTransferQuantity','2'),
+    inventoryTransferNote:makeNode('inventoryTransferNote','synthetic transfer'),
+    inventoryTransferMessage:makeNode('inventoryTransferMessage')
+  };
+  globalThis.document={getElementById:id=>nodes[id]||null};
+  globalThis.Option=class{constructor(text,value){this.text=text;this.value=value}};
+  return Promise.resolve().then(()=>run({nodes,listeners})).finally(()=>{
+    globalThis.document=priorDocument;
+    if(priorOption===undefined)delete globalThis.Option;else globalThis.Option=priorOption;
+  });
+}
+
+test('successful Stock transfer uses one owner refresh and one Storage summary GET',()=>withTransferForm(async({nodes,listeners})=>{
+  const requests=[];
+  let refreshes=0,instance;
+  const api=async(path,options={})=>{
+    requests.push({path,method:options.method||'GET'});
+    if(path==='/api/inventory/transfers')return{business_total:4};
+    if(path==='/api/inventory/location-summary')return payload();
+    throw new Error('Unexpected request '+path);
+  };
+  instance=controller(api,[],async()=>{
+    refreshes++;
+    await instance.load({isCurrent:()=>true});
+  });
+  instance.wire();
+  const submit=listeners.get('inventoryTransferForm:submit');
+  assert.equal(typeof submit,'function');
+  await submit({preventDefault(){},target:nodes.inventoryTransferForm});
+  assert.equal(refreshes,1,'the Stock owner performs the canonical refresh once');
+  assert.equal(requests.filter(x=>x.path==='/api/inventory/transfers').length,1);
+  assert.equal(requests.filter(x=>x.path==='/api/inventory/location-summary').length,1,
+    'the module must not fetch a snapshot before delegating to the Stock owner');
+  assert.match(nodes.inventoryTransferMessage.textContent,/Transfer saved/);
+}));
+
+test('standalone transfer keeps its local refresh when no Stock owner callback exists',()=>withTransferForm(async({nodes,listeners})=>{
+  const requests=[];
+  const api=async(path,options={})=>{
+    requests.push({path,method:options.method||'GET'});
+    if(path==='/api/inventory/transfers')return{business_total:4};
+    if(path==='/api/inventory/location-summary')return payload();
+    throw new Error('Unexpected request '+path);
+  };
+  const instance=controller(api,[],null);
+  instance.wire();
+  await listeners.get('inventoryTransferForm:submit')({preventDefault(){},target:nodes.inventoryTransferForm});
+  assert.equal(requests.filter(x=>x.path==='/api/inventory/transfers').length,1);
+  assert.equal(requests.filter(x=>x.path==='/api/inventory/location-summary').length,1,
+    'standalone consumers still perform exactly one local refresh');
+}));
+
+test('transfer and reversal share the single-owner refresh path',()=>{
+  const source=readFileSync(new URL('../public/inventory-location-ui.js',import.meta.url),'utf8');
+  const transferStart=source.indexOf('async function transfer(event){');
+  const reverseStart=source.indexOf('async function reverseTransfer(id){');
+  const wireStart=source.indexOf('function wire(){',reverseStart);
+  assert.ok(transferStart>0&&reverseStart>transferStart&&wireStart>reverseStart);
+  assert.match(source.slice(transferStart,reverseStart),/await refreshAfterTransfer\(\)/);
+  assert.match(source.slice(reverseStart,wireStart),/await refreshAfterTransfer\(\)/);
+  assert.match(source,/async function refreshAfterTransfer\(\)[\s\S]*?if\(typeof refreshInventory==='function'\)await refreshInventory\(\);[\s\S]*?else await load\(\);/);
 });

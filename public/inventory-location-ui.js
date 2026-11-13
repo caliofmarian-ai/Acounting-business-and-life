@@ -175,6 +175,14 @@ export function createInventoryLocationUi({
     }
   }
 
+  // The Stock page owns the canonical post-write refresh and reloads both
+  // Inventory and the selected tool in one pass. Standalone consumers still
+  // refresh this module locally when no owner callback is supplied.
+  async function refreshAfterTransfer(){
+    if(typeof refreshInventory==='function')await refreshInventory();
+    else await load();
+  }
+
   async function createLocation(event){
     event.preventDefault();
     const write=beginWrite(byId('inventoryLocationsCard'));if(!write)return;
@@ -230,9 +238,7 @@ export function createInventoryLocationUi({
       setText('inventoryTransferMessage','Transfer saved. Business total remains '+num(saved.business_total,4)+' '+(inventoryRows().find(x=>Number(x.id)===inventoryId)?.unit||'')+'.','positive');
       if(byId('inventoryTransferQuantity'))byId('inventoryTransferQuantity').value='';
       if(byId('inventoryTransferNote'))byId('inventoryTransferNote').value='';
-      await load();
-      if(!write.isCurrent())return;
-      if(typeof refreshInventory==='function')await refreshInventory();
+      await refreshAfterTransfer();
       if(!write.isCurrent())return;
     }catch(error){if(!write.isCurrent())return;
       setText('inventoryTransferMessage',error.message||'Transfer could not be saved.','negative');
@@ -251,9 +257,7 @@ export function createInventoryLocationUi({
       });
       if(!write.accept())return;
       setText('inventoryTransferMessage','Transfer reversed with linked audit evidence.','positive');
-      await load();
-      if(!write.isCurrent())return;
-      if(typeof refreshInventory==='function')await refreshInventory();
+      await refreshAfterTransfer();
       if(!write.isCurrent())return;
     }catch(error){if(!write.isCurrent())return;
       setText('inventoryTransferMessage',error.message||'Transfer could not be reversed.','negative');
