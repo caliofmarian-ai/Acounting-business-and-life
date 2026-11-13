@@ -14,11 +14,12 @@ function withInventoryCard(run){
   globalThis.document={getElementById:id=>id==='inventoryLocationsCard'?{}:null};
   return Promise.resolve().then(run).finally(()=>{globalThis.document=prior});
 }
-function controller(api,changes=[],refreshInventory=async()=>{}){
+function controller(api,changes=[],refreshInventory=async()=>{},beginWrite=()=>null){
   return createInventoryLocationUi({
     api,
     getInventory:()=>[{id:10,item:'Rice',unit:'kg'}],
     refreshInventory,
+    beginWrite,
     escapeHtml:String,
     formatNumber:String,
     onLocationsChanged:rows=>changes.push(rows),
@@ -132,7 +133,7 @@ test('successful Stock transfer uses one owner refresh and one Storage summary G
   instance=controller(api,[],async()=>{
     refreshes++;
     await instance.load({isCurrent:()=>true});
-  });
+  },()=>({accept:()=>true,isCurrent:()=>true,finish(){}}));
   instance.wire();
   const submit=listeners.get('inventoryTransferForm:submit');
   assert.equal(typeof submit,'function');
@@ -152,7 +153,7 @@ test('standalone transfer keeps its local refresh when no Stock owner callback e
     if(path==='/api/inventory/location-summary')return payload();
     throw new Error('Unexpected request '+path);
   };
-  const instance=controller(api,[],null);
+  const instance=controller(api,[],null,()=>({accept:()=>true,isCurrent:()=>true,finish(){}}));
   instance.wire();
   await listeners.get('inventoryTransferForm:submit')({preventDefault(){},target:nodes.inventoryTransferForm});
   assert.equal(requests.filter(x=>x.path==='/api/inventory/transfers').length,1);
