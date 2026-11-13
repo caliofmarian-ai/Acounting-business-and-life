@@ -226,7 +226,7 @@ test('Local Services QA recovers only the known stale company_test Territory Adm
 
   const clean=buildQaCredentialAdminRecoverySnapshot({
     accountId:8,pilotTerritoryId:6,
-    assignments:assignments.map(row=>({...row,status:String(row.id)==='103'?'active':'revoked'})),
+    assignments:assignments.map(row=>({...row,status:String(row.id)==='902'?'revoked':'active'})),
     permissions:permissions.map(row=>({...row,status:String(row.assignment_id)==='902'?'revoked':row.status})),
     functions
   });
