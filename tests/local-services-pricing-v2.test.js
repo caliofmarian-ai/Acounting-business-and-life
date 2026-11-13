@@ -7,7 +7,9 @@ import {
   normalizeServicePriceOffer,
   normalizeServiceQuote,
   quoteIsExpired,
+  resolveAcceptedServiceJobPayable,
   SERVICE_PRICING_METHODS,
+  serviceJobPayableSnapshot,
   ServicePricingValidationError
 } from '../local-services-pricing-core.js';
 
@@ -67,6 +69,55 @@ test('invalid money, units, quantities and expired quote validity fail closed',(
   assert.equal(quoteIsExpired({valid_until:'2026-09-26T23:59:59Z'},new Date('2026-09-27T00:00:00Z')),true);
 });
 
+test('quote input cannot normalize a positive sub-thousandth quantity into a zero-quantity line',()=>{
+  const quoteFor=quantity=>normalizeServiceQuote({
+    line_items:[{item_kind:'labor',description:'Precision unit test',quantity,unit_code:'unit',unit_price:10000}]
+  },{now:new Date('2026-10-28T00:00:00.000Z')});
+  for(const tiny of ['0.0000001',0.0001,0.0004]){
+    assert.throws(()=>quoteFor(tiny),error=>
+      error instanceof ServicePricingValidationError&&/greater than zero after rounding/.test(error.message),
+    `rounding of ${tiny} must not yield a zero-quantity quote item`);
+  }
+  const smallest=quoteFor('0.001');
+  assert.equal(smallest.line_items[0].quantity,0.001);
+  assert.equal(smallest.line_items[0].subtotal,10);
+  assert.equal(smallest.total_amount,10);
+});
+
+test('pricing and payable authority reject non-scalar JSON values instead of coercing them into PHP amounts',()=>{
+  const originalLine={item_kind:'labor',description:'Install fixture',quantity:1,unit_code:'item',unit_price:'25.50'};
+  const quoteFor=line=>normalizeServiceQuote({line_items:[line]},{now:new Date('2026-10-29T00:00:00Z')});
+  for(const invalid of [true,false,[],['2'],{valueOf(){return 2}}]){
+    for(const field of ['quantity','unit_price']){
+      assert.throws(
+        ()=>quoteFor({...originalLine,[field]:invalid}),
+        error=>error instanceof ServicePricingValidationError&&error.status===400,
+        `${field} must reject non-scalar ${String(invalid)}`
+      );
+    }
+    assert.throws(
+      ()=>normalizeServicePriceOffer({price_from:invalid}),
+      error=>error instanceof ServicePricingValidationError&&error.status===400,
+      'Offer price must reject non-scalar JSON values'
+    );
+  }
+  const legitimate=quoteFor({...originalLine,quantity:'2.5'});
+  assert.equal(legitimate.line_items[0].quantity,2.5);
+  assert.equal(legitimate.line_items[0].unit_price,25.5);
+  assert.equal(legitimate.total_amount,63.75);
+  assert.equal(normalizeServicePriceOffer({price_from:'0',price_to:25}).price_from,0);
+  const legacyJob={
+    id:45,status:'completed',currency_code:'PHP',accepted_quote_id:92,agreed_total:'1000.00',
+    final_price:'1001.00',legacy_final_adjustment:true
+  };
+  const accepted={id:92,job_id:45,status:'accepted',total_amount:'1000.00',currency_code:'PHP',legacy_record:true};
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable(legacyJob,accepted),
+    error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409,
+    'Legacy adjustment boolean must not be misinterpreted as PHP 1'
+  );
+});
+
 test('completion is pinned to the latest Customer-accepted total',()=>{
   assert.equal(acceptedCompletionPrice({acceptedTotal:'1275.50'}),1275.5);
   assert.equal(acceptedCompletionPrice({acceptedTotal:1275.5,requestedFinalPrice:'1275.50'}),1275.5);
@@ -77,9 +128,54 @@ test('completion is pinned to the latest Customer-accepted total',()=>{
   assert.throws(()=>acceptedCompletionPrice({acceptedTotal:1275.5,requestedFinalPrice:-1}),/invalid/);
 });
 
+test('Payment Core resolves a V2 payable value only from the exact accepted quote snapshot',()=>{
+  const job={
+    id:44,status:'completed',currency_code:'PHP',accepted_quote_id:91,agreed_total:'1275.50',
+    final_price:'1275.50',pricing_locked_at:'2026-09-27T10:00:00Z',legacy_final_adjustment:null
+  };
+  const quote={id:91,job_id:44,status:'accepted',total_amount:'1275.50',currency_code:'PHP',legacy_record:false};
+  assert.deepEqual(resolveAcceptedServiceJobPayable(job,quote),{
+    payable_value:1275.5,payable_authority:'accepted_quote',accepted_quote_id:91,
+    agreed_total:1275.5,legacy_final_adjustment:null
+  });
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable({...job,final_price:'1400.00'},quote),
+    error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409
+  );
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable(job,{...quote,total_amount:'1270.00'}),
+    error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409
+  );
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable(job,null),
+    error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409
+  );
+});
+
+test('legacy payable value is preserved only through explicit migrated adjustment evidence',()=>{
+  const job={
+    id:45,status:'completed',currency_code:'PHP',accepted_quote_id:92,agreed_total:'1000.00',
+    final_price:'1150.00',pricing_locked_at:'2026-09-20T10:00:00Z',legacy_final_adjustment:'150.00'
+  };
+  const legacyQuote={id:92,job_id:45,status:'accepted',total_amount:'1000.00',currency_code:'PHP',legacy_record:true};
+  const resolved=resolveAcceptedServiceJobPayable(job,legacyQuote);
+  assert.equal(resolved.payable_value,1150);
+  assert.equal(resolved.payable_authority,'legacy_accepted_quote_plus_adjustment');
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable(job,{...legacyQuote,legacy_record:false}),
+    error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'
+  );
+  assert.deepEqual(serviceJobPayableSnapshot({final_price:'875.00',quote_amount:'800.00'}),{
+    payable_value:875,payable_authority:'legacy_final_price',accepted_quote_id:null,
+    agreed_total:null,legacy_final_adjustment:null
+  });
+});
+
 test('runtime schema and routes preserve immutable quote versions and exact acceptance',()=>{
   const server=read('server-services.js');
   const core=read('local-services-pricing-core.js');
+  const documents=read('financial-document-core.js');
+  const monetization=read('monetization-core.js');
   assert.match(server,/CREATE TABLE IF NOT EXISTS service_job_quotes/);
   assert.match(server,/CREATE TABLE IF NOT EXISTS service_job_quote_items/);
   assert.match(server,/accepted_quote_id/);
@@ -87,7 +183,14 @@ test('runtime schema and routes preserve immutable quote versions and exact acce
   assert.match(server,/quote_id/);
   assert.match(server,/SERVICE_QUOTE_ID_REQUIRED/);
   assert.match(server,/acceptedCompletionPrice/);
+  assert.match(server,/resolveAcceptedServiceJobPayable/);
   assert.match(core,/SERVICE_CHANGE_ORDER_REQUIRED/);
+  assert.match(documents,/payable_authority:pricing\.payable_authority/);
+  // Historical monetization must consult the accepted quote, never a bare SQL
+  // COALESCE that could accept missing/mismatched snapshots as zero.
+  assert.match(monetization,/LEFT JOIN service_job_quotes q ON q.id=j.accepted_quote_id/);
+  assert.match(monetization,/resolveAcceptedServiceJobPayable\(job,acceptedQuote\)\.payable_value/);
+  assert.doesNotMatch(monetization,/j\.agreed_total\+COALESCE\(j\.legacy_final_adjustment,0\)/);
 });
 
 test('Provider and Customer UI show itemised pricing and explicit change-order approval',()=>{
@@ -100,4 +203,151 @@ test('Provider and Customer UI show itemised pricing and explicit change-order a
   assert.match(ui,/Decline change/);
   assert.match(ui,/Server-calculated total/);
   assert.doesNotMatch(ui,/final_price:Number\(document/);
+});
+
+test('accepted quote requires complete canonical matching currency evidence',()=>{
+  const job={
+    id:44,status:'completed',currency_code:'PHP',accepted_quote_id:91,
+    agreed_total:'150.00',final_price:'150.00',pricing_locked_at:'2026-10-28T01:00:00Z'
+  };
+  const quote={
+    id:91,job_id:44,status:'accepted',total_amount:'150.00',
+    currency_code:'PHP',legacy_record:false
+  };
+  assert.equal(resolveAcceptedServiceJobPayable(job,quote).payable_value,150);
+  for(const invalid of [null,undefined,'','PHP ','php','EUR']){
+    assert.throws(
+      ()=>resolveAcceptedServiceJobPayable(job,{...quote,currency_code:invalid}),
+      error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409,
+      'invalid accepted quote currency: '+String(invalid)
+    );
+    assert.throws(
+      ()=>resolveAcceptedServiceJobPayable({...job,currency_code:invalid},quote),
+      error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409,
+      'invalid Service Job currency: '+String(invalid)
+    );
+  }
+});
+
+test('unsafe BIGINT IDs cannot be rounded into a different accepted quote or job',()=>{
+  const job={
+    id:'9007199254740992',status:'completed',currency_code:'PHP',
+    accepted_quote_id:'9007199254740992',agreed_total:'100.00',
+    final_price:'100.00',pricing_locked_at:'2026-10-28T00:00:00Z'
+  };
+  const otherQuote={
+    id:'9007199254740993',job_id:'9007199254740993',status:'accepted',
+    total_amount:'100.00',currency_code:'PHP',legacy_record:false
+  };
+  const rejectsIntegrity=error=>
+    error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409;
+  // These distinct PostgreSQL BIGINT strings previously collapsed into one JS Number.
+  assert.throws(()=>resolveAcceptedServiceJobPayable(job,otherQuote),rejectsIntegrity);
+  const safeJob={...job,id:44,accepted_quote_id:91};
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable(safeJob,{...otherQuote,id:91}),rejectsIntegrity
+  );
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable({...safeJob,accepted_quote_id:'9007199254740993'},
+      {...otherQuote,id:'9007199254740992',job_id:44}),rejectsIntegrity
+  );
+});
+
+test('canonical safe PostgreSQL quote/job IDs work while ambiguous ID encodings fail closed',()=>{
+  const job={
+    id:'44',status:'completed',currency_code:'PHP',accepted_quote_id:'91',
+    agreed_total:'100.00',final_price:'100.00',pricing_locked_at:'2026-10-29T10:00:00Z'
+  };
+  const quote={
+    id:'91',job_id:'44',status:'accepted',total_amount:'100.00',
+    currency_code:'PHP',legacy_record:false
+  };
+  assert.equal(resolveAcceptedServiceJobPayable(job,quote).payable_value,100);
+  for(const invalid of ['091','91e0','91.0','+91',' 91 ','-91','9007199254740992',0]){
+    assert.throws(
+      ()=>resolveAcceptedServiceJobPayable({...job,accepted_quote_id:invalid},quote),
+      error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH',
+      'accepted quote ID: '+String(invalid)
+    );
+    assert.throws(
+      ()=>resolveAcceptedServiceJobPayable(job,{...quote,id:invalid}),
+      error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH',
+      'quote row ID: '+String(invalid)
+    );
+  }
+});
+
+test('pricing values reject JavaScript radix/exponent text and preserve ordinary decimals',()=>{
+  const line={item_kind:'labor',description:'Controlled work',quantity:'1',unit_code:'job',unit_price:'25'};
+  for(const bad of ['0x10','0X10','0b10','0o10','2e1','1e-1','Infinity','1_000']){
+    assert.throws(()=>moneyCents(bad,'Money'),e=>e instanceof ServicePricingValidationError&&e.code==='SERVICE_PRICING_INVALID',bad);
+    assert.throws(()=>normalizeServicePriceOffer({price_from:bad}),e=>e instanceof ServicePricingValidationError&&e.code==='SERVICE_PRICING_INVALID',bad);
+    for(const field of ['quantity','unit_price']){
+      assert.throws(()=>normalizeServiceQuote({line_items:[{...line,[field]:bad}]}),e=>
+        e instanceof ServicePricingValidationError&&e.code==='SERVICE_PRICING_INVALID',field+':'+bad);
+    }
+    assert.throws(()=>serviceJobPayableSnapshot({
+      accepted_quote_id:'11',agreed_total:'25',legacy_final_adjustment:bad
+    }),e=>e.status===409&&e.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH',bad);
+  }
+  const valid=normalizeServiceQuote({line_items:[{...line,quantity:' 2.500 ',unit_price:' 12.34 '}]});
+  assert.equal(valid.line_items[0].quantity,2.5);
+  assert.equal(valid.total_amount,30.85);
+  assert.equal(moneyCents(' +1.25 '),125);
+  assert.equal(normalizeServicePriceOffer({price_from:' .50 ',price_to:'100.00'}).price_from,0.5);
+});
+
+test('completed new Pricing V2 requires final-price evidence; orphan legacy adjustments fail closed',()=>{
+  const job={
+    id:44,status:'completed',currency_code:'PHP',accepted_quote_id:91,
+    agreed_total:'250.00',pricing_locked_at:'2026-10-29T08:00:00Z',final_price:'250.00'
+  };
+  const quote={
+    id:91,job_id:44,status:'accepted',total_amount:'250.00',
+    currency_code:'PHP',legacy_record:false
+  };
+  const invalid=e=>e?.status===409&&e?.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH';
+  for(const missing of [undefined,null,'']){
+    assert.throws(()=>resolveAcceptedServiceJobPayable({...job,final_price:missing},quote),invalid,
+      'missing completed V2 final price must not create a payable amount');
+  }
+  for(const orphan of ['25.00',0,'0.00']){
+    assert.throws(()=>serviceJobPayableSnapshot({
+      id:44,status:'completed',accepted_quote_id:null,agreed_total:null,pricing_locked_at:null,
+      legacy_final_adjustment:orphan,final_price:'300.00',quote_amount:'275.00'
+    }),invalid,'an unbound legacy adjustment must not be ignored');
+  }
+  // Accepted work is not completed; its final price is not yet present.
+  assert.equal(resolveAcceptedServiceJobPayable({
+    ...job,status:'accepted',final_price:null
+  },quote).payable_value,250);
+  // Migrated completed jobs can predate a separate final_price recording.
+  assert.equal(resolveAcceptedServiceJobPayable({
+    ...job,final_price:null
+  },{...quote,legacy_record:true}).payable_value,250);
+  // Ordinary genuine pre-V2 records without any pricing/adjustment evidence stay compatible.
+  assert.equal(serviceJobPayableSnapshot({
+    status:'completed',final_price:'300.00',quote_amount:'275.00',
+    accepted_quote_id:null,agreed_total:null,pricing_locked_at:null,legacy_final_adjustment:null
+  }).payable_value,300);
+});
+
+
+test('accepted V2 payable authority requires its pricing lock; migrated legacy remains readable',()=>{
+  const job={id:44,status:'accepted',currency_code:'PHP',accepted_quote_id:91,
+    agreed_total:'250.00',final_price:null,pricing_locked_at:'2026-10-29T08:00:00Z'};
+  const quote={id:91,job_id:44,status:'accepted',total_amount:'250.00',
+    currency_code:'PHP',legacy_record:false};
+  const invalid=e=>e?.status===409&&e?.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH';
+  assert.equal(resolveAcceptedServiceJobPayable(job,quote).payable_value,250);
+  for(const missing of [undefined,null,'']){
+    assert.throws(()=>resolveAcceptedServiceJobPayable({...job,pricing_locked_at:missing},quote),invalid,
+      'accepted V2 quote cannot be charged without its pricing lock');
+  }
+  const noLock={...job};delete noLock.pricing_locked_at;
+  assert.throws(()=>resolveAcceptedServiceJobPayable(noLock,quote),invalid,
+    'a missing lock field is not proof of quote acceptance');
+  // Genuine migrated rows are identified by the stored quote record, not a
+  // browser flag; they may lack legacy timestamps from an earlier schema.
+  assert.equal(resolveAcceptedServiceJobPayable(noLock,{...quote,legacy_record:true}).payable_value,250);
 });

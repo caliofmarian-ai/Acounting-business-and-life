@@ -840,6 +840,12 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
     let itemName=clean(instructions.item,100);
     const requestedInventoryId=instructions.inventory_id==null||instructions.inventory_id===''?null:Number(instructions.inventory_id);
     if(requestedInventoryId!=null&&!Number.isInteger(requestedInventoryId))return res.status(400).json({error:'Choose a valid Inventory item.'});
+    // A reviewed paid CSV may create a NEW item only. Keep normal stock
+    // receiving backwards-compatible, but reject malformed opt-in flags.
+    if(instructions.create_only!==undefined&&typeof instructions.create_only!=='boolean')
+      return res.status(400).json({error:'create_only must be a boolean.'});
+    if(instructions.create_only===true&&requestedInventoryId!=null)
+      return res.status(400).json({error:'A create-only purchase cannot specify an Inventory item ID.'});
     if(!itemName&&requestedInventoryId==null)return res.status(400).json({error:'Item is required'});
     const requestedLegacyType=normalizeInventoryType(instructions.inventory_type);
     const classificationExplicit=inventoryClassificationInputProvided(instructions);
@@ -867,6 +873,12 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
       if(requestedInventoryId!=null&&!current.rowCount)throw Object.assign(new Error('Inventory item not found.'),{status:404});
       if(requestedInventoryId!=null)itemName=current.rows[0].item;
       const existing=current.rows[0]||null;
+      // Under the same serialized business transaction and row lock that
+      // owns stock+lot+expense, fail closed if another device created the
+      // name after a CSV preflight. A reused intent key replays its earlier
+      // receipt BEFORE this callback, even though its item now exists.
+      if(instructions.create_only===true&&existing)
+        throw Object.assign(new Error('Inventory item already exists. Reconcile Stock and Money; no new purchase was posted.'),{status:409});
       let classification;
       try{
         classification=classificationExplicit

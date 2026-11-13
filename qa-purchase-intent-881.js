@@ -14,6 +14,9 @@ async function removeFixtures(pool,businesses){
       if(owned.rows[0]?.name!==name)throw new Error('Purchase intent QA cleanup business ownership mismatch');
     }
     const ids=businesses.map(({id})=>id);
+    // Historical-date QA produces an audit row; remove ONLY synthetic
+    // business evidence before the business FK owner is deleted.
+    await client.query('DELETE FROM audit_events WHERE business_id=ANY($1::bigint[])',[ids]);
     const intentTable=await client.query("SELECT to_regclass('inventory_purchase_intents') AS name");
     if(intentTable.rows[0]?.name){
       await client.query('DELETE FROM inventory_purchase_intents WHERE business_id=ANY($1::bigint[])',[ids]);
@@ -36,6 +39,7 @@ async function removeFixtures(pool,businesses){
 export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,helpers}){
   const {requestJson,qaAccountSession,ensureActiveRole,withRejectedExpense}=helpers;
   const scope='QA 881 '+randomUUID(),businesses=[],sessions=[];
+  let oldMerchantBusinessPreference,merchantPreferenceInstalled=false,merchantAccountForPreference;
   let checks=0;
   const exact=(actual,expected,label)=>{
     assert.deepEqual(actual,expected,'Purchase intent 881: '+label);
@@ -74,10 +78,36 @@ export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,h
     await pool.query("INSERT INTO business_memberships(business_id,account_id,membership_role,active) VALUES($1,$2,'owner',TRUE)",[a,merchant.accountId]);
     await pool.query("INSERT INTO profile_business_bindings(account_id,role,business_id,status,is_primary) VALUES($1,'merchant',$2,'active',FALSE)",[merchant.accountId,a]);
 
+    // A historic paid-expense date PATCH resolves its business via the active
+    // accounting workspace, unlike the origin-header-bound stock POST.
+    // Change only this existing company_test Merchant preference, restore it
+    // before removing the synthetic business, never alter real user preferences.
+    const pref=await pool.query(
+      "SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role='merchant'",
+      [merchant.accountId]);
+    oldMerchantBusinessPreference=pref.rows[0]?.business_id??null;
+    merchantAccountForPreference=merchant.accountId;
+    await pool.query(
+      "INSERT INTO account_business_preferences(account_id,role,business_id) VALUES($1,'merchant',$2) "+
+      "ON CONFLICT(account_id,role) DO UPDATE SET business_id=EXCLUDED.business_id,updated_at=NOW()",
+      [merchant.accountId,a]);
+    merchantPreferenceInstalled=true;
+
+    const page=await fetch(base+'/merchant-stock-csv-intake.html');
+    exact(page.status,200,'CSV intake review HTML is served by the application');
+    const pageHtml=await page.text();
+    exact(pageHtml.includes('/merchant-stock-csv-intake.js')&&pageHtml.includes('/session-security.js'),
+      true,'CSV review loads Merchant controller and session protection');
+    const ui=await fetch(base+'/merchant-stock-csv-intake.js');
+    exact(ui.status,200,'CSV import controller served');
+    const uiScript=await ui.text();
+    exact(uiScript.includes('create_only:true')&&uiScript.includes('postWriteMerchantAuthorityIsCurrent'),
+      true,'deployed controller requests create-only and live post-write authorization');
+
     const item=scope+' ingredient';
     const firstKey=randomUUID();
     const secondKey=randomUUID();
-    const purchase={purchase_intent_key:firstKey,item,purchase_quantity:125,purchase_unit:'g',total_cost:'12.34',
+    const purchase={purchase_intent_key:firstKey,create_only:true,item,purchase_quantity:125,purchase_unit:'g',total_cost:'12.34',
       inventory_type:'ingredient',inventory_domain:'food',stock_role:'ingredient',storage_condition:'dry',
       storage_area_type:'pantry',account:'cash',record_expense:true,note:'Synthetic QA inventory expense'};
     const [first,concurrent]=await Promise.all([
@@ -89,9 +119,15 @@ export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,h
     assert.ok(first.json?.purchase?.id,'Purchase intent 881: purchase ID is present');
     exact(String(first.json?.inventory?.business_id),String(a),'receipt is scoped to initiating business');
     exact(Number(first.json?.inventory?.quantity),125,'parallel retry increases stock once');
+    exact((await receive(a,{...purchase,purchase_intent_key:randomUUID()},merchant.token)).status,409,
+      'distinct create-only intent cannot add quantity or expense to an existing same-business name');
+    exact((await receive(a,{...purchase,purchase_intent_key:randomUUID(),create_only:'true'},merchant.token)).status,400,
+      'non-boolean create-only authority fails closed');
+    exact((await receive(a,{...purchase,purchase_intent_key:randomUUID(),inventory_id:first.json.inventory.id},merchant.token)).status,400,
+      'create-only cannot target an existing Inventory ID');
     exact((await receive(a,{...purchase,total_cost:'13.34'},merchant.token)).status,409,'same key with different amount is rejected');
 
-    const second=await receive(a,{...purchase,purchase_intent_key:secondKey},merchant.token);
+    const second=await receive(a,{...purchase,purchase_intent_key:secondKey,create_only:false},merchant.token);
     exact(second.status,201,'new intent can receive the same item again');
     assert.ok(second.json?.purchase?.id&&second.json.purchase.id!==first.json.purchase.id,
       'Purchase intent 881: distinct intent creates another purchase');
@@ -115,13 +151,40 @@ export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,h
     }
 
     const {purchase_intent_key:ignored,...unkeyed}=purchase;
-    const legacy=await receive(a,{...unkeyed,item:scope+' legacy ingredient',purchase_quantity:25,total_cost:0,record_expense:false},merchant.token);
+    const legacy=await receive(a,{...unkeyed,create_only:false,item:scope+' legacy ingredient',purchase_quantity:25,total_cost:0,record_expense:false},merchant.token);
     exact(legacy.status,201,'existing request without a key still works');
     exact(legacy.json?.transaction,null,'legacy no-expense request remains a stock-only receive');
 
     exact((await receive(a,purchase)).status,401,'guest cannot retrieve the committed receipt');
     exact((await receive(a,purchase,customer.token)).status,403,'customer cannot retrieve a Merchant receipt');
     exact((await receive(b,purchase,merchant.token)).status,403,'unbound business cannot receive stock');
+    // CSV's audited backdated Money correction must keep the original
+    // committed purchase and amount. A date edit must not create stock/lot
+    // or another expense. No financial provider is contacted.
+    const historicalDate=new Date(Date.now()-2*86400000).toISOString().slice(0,10);
+    const historicalNoon=historicalDate+'T12:00:00+08:00';
+    const patch=await requestJson(base,'/api/transactions/'+first.json.transaction.id,{
+      method:'PATCH',token:merchant.token,
+      body:{occurred_at:historicalNoon,reason:'Controlled QA historical paid CSV date; actual time unknown'}
+    });
+    exact(patch.status,200,'historical paid expense correction HTTP');
+    exact(String(patch.json?.id),String(first.json.transaction.id),'same expense ID after date correction');
+    exact(String(patch.json?.source_id),String(first.json.purchase.id),'purchase association preserved');
+    exact(String(patch.json?.source),'inventory_purchase','original purchase source preserved');
+    exact(Number(patch.json?.amount),12.34,'historical date does not change paid amount');
+    exact(new Date(patch.json?.occurred_at).getTime(),new Date(historicalNoon).getTime(),
+      'audited date equals exact historical PH noon');
+    const money=await requestJson(base,'/api/transactions',{token:merchant.token});
+    exact(money.status,200,'Merchant Money view is authenticated');
+    exact((Array.isArray(money.json)?money.json:[])
+      .filter(t=>String(t.id)===String(first.json.transaction.id)).length,1,
+      'historical correction appears once in Money');
+    const audit=await pool.query(
+      "SELECT COUNT(*)::int AS count FROM audit_events WHERE business_id=$1 "+
+      "AND entity_type='transaction' AND entity_id=$2 AND action='correction'",
+      [a,first.json.transaction.id]);
+    exact(audit.rows[0]?.count,1,'one persisted audit record for historical date correction');
+
     await pool.query("UPDATE profile_business_bindings SET status='revoked' WHERE account_id=$1 AND role='merchant' AND business_id=$2",[merchant.accountId,a]);
     exact((await receive(a,purchase,merchant.token)).status,403,'revoked Merchant origin cannot replay its earlier receipt');
 
@@ -150,6 +213,22 @@ export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,h
     exact(totals.rows[0],{purchases:3,lots:3,expenses:2,intents:2},'exact persisted row counts including legacy receive');
   }catch(error){failure=error}
   finally{
+    try{
+      if(merchantPreferenceInstalled){
+        if(oldMerchantBusinessPreference==null){
+          await pool.query(
+            "DELETE FROM account_business_preferences WHERE account_id=$1 AND role='merchant' AND business_id=$2",
+            [merchantAccountForPreference,businesses[0].id]);
+        }else{
+          await pool.query(
+            "UPDATE account_business_preferences SET business_id=$1,updated_at=NOW() "+
+            "WHERE account_id=$2 AND role='merchant' AND business_id=$3",
+            [oldMerchantBusinessPreference,merchantAccountForPreference,businesses[0].id]);
+        }
+      }
+    }catch(error){
+      failure=new Error('QA Merchant preference restoration failed; synthetic business must not be left active',{cause:failure??error});
+    }
     try{await removeFixtures(pool,businesses)}
     catch(error){failure=new Error('Purchase intent 881 synthetic fixture cleanup failed',{cause:failure??error})}
     for(const session of sessions){
@@ -165,6 +244,7 @@ export async function runPurchaseIntent881Acceptance({pool,base,secret,aliases,h
   if(failure)throw failure;
   return {status:'PASS',wave:PURCHASE_INTENT_881_WAVE,checks,authenticated_http:true,
     original_receipt_replay:true,stock_lot_expense_atomicity:true,legacy_compatibility:true,
+    merchant_csv_review_assets:true,historical_money_date_audited:true,
     guest_customer_revoked_denied:true,fixtures_removed:true,
     ...(withRejectedExpense?{forced_expense_rollback:true}:{})};
 }
