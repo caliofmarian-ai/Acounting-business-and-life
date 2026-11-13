@@ -378,6 +378,9 @@ async function findSupplementaryEvidence(db,record){
            p.original_file_name file_name,p.detected_mime mime_type,p.byte_size
       FROM merchant_purchase_document_evidence e
       JOIN private_evidence_objects p ON p.id=e.private_evidence_object_id
+       AND p.owner_account_id=e.created_by_account_id
+       AND p.source_type='merchant_purchase_document_attachment'
+       AND p.source_id=e.id::text
      WHERE e.document_id=$1 AND e.business_id=$2 AND e.client_request_key=$3
   `,[record.documentId,record.businessId,record.key]);
   return q.rows[0]||null;
@@ -707,6 +710,9 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
                  p.original_file_name file_name,p.detected_mime mime_type,p.byte_size
             FROM merchant_purchase_document_evidence e
             JOIN private_evidence_objects p ON p.id=e.private_evidence_object_id
+             AND p.owner_account_id=e.created_by_account_id
+             AND p.source_type='merchant_purchase_document_attachment'
+             AND p.source_id=e.id::text
            WHERE e.document_id=$1 AND e.business_id=$2
              AND p.scan_status='clean' AND p.retention_state='active'
            ORDER BY e.id
@@ -750,9 +756,13 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
       const doc=await scopedDocument(pool,req.params.id,businessId);
       const evidenceId=positiveId(req.params.evidenceId,'Evidence identifier');
       const attached=await pool.query(`
-        SELECT private_evidence_object_id
-          FROM merchant_purchase_document_evidence
-         WHERE id=$1 AND document_id=$2 AND business_id=$3
+        SELECT e.private_evidence_object_id
+          FROM merchant_purchase_document_evidence e
+          JOIN private_evidence_objects p ON p.id=e.private_evidence_object_id
+           AND p.owner_account_id=e.created_by_account_id
+           AND p.source_type='merchant_purchase_document_attachment'
+           AND p.source_id=e.id::text
+         WHERE e.id=$1 AND e.document_id=$2 AND e.business_id=$3
       `,[evidenceId,doc.id,businessId]);
       if(!attached.rowCount)throw error(404,'Supplementary evidence not found');
       const file=await readPrivateEvidence(pool,{
