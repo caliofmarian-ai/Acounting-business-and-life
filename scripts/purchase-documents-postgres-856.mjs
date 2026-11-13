@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { normalizeMerchantPurchaseDocument, merchantPurchaseDocumentInternals } from '../merchant-purchase-documents.js';
+import { normalizeMerchantPurchaseDocument, normalizeMerchantPurchaseDocumentEvidence, merchantPurchaseDocumentInternals } from '../merchant-purchase-documents.js';
 
 if (process.env.NODE_ENV !== 'test' || process.env.RECEIPTS_856_ISOLATED !== '1' ||
     process.env.PGHOST !== '127.0.0.1' || process.env.PGDATABASE !== 'abl_receipts_856_ci' ||
@@ -166,5 +166,103 @@ test('receipt association recheck holds source business ownership stable until C
     if(pending)await pending.catch(()=>{});
     await observer.query('DROP TABLE IF EXISTS inventory_purchases').catch(()=>{});
     writer.release();changer.release();observer.release();await pool.end();
+  }
+});
+
+
+// Real PostgreSQL 16 verification for append-only supplementary evidence.
+// The one-connection adapter keeps every temporary table confined to this CI session.
+test('supplementary evidence is separately persisted, idempotent and business-bound in PostgreSQL 16',async()=>{
+  const pool=new pg.Pool({max:1});
+  const connection=await pool.connect();
+  const db={
+    query:(...args)=>connection.query(...args),
+    connect:async()=>({query:(...args)=>connection.query(...args),release:()=>{}})
+  };
+  let uploads=0,bindings=0,deletions=0;
+  try{
+    assert.equal((await connection.query('SELECT current_database() AS db')).rows[0].db,'abl_receipts_856_ci');
+    await connection.query('CREATE TEMP TABLE profile_business_bindings(account_id BIGINT,role TEXT,business_id BIGINT,status TEXT)');
+    await connection.query('CREATE TEMP TABLE business_memberships(account_id BIGINT,business_id BIGINT,active BOOLEAN)');
+    await connection.query('CREATE TEMP TABLE merchant_purchase_documents(id BIGINT PRIMARY KEY,business_id BIGINT NOT NULL,private_evidence_object_id BIGINT)');
+    await connection.query(`CREATE TEMP TABLE private_evidence_objects(
+      id BIGSERIAL PRIMARY KEY,owner_account_id BIGINT NOT NULL,source_type TEXT NOT NULL,source_id TEXT NOT NULL,
+      original_file_name TEXT NOT NULL,detected_mime TEXT NOT NULL,byte_size BIGINT NOT NULL,
+      scan_status TEXT NOT NULL,retention_state TEXT NOT NULL
+    )`);
+    await connection.query(`CREATE TEMP TABLE merchant_purchase_document_evidence(
+      id BIGSERIAL PRIMARY KEY,document_id BIGINT NOT NULL,business_id BIGINT NOT NULL,
+      created_by_account_id BIGINT NOT NULL,client_request_key TEXT NOT NULL,request_fingerprint TEXT NOT NULL,
+      private_evidence_object_id BIGINT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(document_id,client_request_key)
+    )`);
+    await connection.query("INSERT INTO profile_business_bindings VALUES(9101,'merchant',201,'active'),(9101,'merchant',202,'active')");
+    await connection.query('INSERT INTO business_memberships VALUES(9101,201,TRUE),(9101,202,TRUE)');
+    await connection.query("INSERT INTO private_evidence_objects(id,owner_account_id,source_type,source_id,original_file_name,detected_mime,byte_size,scan_status,retention_state) VALUES(700,9101,'merchant_purchase_document','101','original.png','image/png',68,'clean','active')");
+    await connection.query('INSERT INTO merchant_purchase_documents(id,business_id,private_evidence_object_id) VALUES(101,201,700)');
+    const record=normalizeMerchantPurchaseDocumentEvidence({
+      client_request_key:'pg-supplementary-20261113-01',file_name:'delivery-note.png',
+      data_url:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII='
+    },{businessId:201,documentId:101});
+    const storeEvidence=async(poolArg,input)=>{
+      uploads++;
+      const saved=await poolArg.query(`
+        INSERT INTO private_evidence_objects(owner_account_id,source_type,source_id,original_file_name,
+          detected_mime,byte_size,scan_status,retention_state)
+        VALUES($1,$2,$3,$4,'image/png',68,'clean','active')
+        RETURNING id,original_file_name,detected_mime,byte_size
+      `,[input.ownerAccountId,input.sourceType,input.sourceId,input.fileName]);
+      return saved.rows[0];
+    };
+    const bindEvidence=async(client,input)=>{
+      bindings++;
+      const saved=await client.query(`
+        UPDATE private_evidence_objects SET source_type=$1,source_id=$2
+         WHERE id=$3 AND owner_account_id=$4 AND retention_state='active'
+        RETURNING id
+      `,[input.sourceType,input.sourceId,input.objectId,input.actorAccountId]);
+      assert.equal(saved.rowCount,1);
+    };
+    const deleteEvidence=async(poolArg,input)=>{
+      deletions++;
+      await poolArg.query("UPDATE private_evidence_objects SET retention_state='deleted' WHERE id=$1",[input.objectId]);
+    };
+    const args={actorAccountId:9101,businessId:201,documentId:101,record,storeEvidence,bindEvidence,deleteEvidence};
+    const first=await merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(db,args);
+    assert.equal(first.already_saved,false);
+    assert.equal(first.evidence.document_id,101);
+    assert.equal(first.evidence.business_id,201);
+    assert.equal(first.evidence.file_name,'delivery-note.png');
+    const object=(await connection.query('SELECT source_type,source_id,owner_account_id FROM private_evidence_objects WHERE id=(SELECT private_evidence_object_id FROM merchant_purchase_document_evidence WHERE id=$1)',[first.evidence.id])).rows[0];
+    assert.deepEqual(object,{source_type:'merchant_purchase_document_attachment',source_id:String(first.evidence.id),owner_account_id:'9101'});
+    const original=(await connection.query('SELECT private_evidence_object_id FROM merchant_purchase_documents WHERE id=101')).rows[0];
+    assert.equal(Number(original.private_evidence_object_id),700,'original scan object is unchanged');
+    const replay=await merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(db,args);
+    assert.equal(replay.already_saved,true);
+    assert.equal(replay.evidence.id,first.evidence.id);
+    assert.equal(uploads,1,'idempotent replay does not upload a second object');
+    const changed=normalizeMerchantPurchaseDocumentEvidence({
+      client_request_key:record.key,file_name:'different.png',data_url:record.dataUrl
+    },{businessId:201,documentId:101});
+    await assert.rejects(()=>merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(db,{...args,record:changed}),
+      error=>error.status===409);
+    const foreign=normalizeMerchantPurchaseDocumentEvidence({
+      client_request_key:'pg-supplementary-20261113-02',file_name:'foreign.png',data_url:record.dataUrl
+    },{businessId:202,documentId:101});
+    await assert.rejects(()=>merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(db,{
+      ...args,businessId:202,record:foreign
+    }),error=>error.status===404);
+    assert.equal(deletions,1,'failed cross-business attachment removes the uncommitted private object');
+    const counts=await connection.query(`
+      SELECT (SELECT COUNT(*)::int FROM merchant_purchase_document_evidence) AS attachments,
+             (SELECT COUNT(*)::int FROM merchant_purchase_documents WHERE private_evidence_object_id=700) AS original_links,
+             (SELECT COUNT(*)::int FROM private_evidence_objects WHERE retention_state='deleted') AS deleted_uploads
+    `);
+    assert.deepEqual(counts.rows[0],{attachments:1,original_links:1,deleted_uploads:1});
+    console.log(JSON.stringify({status:'PASS',db:'isolated PostgreSQL 16',append:true,replay:true,
+      changedPayloadConflict:true,foreignBusinessDenied:true,originalPreserved:true,uploads,bindings,deletions}));
+  }finally{
+    connection.release();
+    await pool.end();
   }
 });
