@@ -219,6 +219,56 @@ export async function resolveCredentialQaTerritories({pool,providerAccountId,cre
   return{reviewTerritoryId,outsideTerritoryId,reviewTargetMatchesPilot:reviewTerritoryId===pilot};
 }
 
+export async function resolveQaCredentialRecoveryTerritories({
+  pool,providerAccountId,pilotTerritoryId,secondaryTerritoryId
+}){
+  const provider=Number(providerAccountId),pilot=Number(pilotTerritoryId),secondary=Number(secondaryTerritoryId);
+  if(!Number.isSafeInteger(provider)||provider<1||!Number.isSafeInteger(pilot)||pilot<1
+    ||!Number.isSafeInteger(secondary)||secondary<1||pilot===secondary){
+    throw new Error('Credential QA recovery needs a valid company_test provider and distinct territories.');
+  }
+  const target=await pool.query(`
+    SELECT COALESCE(
+      (SELECT pa.territory_id FROM profile_authorizations pa
+        WHERE pa.account_id=a.id AND pa.role='service_provider'
+          AND pa.status='active' AND pa.territory_id IS NOT NULL
+        ORDER BY pa.id DESC LIMIT 1),
+      (SELECT app.territory_id FROM profile_applications app
+        WHERE app.account_id=a.id AND app.role='service_provider'
+          AND app.status NOT IN ('rejected','revoked')
+        ORDER BY app.id DESC LIMIT 1),
+      $2
+    ) review_territory_id
+    FROM accounts a
+    WHERE a.id=$1 AND a.account_mode='company_test'
+      AND a.test_role='service_provider' AND a.auth_status='active'
+  `,[provider,pilot]);
+  if(target.rowCount!==1){
+    throw new Error('Controlled company_test Service Provider missing for QA Territory Admin recovery.');
+  }
+  const review=Number(target.rows[0].review_territory_id);
+  if(!Number.isSafeInteger(review)||review<1){
+    throw new Error('Controlled QA credential review territory is ambiguous; refusing automatic recovery.');
+  }
+  const validTerritory=await pool.query(
+    "SELECT id FROM territories WHERE id=$1 AND country_code='PH' AND status IN ('onboarding','active')",
+    [review]
+  );
+  if(validTerritory.rowCount!==1){
+    throw new Error('Controlled QA credential review territory is unavailable; refusing automatic recovery.');
+  }
+  const outside=review===secondary?pilot:secondary;
+  if(outside===review){
+    throw new Error('Credential QA recovery cannot establish a distinct out-of-scope territory.');
+  }
+  return{
+    pilotTerritoryId:pilot,
+    reviewTerritoryId:review,
+    outsideTerritoryId:outside,
+    reviewTargetMatchesPilot:review===pilot
+  };
+}
+
 
 /* Credential-review QA temporarily changes a controlled staff test account.
  * Capture all active/inactive grants consistently, then restore their former
@@ -328,7 +378,7 @@ export async function restoreQaCredentialAdminBaseline(pool,accountId,snapshot,s
 }
 
 async function verifyCredentialAdminScope({
-  pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail,territoryId,jobId,
+  pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail,territoryId,secondaryTerritoryId,jobId,
   requestJson,expectStatus
 }){
   const created=await requestJson(base,'/api/service-provider/credentials',{
@@ -354,9 +404,10 @@ async function verifyCredentialAdminScope({
   });
   expectStatus(ordinaryDenied,403,'Ordinary Customer credential-review denial');
 
-  const otherTerritoryId=await ensureSecondaryServiceTerritory({
-    pool,base,adminToken:admin.token,requestJson,expectStatus
-  });
+  const otherTerritoryId=Number(secondaryTerritoryId);
+  if(!Number.isSafeInteger(otherTerritoryId)||otherTerritoryId<1||otherTerritoryId===Number(territoryId)){
+    throw new Error('Credential QA secondary territory is unavailable; refusing scope changes.');
+  }
   const {reviewTerritoryId,outsideTerritoryId,reviewTargetMatchesPilot}=await resolveCredentialQaTerritories({
     pool,providerAccountId:provider.accountId,credentialId,
     pilotTerritoryId:territoryId,secondaryTerritoryId:otherTerritoryId
@@ -461,11 +512,13 @@ const QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS=['members.view','credential.verify'];
 const QA_OWNER_CONTROL_TOWER_PERMISSIONS=['admin.console','incident.triage','profile.suspend'];
 
 export function buildQaCredentialAdminRecoverySnapshot({
-  accountId,pilotTerritoryId,assignments,permissions,functions
+  accountId,pilotTerritoryId,reviewTerritoryId,outsideTerritoryId,assignments,permissions,functions
 }={}){
   const account=Number(accountId),pilot=Number(pilotTerritoryId);
+  const review=Number(reviewTerritoryId),outsideScope=Number(outsideTerritoryId);
   if(!Number.isSafeInteger(account)||account<1||!Number.isSafeInteger(pilot)||pilot<1
-    ||!Array.isArray(assignments)||!Array.isArray(permissions)||!Array.isArray(functions)){
+    ||!Number.isSafeInteger(review)||review<1||!Number.isSafeInteger(outsideScope)||outsideScope<1
+    ||review===outsideScope||!Array.isArray(assignments)||!Array.isArray(permissions)||!Array.isArray(functions)){
     throw new Error('QA Territory Admin recovery inputs are incomplete; refusing automatic recovery.');
   }
   const knownReasons=new Set([QA_CREDENTIAL_ADMIN_OUTSIDE_REASON,QA_CREDENTIAL_ADMIN_INSIDE_REASON]);
@@ -483,9 +536,10 @@ export function buildQaCredentialAdminRecoverySnapshot({
   }
   const outside=outsideRows[0],inside=insideRows[0],temporary=insideRows.slice(1);
   if(!Number.isSafeInteger(Number(outside.territory_id))
+    ||Number(outside.territory_id)!==outsideScope
     ||!Number.isSafeInteger(Number(inside.territory_id))
-    ||Number(outside.territory_id)===pilot
-    ||temporary.some(row=>Number(row.territory_id)!==pilot)
+    ||Number(inside.territory_id)!==pilot
+    ||temporary.some(row=>Number(row.territory_id)!==review)
     ||temporary.some(row=>row.authority_rank!=='territory_admin')){
     throw new Error('Controlled QA Territory Admin territory scope changed; refusing automatic recovery.');
   }
@@ -541,13 +595,15 @@ export function buildQaCredentialAdminRecoverySnapshot({
     ||temporaryPermissions.some(row=>row.status!=='revoked');
   return{
     snapshot,
-    scopeIds:[Number(outside.territory_id),pilot],
+    scopeIds:[outsideScope,review],
     needsRestore,
-    temporaryAssignments:temporary.length
+    temporaryAssignments:temporary.length,
+    reviewTerritoryId:review,
+    outsideTerritoryId:outsideScope
   };
 }
 
-export async function recoverStaleQaCredentialAdminBaseline(pool,accountId,pilotTerritoryId){
+export async function recoverStaleQaCredentialAdminBaseline(pool,accountId,territoryScope){
   const actor=await pool.query(
     "SELECT id FROM accounts WHERE id=$1 AND account_mode='company_test' AND test_role='territory_admin' AND auth_status='active'",
     [accountId]
@@ -568,9 +624,10 @@ export async function recoverStaleQaCredentialAdminBaseline(pool,accountId,pilot
       [ids]
     ):Promise.resolve({rows:[]})
   ]);
+  const {pilotTerritoryId,reviewTerritoryId,outsideTerritoryId}=territoryScope||{};
   const plan=buildQaCredentialAdminRecoverySnapshot({
-    accountId,pilotTerritoryId,assignments:assignments.rows,
-    permissions:permissions.rows,functions:functions.rows
+    accountId,pilotTerritoryId,reviewTerritoryId,outsideTerritoryId,
+    assignments:assignments.rows,permissions:permissions.rows,functions:functions.rows
   });
   if(!plan.needsRestore){
     return{restored:false,original_assignments:plan.snapshot.assignments.length,temporary_assignments_revoked:0};
@@ -858,9 +915,6 @@ export async function runServiceProviderExperienceAcceptance({
   });
 
   const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
-  const credentialAdminPreflightRecovery=await recoverStaleQaCredentialAdminBaseline(
-    pool,territoryAdmin.accountId,territoryId
-  );
   const category=await pool.query(
     "SELECT id,code,name,credential_gate FROM service_categories WHERE code='handyman' AND active=TRUE LIMIT 1"
   );
@@ -874,6 +928,16 @@ export async function runServiceProviderExperienceAcceptance({
     requestJson,expectStatus,ensureActiveRole
   });
   await ensureActiveRole({base,token:customer.token,role:'customer',label:'Local Services Customer QA'});
+
+  const secondaryTerritoryId=await ensureSecondaryServiceTerritory({
+    pool,base,adminToken:admin.token,requestJson,expectStatus
+  });
+  const recoveryTerritories=await resolveQaCredentialRecoveryTerritories({
+    pool,providerAccountId:provider.accountId,pilotTerritoryId:territoryId,secondaryTerritoryId
+  });
+  const credentialAdminPreflightRecovery=await recoverStaleQaCredentialAdminBaseline(
+    pool,territoryAdmin.accountId,recoveryTerritories
+  );
 
   await publishQaServiceProvider({
     base,providerToken:provider.token,categoryId,requestJson,expectStatus
@@ -1112,8 +1176,8 @@ export async function runServiceProviderExperienceAcceptance({
   if(!reviewId)throw new Error('Verified Local Services review was not created.');
 
   const credentialScope=await verifyCredentialAdminScope({
-    pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail:aliases.territoryAdmin,territoryId,jobId,
-    requestJson,expectStatus
+    pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail:aliases.territoryAdmin,
+    territoryId,secondaryTerritoryId,jobId,requestJson,expectStatus
   });
 
   const paymentIntentQa=await verifyUnsettledServiceJobPaymentAuthority({

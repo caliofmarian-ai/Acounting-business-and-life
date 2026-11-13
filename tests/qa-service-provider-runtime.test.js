@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {resolveCredentialQaTerritories,captureQaCredentialAdminBaseline,restoreQaCredentialAdminBaseline,buildQaCredentialAdminRecoverySnapshot} from '../qa-service-provider-acceptance.js';
+import {resolveCredentialQaTerritories,resolveQaCredentialRecoveryTerritories,captureQaCredentialAdminBaseline,restoreQaCredentialAdminBaseline,buildQaCredentialAdminRecoverySnapshot} from '../qa-service-provider-acceptance.js';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const qa=read('qa-acceptance.js');
@@ -214,8 +214,9 @@ test('Local Services QA recovers only the known stale company_test Territory Adm
     {assignment_id:'902',permission_code:'credential.verify',status:'active',reason:INSIDE}
   ];
   const functions=[{assignment_id:'103',function_code:'trust_safety',status:'revoked',reason:OWNER}];
+  const scope={pilotTerritoryId:1,reviewTerritoryId:6,outsideTerritoryId:2};
   const plan=buildQaCredentialAdminRecoverySnapshot({
-    accountId:8,pilotTerritoryId:6,assignments,permissions,functions
+    accountId:8,...scope,assignments,permissions,functions
   });
   assert.equal(plan.needsRestore,true);
   assert.deepEqual(plan.scopeIds,[2,6]);
@@ -225,7 +226,7 @@ test('Local Services QA recovers only the known stale company_test Territory Adm
   ]);
 
   const clean=buildQaCredentialAdminRecoverySnapshot({
-    accountId:8,pilotTerritoryId:6,
+    accountId:8,...scope,
     assignments:assignments.map(row=>({...row,status:String(row.id)==='902'?'revoked':'active'})),
     permissions:permissions.map(row=>({...row,status:String(row.assignment_id)==='902'?'revoked':row.status})),
     functions
@@ -238,9 +239,46 @@ test('Local Services QA recovers only the known stale company_test Territory Adm
     permissions,functions
   }),/Unexpected QA Territory Admin assignment/);
   assert.throws(()=>buildQaCredentialAdminRecoverySnapshot({
-    accountId:8,pilotTerritoryId:6,
+    accountId:8,...scope,
+    assignments:assignments.map(row=>String(row.id)==='902'?{...row,territory_id:'1'}:row),
+    permissions,functions
+  }),/territory scope changed/);
+  assert.throws(()=>buildQaCredentialAdminRecoverySnapshot({
+    accountId:8,...scope,
     assignments,permissions:[...permissions,{assignment_id:'902',permission_code:'finance.payout',status:'active',reason:INSIDE}],functions
   }),/Unexpected temporary QA Territory Admin grant/);
+});
+
+test('Local Services QA recovery resolves the current company_test Service Provider review territory',async()=>{
+  const calls=[];
+  const pool={query:async(sql,params)=>{
+    calls.push({sql,params});
+    if(sql.includes('FROM accounts a'))return{rowCount:1,rows:[{review_territory_id:'6'}]};
+    if(sql.includes('FROM territories'))return{rowCount:1,rows:[{id:'6'}]};
+    throw new Error('Unexpected QA recovery territory query.');
+  }};
+  const scope=await resolveQaCredentialRecoveryTerritories({
+    pool,providerAccountId:21,pilotTerritoryId:1,secondaryTerritoryId:2
+  });
+  assert.deepEqual(scope,{
+    pilotTerritoryId:1,reviewTerritoryId:6,outsideTerritoryId:2,reviewTargetMatchesPilot:false
+  });
+  assert.match(calls[0].sql,/account_mode='company_test'/);
+  assert.match(calls[0].sql,/test_role='service_provider'/);
+  assert.equal(calls[1].params[0],6);
+
+  const fallbackPool={query:async(sql)=>sql.includes('FROM accounts a')
+    ?{rowCount:1,rows:[{review_territory_id:'1'}]}:{rowCount:1,rows:[{id:'1'}]}};
+  const fallback=await resolveQaCredentialRecoveryTerritories({
+    pool:fallbackPool,providerAccountId:21,pilotTerritoryId:1,secondaryTerritoryId:2
+  });
+  assert.deepEqual(fallback,{
+    pilotTerritoryId:1,reviewTerritoryId:1,outsideTerritoryId:2,reviewTargetMatchesPilot:true
+  });
+  const deniedPool={query:async()=>({rowCount:0,rows:[]})};
+  await assert.rejects(resolveQaCredentialRecoveryTerritories({
+    pool:deniedPool,providerAccountId:22,pilotTerritoryId:1,secondaryTerritoryId:2
+  }),/Controlled company_test Service Provider/);
 });
 
 test('credential review fixture fails closed on unauthorized account and other agent scope',async()=>{
