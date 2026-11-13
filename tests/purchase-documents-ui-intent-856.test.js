@@ -1010,11 +1010,11 @@ test('metadata editor source exposes revision history and refuses stale or cross
   const archiveStart=source.indexOf('  async function archive(){');
   const editStart=source.indexOf('  async function editDocument(id){');
   const saveStart=source.indexOf('  async function saveMetadata(event,id,target){');
-  const readStart=source.indexOf('  function readFile(file){');
-  assert.ok(archiveStart>=0&&editStart>archiveStart&&saveStart>editStart&&readStart>saveStart);
+  const supplementaryStart=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  assert.ok(archiveStart>=0&&editStart>archiveStart&&saveStart>editStart&&supplementaryStart>saveStart);
   const archive=source.slice(archiveStart,editStart);
   const edit=source.slice(editStart,saveStart);
-  const save=source.slice(saveStart,readStart);
+  const save=source.slice(saveStart,supplementaryStart);
   assert.match(archive,/data-mpd-edit=/);
   assert.match(edit,/metadata_history/);
   assert.match(edit,/item\.before_metadata/);
