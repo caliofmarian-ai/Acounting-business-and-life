@@ -899,3 +899,20 @@ test('supplementary evidence is removed when the post-upload Merchant grant or r
   }),error=>error.status===403);
   assert.equal(deleted,1,'uncommitted private upload is cleaned after the grant check fails');
 });
+
+test('authenticated purchase-document wave covers supplementary evidence and exact private-object cleanup',()=>{
+  const qa=read('qa-purchase-documents-856.js');
+  for(const fragment of [
+    "const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';",
+    "exact(supporting.status,201",
+    "exact(supportingReplay.status,200",
+    "exact(supportingConflict.status,409",
+    "supplementary_evidence_private_download:true",
+    "exact(foreignAppend.status,404",
+    "exact(foreignObjects.rows[0]?.n,0",
+    "exact(restoredDetail.json?.supplementary_evidence?.length,1",
+    "DELETE FROM merchant_purchase_document_evidence WHERE id=$1",
+    "merchant_purchase_document_attachment_pending",
+    "supplementary_evidence_cleanup:true"
+  ])assert.ok(qa.includes(fragment),'authenticated receipt acceptance is missing '+fragment);
+});

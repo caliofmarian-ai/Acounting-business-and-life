@@ -1102,3 +1102,49 @@ test('supplementary evidence file read rechecks the active Merchant before uploa
   assert.equal(posts,0);
   assert.equal(closed,1);
 });
+
+test('supplementary POST acknowledgement after Merchant A→B switch is ignored',async()=>{
+  const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  const end=source.indexOf('\n  function readFile(file){',start);
+  const code=source.slice(start,end);
+  const panel={},input={files:[{name:'support.png',size:68,type:'image/png'}],disabled:false};
+  let resets=0;
+  const button={disabled:false,textContent:'Attach supporting file'};
+  const form={querySelector:selector=>selector.includes('input')?input:button,reset(){resets++}};
+  const pending=new Map(),posts=[],messages=[];
+  let workspace=0,releasePost,closed=0,archives=0,edits=0,reads=0;
+  let notifyHeld;
+  const postHeld=new Promise(resolve=>{notifyHeld=resolve});
+  const held=new Promise(resolve=>{releasePost=resolve});
+  const api=async(path,options={})=>{
+    if(path==='/api/accounting/workspaces'){
+      workspace++;
+      return{role:'merchant',active_business_id:workspace<=2?14:15};
+    }
+    assert.equal(path,'/api/procurement/purchase-documents/23/evidence');
+    posts.push(JSON.parse(options.body));
+    notifyHeld();
+    return held;
+  };
+  const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
+    'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
+    \`const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;\${code};return saveSupplementaryEvidence;\`
+  )(api,()=>('supporting-intent-1'),(text,isError)=>messages.push({text,isError}),
+    async()=>{archives++},async()=>{edits++},()=>{closed++},
+    async()=>{reads++;return'data:image/png;base64,AAAA'},pending,6*1024*1024,panel,14);
+  const posting=run({preventDefault(){},currentTarget:form},23,{});
+  await postHeld;
+  assert.equal(posts.length,1,'the A attachment intent was sent exactly once');
+  releasePost({already_saved:false,evidence:{id:55,document_id:23,business_id:14,
+    file_name:'support.png',mime_type:'image/png',byte_size:68,created_at:'2026-11-13T12:00:00.000Z'}});
+  await posting;
+  assert.equal(workspace,3,'workspace is rechecked after the durable response');
+  assert.equal(reads,1);
+  assert.equal(closed,1,'the old private receipt dialog is revoked for B');
+  assert.equal(archives,0,'A archive is not rendered into B');
+  assert.equal(edits,0,'A detail is not reopened in B');
+  assert.equal(resets,0,'the stale response cannot reset the replacement draft');
+  assert.equal(messages.some(entry=>/saved securely|already saved/i.test(entry.text)),false,
+    'a stale A acknowledgement is not presented as a B success');
+  assert.equal(posts.length,1,'context change never auto-resubmits the private file');
+});
