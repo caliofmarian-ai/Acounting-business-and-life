@@ -787,7 +787,7 @@ const inventoryLocationUi=createInventoryLocationUi({
   getReadGuard:inventoryReadGuard,
   beginWrite:beginInventoryWrite,
   getInventory:()=>inventory,
-  refreshInventory:()=>loadStock(),
+  refreshInventory:()=>refreshStockTool('locations'),
   escapeHtml:esc,
   formatNumber:num,
   onLocationsChanged:()=>inventoryCountUi?.syncScopeOptions()
@@ -800,7 +800,7 @@ inventoryCountUi=createInventoryCountUi({
   beginWrite:beginInventoryWrite,
   getInventory:()=>inventory,
   getLocations:()=>inventoryLocationUi.getLocations(),
-  refreshInventory:()=>loadStock(),
+  refreshInventory:()=>refreshStockTool('count'),
   escapeHtml:esc,
   formatNumber:num,
   storageAreaLabels:STORAGE_AREA_LABELS
@@ -842,7 +842,7 @@ const inventoryScanUi=createInventoryScanUi({
   getReadGuard:inventoryReadGuard,
   beginWrite:beginInventoryWrite,
   getInventory:()=>inventory,
-  refreshInventory:()=>loadStock(),
+  refreshInventory:()=>refreshStockTool('scanner'),
   escapeHtml:esc,
   formatNumber:num,
   onReceiveItem:useInventoryForReceiving,
@@ -964,8 +964,7 @@ async function loadInventoryUnavailableAllocations(readCurrent=inventoryReadGuar
         try{
           await api(`/api/inventory/${inventoryId}/unavailable/${Number(row.id)}/release`,{method:'POST',body:JSON.stringify({note:'Restored from Inventory workspace'})});
           if(!write.accept())return;
-          await loadStock();if(!write.isCurrent())return;
-          await loadInventoryUnavailableAllocations();
+          await refreshStockTool('unavailable');if(!write.isCurrent())return;
         }catch(error){if(!write.isCurrent())return;const msg=$('inventoryUnavailableMessage');if(msg)msg.textContent=error.message}finally{write.finish()}
       });
       return d;
@@ -998,12 +997,11 @@ function wireInventoryUnavailableUi(){
       if(!write.accept())return;
       if(message)message.textContent='Stock marked unavailable. No cash or accounting transaction was created.';
       if(qty)qty.value='';if($('inventoryUnavailableNote'))$('inventoryUnavailableNote').value='';
-      await loadStock();if(!write.isCurrent())return;
+      await refreshStockTool('unavailable');if(!write.isCurrent())return;
       if(select)select.value=String(inventoryId);
       fillInventoryUnavailableEditor();
       if(select)select.value=String(inventoryId);
-      updateInventoryUnavailablePreview();
-      await loadInventoryUnavailableAllocations();
+      updateInventoryUnavailablePreview(); // Tool refresh already reloaded this item's hold history.
     }catch(error){if(!write.isCurrent())return;if(message)message.textContent=error.message}
     }finally{write.finish()}
   };
@@ -1152,6 +1150,18 @@ async function loadStock({tool=null}={}){
       }
     }
   }
+}
+
+// A Stock write may refresh only its still-open instrument. A separate Sell/Menu
+// view keeps the legacy full read, but must never fan out fourteen advanced GETs
+// while Stock is visible. The write controller invalidates obsolete contexts.
+function refreshStockTool(tool){
+  const view=$('viewStock');
+  if($('stockToolDeck')?.querySelector('.stockTool')&&view&&!view.classList.contains('hidden')){
+    if(stockToolActive!==tool||!$('stockTool-'+tool)?.open)return Promise.resolve();
+    return loadStock({tool});
+  }
+  return loadStock();
 }
 
 // One expanded instrument at a time. Never reuse a previous business's
@@ -1701,11 +1711,15 @@ async function refreshCurrentMerchantView(){
   const name=visible?.id?.replace(/^view/,'')||'Dashboard';
   try{
     if(name==='Dashboard'){invalidateMerchantToday();await loadMerchantToday({force:true});return}
+    if(name==='Stock'){
+      if(stockToolActive)await refreshStockTool(stockToolActive);
+      return;
+    }
     await loadMerchantView(name);
   }catch(error){if(!error.staleMerchantRead)console.error(error)}
 }
 if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
-if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
+if($('restockRefresh'))$('restockRefresh').onclick=()=>refreshStockTool('restock');
 if($('wastePeriod7'))$('wastePeriod7').onclick=()=>loadWasteAnalytics(7);
 if($('wastePeriod30'))$('wastePeriod30').onclick=()=>loadWasteAnalytics(30);
 if($('lotRefresh'))$('lotRefresh').onclick=()=>loadInventoryLots();
@@ -1728,7 +1742,7 @@ $('stockAdjustmentForm')?.addEventListener('submit',async e=>{
     if(out)out.textContent=`Saved. New stock: ${num(result.inventory.quantity,4)} ${result.inventory.unit}.`;
     $('stockAdjustmentQty').value='';
     $('stockAdjustmentNote').value='';
-    await loadStock();if(!write.isCurrent())return;
+    await refreshStockTool('adjustments');if(!write.isCurrent())return;
     await loadStockAdjustmentLots();if(!write.isCurrent())return;
     invalidateMerchantToday();
     updateStockAdjustmentPreview();
@@ -1766,7 +1780,7 @@ $('storageForm')?.addEventListener('submit',async e=>{
       storage_segregated:$('storageSegregated').checked
     })});if(!write.accept())return;
     if(out)out.textContent=`Storage saved for ${updated.item}.`;
-    await loadStock();if(!write.isCurrent())return;
+    await refreshStockTool('storage');if(!write.isCurrent())return;
     invalidateMerchantToday();
   }catch(error){if(!write.isCurrent())return;if(out)out.textContent=error.message}
 }finally{write.finish()}
@@ -1782,7 +1796,7 @@ $('restockSettingsForm')?.addEventListener('submit',async e=>{
     if(target>0&&target<alert)throw new Error('Restock target must be equal to or higher than the low-stock alert.');
     await api(`/api/inventory/${id}/reorder-settings`,{method:'PUT',body:JSON.stringify({reorder_quantity:alert,target_quantity:target,unit})});if(!write.accept())return;
     if(out)out.textContent='Restock settings saved.';
-    await loadStock();if(!write.isCurrent())return;invalidateMerchantToday();
+    await refreshStockTool('restockSettings');if(!write.isCurrent())return;invalidateMerchantToday();
   }catch(error){if(!write.isCurrent())return;if(out)out.textContent=error.message}
 }finally{write.finish()}
 });
@@ -1859,7 +1873,8 @@ $('stockForm').addEventListener('submit',async e=>{
     $('stockItemPicker').disabled=true;
     updateStockStorageHint();
     stockPurchasePreview();
-    await Promise.all([loadStock(),loadProducts()]);
+    // Other views load Products on demand; do not prefetch it from Stock.
+    await refreshStockTool('purchase');
     if(!write.isCurrent())return;
     invalidateMerchantToday();
   }catch(error){
