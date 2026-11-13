@@ -286,7 +286,7 @@ export async function restoreQaCredentialAdminBaseline(pool,accountId,snapshot,s
       for(const row of live.rows){
         const key=JSON.stringify([String(row.assignment_id),String(row[field])]);
         if(known.has(key))continue;
-        if(table!=='admin_permission_grants'||row.permission_code!=='credential.verify'
+        if(table!=='admin_permission_grants'||!['credential.verify','members.view'].includes(String(row.permission_code))
           ||!allowed.has(String(row.territory_id))||!qaReasons.has(row.reason))
           throw new Error('Unexpected concurrent QA Admin grant; refusing overwrite.');
         newQaGrants.push(row);
@@ -303,7 +303,8 @@ export async function restoreQaCredentialAdminBaseline(pool,accountId,snapshot,s
           [row.id,accountId]);
       if(response.rowCount!==1)throw new Error('QA Admin assignment compensation failed.');
     }
-    // Only the narrowly identified QA-created credential grants are revoked.
+    // Only the two default QA assignment grants are revoked: members.view and
+    // credential.verify, on the exact QA territories and with exact QA reasons.
     // Preserve immutable audit rows; do not touch any unrelated new grant.
     for(const row of newQaGrants){
       const compensated=await client.query(
@@ -450,6 +451,156 @@ async function verifyCredentialAdminScope({
   }finally{
     await restoreQaCredentialAdminBaseline(pool,territoryAdmin.accountId,adminBaseline,[outsideTerritoryId,reviewTerritoryId]);
   }
+}
+
+
+const QA_CREDENTIAL_ADMIN_OUTSIDE_REASON='Controlled QA out-of-scope credential authority';
+const QA_CREDENTIAL_ADMIN_INSIDE_REASON='Controlled QA in-scope credential authority';
+const QA_OWNER_CONTROL_TOWER_REASON='Controlled Owner Control Tower delegated-scope acceptance';
+const QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS=['members.view','credential.verify'];
+const QA_OWNER_CONTROL_TOWER_PERMISSIONS=['admin.console','incident.triage','profile.suspend'];
+
+export function buildQaCredentialAdminRecoverySnapshot({
+  accountId,pilotTerritoryId,assignments,permissions,functions
+}={}){
+  const account=Number(accountId),pilot=Number(pilotTerritoryId);
+  if(!Number.isSafeInteger(account)||account<1||!Number.isSafeInteger(pilot)||pilot<1
+    ||!Array.isArray(assignments)||!Array.isArray(permissions)||!Array.isArray(functions)){
+    throw new Error('QA Territory Admin recovery inputs are incomplete; refusing automatic recovery.');
+  }
+  const knownReasons=new Set([QA_CREDENTIAL_ADMIN_OUTSIDE_REASON,QA_CREDENTIAL_ADMIN_INSIDE_REASON]);
+  if(assignments.some(row=>!row||!knownReasons.has(String(row.reason||'')))){
+    throw new Error('Unexpected QA Territory Admin assignment; refusing automatic recovery.');
+  }
+  const byCreation=(a,b)=>{
+    const left=Date.parse(a.created_at||'')||0,right=Date.parse(b.created_at||'')||0;
+    return left-right||Number(a.id)-Number(b.id);
+  };
+  const outsideRows=assignments.filter(row=>row.reason===QA_CREDENTIAL_ADMIN_OUTSIDE_REASON).sort(byCreation);
+  const insideRows=assignments.filter(row=>row.reason===QA_CREDENTIAL_ADMIN_INSIDE_REASON).sort(byCreation);
+  if(outsideRows.length!==1||insideRows.length<1||insideRows.length>2){
+    throw new Error('Controlled QA Territory Admin baseline is ambiguous; refusing automatic recovery.');
+  }
+  const outside=outsideRows[0],inside=insideRows[0],temporary=insideRows.slice(1);
+  if(!Number.isSafeInteger(Number(outside.territory_id))
+    ||!Number.isSafeInteger(Number(inside.territory_id))
+    ||Number(outside.territory_id)===pilot
+    ||temporary.some(row=>Number(row.territory_id)!==pilot)
+    ||temporary.some(row=>row.authority_rank!=='territory_admin')){
+    throw new Error('Controlled QA Territory Admin territory scope changed; refusing automatic recovery.');
+  }
+  const baselineIds=new Set([String(outside.id),String(inside.id)]);
+  const baselinePermissions=permissions.filter(row=>baselineIds.has(String(row.assignment_id)));
+  const baselineFunctions=functions.filter(row=>baselineIds.has(String(row.assignment_id)));
+  const assertGrant=(assignment,code,status,reason)=>{
+    const matches=baselinePermissions.filter(row=>String(row.assignment_id)===String(assignment.id)
+      &&String(row.permission_code)===code);
+    if(matches.length!==1||matches[0].status!==status||matches[0].reason!==reason){
+      throw new Error('Controlled QA Territory Admin baseline permission evidence changed; refusing automatic recovery.');
+    }
+  };
+  for(const code of QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS){
+    assertGrant(outside,code,'active',QA_CREDENTIAL_ADMIN_OUTSIDE_REASON);
+    assertGrant(inside,code,'active',QA_CREDENTIAL_ADMIN_INSIDE_REASON);
+  }
+  const outsidePermissions=baselinePermissions.filter(row=>String(row.assignment_id)===String(outside.id));
+  if(outsidePermissions.length!==QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS.length){
+    throw new Error('Controlled QA out-of-scope baseline has unexpected permissions; refusing automatic recovery.');
+  }
+  const insideLegacy=baselinePermissions.filter(row=>String(row.assignment_id)===String(inside.id)
+    &&!QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS.includes(String(row.permission_code)));
+  if(insideLegacy.length!==QA_OWNER_CONTROL_TOWER_PERMISSIONS.length
+    ||insideLegacy.some(row=>!QA_OWNER_CONTROL_TOWER_PERMISSIONS.includes(String(row.permission_code))
+      ||row.status!=='revoked'||row.reason!==QA_OWNER_CONTROL_TOWER_REASON)){
+    throw new Error('Controlled QA in-scope baseline has unexpected legacy permissions; refusing automatic recovery.');
+  }
+  if(baselineFunctions.length!==1
+    ||String(baselineFunctions[0].assignment_id)!==String(inside.id)
+    ||baselineFunctions[0].function_code!=='trust_safety'
+    ||baselineFunctions[0].status!=='revoked'
+    ||baselineFunctions[0].reason!==QA_OWNER_CONTROL_TOWER_REASON){
+    throw new Error('Controlled QA Territory Admin baseline function evidence changed; refusing automatic recovery.');
+  }
+  const temporaryIds=new Set(temporary.map(row=>String(row.id)));
+  const temporaryPermissions=permissions.filter(row=>temporaryIds.has(String(row.assignment_id)));
+  const temporaryFunctions=functions.filter(row=>temporaryIds.has(String(row.assignment_id)));
+  if(temporaryFunctions.length||temporaryPermissions.some(row=>
+    !QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS.includes(String(row.permission_code))
+    ||row.reason!==QA_CREDENTIAL_ADMIN_INSIDE_REASON
+    ||!['active','revoked'].includes(String(row.status)))){
+    throw new Error('Unexpected temporary QA Territory Admin grant; refusing automatic recovery.');
+  }
+  const snapshot={
+    accountId:String(account),
+    assignments:[outside,inside].map(row=>({...row,status:'active'})),
+    permissions:baselinePermissions,
+    functions:baselineFunctions
+  };
+  const needsRestore=[outside,inside].some(row=>row.status!=='active')
+    ||temporary.some(row=>row.status!=='revoked')
+    ||temporaryPermissions.some(row=>row.status!=='revoked');
+  return{
+    snapshot,
+    scopeIds:[Number(outside.territory_id),pilot],
+    needsRestore,
+    temporaryAssignments:temporary.length
+  };
+}
+
+export async function recoverStaleQaCredentialAdminBaseline(pool,accountId,pilotTerritoryId){
+  const actor=await pool.query(
+    "SELECT id FROM accounts WHERE id=$1 AND account_mode='company_test' AND test_role='territory_admin' AND auth_status='active'",
+    [accountId]
+  );
+  if(actor.rowCount!==1)throw new Error('QA Territory Admin recovery target is not an active company_test account.');
+  const assignments=await pool.query(
+    "SELECT id,territory_id,authority_rank,status,assigned_by_account_id,reason,effective_from,effective_until,created_at FROM platform_admin_assignments WHERE account_id=$1 AND admin_role='territory_admin' AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin' ORDER BY created_at,id",
+    [accountId]
+  );
+  const ids=assignments.rows.map(row=>String(row.id));
+  const [permissions,functions]=await Promise.all([
+    ids.length?pool.query(
+      "SELECT assignment_id,permission_code,status,granted_by_account_id,reason,effective_from,effective_until FROM admin_permission_grants WHERE assignment_id=ANY($1::bigint[]) ORDER BY assignment_id,permission_code",
+      [ids]
+    ):Promise.resolve({rows:[]}),
+    ids.length?pool.query(
+      "SELECT assignment_id,function_code,status,granted_by_account_id,reason,effective_from,effective_until FROM admin_function_assignments WHERE assignment_id=ANY($1::bigint[]) ORDER BY assignment_id,function_code",
+      [ids]
+    ):Promise.resolve({rows:[]})
+  ]);
+  const plan=buildQaCredentialAdminRecoverySnapshot({
+    accountId,pilotTerritoryId,assignments:assignments.rows,
+    permissions:permissions.rows,functions:functions.rows
+  });
+  if(!plan.needsRestore){
+    return{restored:false,original_assignments:plan.snapshot.assignments.length,temporary_assignments_revoked:0};
+  }
+  const restored=await restoreQaCredentialAdminBaseline(pool,accountId,plan.snapshot,plan.scopeIds);
+  const after=await pool.query(
+    "SELECT id,status FROM platform_admin_assignments WHERE account_id=$1 AND admin_role='territory_admin' AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin' ORDER BY id",
+    [accountId]
+  );
+  const baselineIds=new Set(plan.snapshot.assignments.map(row=>String(row.id)));
+  if(plan.snapshot.assignments.some(row=>!after.rows.some(current=>
+    String(current.id)===String(row.id)&&current.status==='active'))
+    ||after.rows.some(row=>!baselineIds.has(String(row.id))&&row.status!=='revoked')){
+    throw new Error('QA Territory Admin recovery could not verify the controlled baseline.');
+  }
+  const extraIds=after.rows.filter(row=>!baselineIds.has(String(row.id))).map(row=>String(row.id));
+  if(extraIds.length){
+    const grants=await pool.query(
+      "SELECT assignment_id,status FROM admin_permission_grants WHERE assignment_id=ANY($1::bigint[])",
+      [extraIds]
+    );
+    if(grants.rows.some(row=>row.status!=='revoked')){
+      throw new Error('QA Territory Admin recovery left a temporary permission active.');
+    }
+  }
+  return{
+    restored:true,
+    original_assignments:plan.snapshot.assignments.length,
+    temporary_assignments_revoked:restored.temporary_assignments_revoked
+  };
 }
 
 async function serviceNotifications({
@@ -707,6 +858,9 @@ export async function runServiceProviderExperienceAcceptance({
   });
 
   const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+  const credentialAdminPreflightRecovery=await recoverStaleQaCredentialAdminBaseline(
+    pool,territoryAdmin.accountId,territoryId
+  );
   const category=await pool.query(
     "SELECT id,code,name,credential_gate FROM service_categories WHERE code='handyman' AND active=TRUE LIMIT 1"
   );
@@ -1078,6 +1232,7 @@ export async function runServiceProviderExperienceAcceptance({
     review_blocked_before_customer_confirmation:true,
     stale_qa_credentials_rejected:Number(staleQaCredentialsRejected),
     credential_scope_authority:true,
+    credential_qa_admin_preflight_recovery:credentialAdminPreflightRecovery,
     credential_id:credentialScope.credentialId,
     credential_audit_id:credentialScope.auditId,
     credential_ordinary_user_denied:credentialScope.ordinaryDenied,
