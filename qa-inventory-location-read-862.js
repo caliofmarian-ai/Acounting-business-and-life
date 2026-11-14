@@ -5,6 +5,12 @@ export const INVENTORY_LOCATION_READ_862_WAVE='inventory_location_read_862';
 export const INVENTORY_862_PATHS=Object.freeze([
   '/api/inventory/location-summary'
 ]);
+export const INVENTORY_862_ACCOUNTING_PATHS=Object.freeze([
+  '/api/accounting/workspaces'
+]);
+export const INVENTORY_862_ACCOUNTING_E2E_PATHS=Object.freeze([
+  '/api/merchant/today'
+]);
 export const INVENTORY_862_LEGACY_PATHS=Object.freeze([
   '/api/inventory/locations',
   '/api/inventory/location-balances',
@@ -16,6 +22,16 @@ export function inventory862Percentile(values,percentage=0.95){
   if(!samples.length)throw new Error('Inventory 862 requires actual latency samples.');
   if(!(percentage>=0&&percentage<=1))throw new TypeError('Invalid percentile.');
   return Number(samples[Math.max(0,Math.ceil(samples.length*percentage)-1)].toFixed(2));
+}
+export function inventory862AssertLatency(values,label='Inventory 862',limitMs=2000){
+  const p95=inventory862Percentile(values);
+  if(p95>=limitMs)throw new Error(label+' p95 >= '+limitMs+' ms: '+p95);
+  return p95;
+}
+export function inventory862OtherBusiness(businesses,activeBusinessId){
+  const otherId=(businesses||[]).map(b=>Number(b.id)).find(id=>id>0&&id!==Number(activeBusinessId));
+  if(!otherId)throw new Error('Inventory 862 requires a second authorized Merchant business to verify A/B workspace switching.');
+  return otherId;
 }
 export function inventory862AssertScopedRows(rows,businessId,path){
   if(!Array.isArray(rows))throw new Error('Inventory 862 '+path+' returned a non-array payload.');
@@ -34,6 +50,16 @@ export function inventory862AssertPayload(body,businessId,path){
     return body.locations.length+body.balances.length+body.transfers.length;
   }
   return inventory862AssertScopedRows(body,businessId,path);
+}
+export function inventory862AssertWorkspace(body,businessId){
+  const workspace=body?.workspace??body;
+  if(!workspace||workspace.role!=='merchant'||
+      Number(workspace.active_business_id)!==Number(businessId)||
+      !Array.isArray(workspace.businesses)||
+      !workspace.businesses.some(b=>Number(b.id)===Number(businessId))){
+    throw new Error('Inventory 862 ordinary accounting workspace is missing or cross-business.');
+  }
+  return workspace.businesses.length;
 }
 export function inventory862ValidateRuntime(env=process.env){
   const runtime=validateRuntimeSafety(env);
@@ -69,6 +95,16 @@ async function measureAuthorized(base,path,token='',businessId=null){
   const elapsed=Number((performance.now()-started).toFixed(2));
   return{status:response.status,body,elapsed};
 }
+
+async function measureOrdinaryAccounting(base,path,token=''){
+  const started=performance.now();
+  const headers={Accept:'application/json','Cache-Control':'no-store'};
+  if(token)headers.Authorization='Bearer '+token;
+  const response=await fetch(base+path,{headers,cache:'no-store',signal:AbortSignal.timeout(12000)});
+  const body=await response.json().catch(()=>null);
+  const elapsed=Number((performance.now()-started).toFixed(2));
+  return{status:response.status,body,elapsed};
+}
 function assertHttp(result,status,label){
   if(result.status!==status)throw new Error(label+' returned HTTP '+result.status+' instead of '+status);
 }
@@ -85,7 +121,7 @@ async function selectBusiness({base,token,businessId}){
 }
 
 export async function runInventoryLocationRead862Acceptance({
-  pool,base,secret,env=process.env,aliases,helpers,rounds=12
+  pool,base,secret,env=process.env,aliases,helpers,rounds=20
 }){
   const runtime=inventory862ValidateRuntime(env);
   const url=new URL(base);
@@ -100,6 +136,7 @@ export async function runInventoryLocationRead862Acceptance({
   let merchant=null,customer=null,originalBusinessId=null,changedBusiness=false;
   let failed=null;
   const timings=Object.fromEntries(INVENTORY_862_PATHS.map(path=>[path,[]]));
+  const accountingTimings=[],merchantTodayTimings=[];
   try{
     // Existing QA harness rotates only pre-classified company-test account passwords.
     // Its outer finally restores their original password salts/hashes.
@@ -111,16 +148,29 @@ export async function runInventoryLocationRead862Acceptance({
        me.json?.account?.active_role!=='merchant'){
       throw new Error('Inventory 862 session must be a dedicated active QA Merchant.');
     }
-    const space=await requestJson(base,'/api/accounting/workspaces',{token:merchant.token});
-    expectStatus(space,200,'Inventory 862 Merchant workspaces');
+    const spaceRead=await measureOrdinaryAccounting(base,INVENTORY_862_ACCOUNTING_PATHS[0],merchant.token);
+    assertHttp(spaceRead,200,'Inventory 862 Merchant workspaces');
+    const space={json:spaceRead.body};
     if(space.json?.role!=='merchant'||!Array.isArray(space.json?.businesses)||
        !space.json.businesses.length)throw new Error('Inventory 862 QA Merchant has no authorized business.');
     originalBusinessId=Number(space.json.active_business_id);
     if(!originalBusinessId||!space.json.businesses.some(b=>Number(b.id)===originalBusinessId))
       throw new Error('Inventory 862 active Merchant workspace is not bound.');
+    inventory862AssertWorkspace(space.json,originalBusinessId);
+    accountingTimings.push(spaceRead.elapsed);
 
     const before=await fingerprintBusiness(pool,originalBusinessId);
-    for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS])
+    const merchantTodayWarm=await measureOrdinaryAccounting(base,INVENTORY_862_ACCOUNTING_E2E_PATHS[0],merchant.token);
+    assertHttp(merchantTodayWarm,200,'Warm end-to-end Merchant Today read');
+    inventory862AssertWorkspace(merchantTodayWarm.body,originalBusinessId);
+    merchantTodayTimings.push(merchantTodayWarm.elapsed);
+    for(let n=0;n<3;n++){
+      const today=await measureOrdinaryAccounting(base,INVENTORY_862_ACCOUNTING_E2E_PATHS[0],merchant.token);
+      assertHttp(today,200,'End-to-end Merchant Today read');
+      inventory862AssertWorkspace(today.body,originalBusinessId);
+      merchantTodayTimings.push(today.elapsed);
+    }
+    for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS,...INVENTORY_862_ACCOUNTING_PATHS,...INVENTORY_862_ACCOUNTING_E2E_PATHS])
       assertHttp(await measureAuthorized(base,path),401,'Guest '+path);
 
     customer=await qaAccountSession({pool,base,secret,email:aliases.customer,
@@ -132,7 +182,7 @@ export async function runInventoryLocationRead862Acceptance({
        customerMe.json?.account?.active_role!=='customer'){
       throw new Error('Inventory 862 customer negative must use Customer QA profile.');
     }
-    for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS])
+    for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS,...INVENTORY_862_ACCOUNTING_PATHS,...INVENTORY_862_ACCOUNTING_E2E_PATHS])
       assertHttp(await measureAuthorized(base,path,customer.token),403,'Customer '+path);
 
     const warmups=[];
@@ -145,11 +195,13 @@ export async function runInventoryLocationRead862Acceptance({
 
     // Replicate the concurrent GET pair performed by Merchant Storage UI.
     for(let n=0;n<rounds;n++){
-      const responses=await Promise.all(INVENTORY_862_PATHS.map(path=>
-        measureAuthorized(base,path,merchant.token,originalBusinessId)
-      ));
+      const responses=await Promise.all(
+        [...INVENTORY_862_PATHS,...INVENTORY_862_PATHS].map(path=>
+          measureAuthorized(base,path,merchant.token,originalBusinessId)
+        )
+      );
       for(let idx=0;idx<responses.length;idx++){
-        const path=INVENTORY_862_PATHS[idx],response=responses[idx];
+        const path=INVENTORY_862_PATHS[idx%INVENTORY_862_PATHS.length],response=responses[idx];
         assertHttp(response,200,'Merchant '+path);
         inventory862AssertPayload(response.body,originalBusinessId,path);
         if(response.elapsed>10000)throw new Error('Inventory 862 unexplained >10 s request: '+path);
@@ -157,7 +209,24 @@ export async function runInventoryLocationRead862Acceptance({
       }
     }
 
-    const otherId=space.json.businesses.map(b=>Number(b.id)).find(id=>id!==originalBusinessId);
+    const accountingForged=await measureOrdinaryAccounting(
+      base,INVENTORY_862_ACCOUNTING_PATHS[0]+'?business_id='+
+        (space.json.businesses.map(b=>Number(b.id)).find(id=>id!==originalBusinessId)||originalBusinessId),
+      merchant.token
+    );
+    assertHttp(accountingForged,200,'Forged ordinary accounting business query');
+    inventory862AssertWorkspace(accountingForged.body,originalBusinessId);
+    accountingTimings.push(accountingForged.elapsed);
+
+    for(let n=0;n<rounds;n++){
+      const ordinary=await measureOrdinaryAccounting(base,INVENTORY_862_ACCOUNTING_PATHS[0],merchant.token);
+      assertHttp(ordinary,200,'Ordinary Merchant accounting read');
+      inventory862AssertWorkspace(ordinary.body,originalBusinessId);
+      if(ordinary.elapsed>10000)throw new Error('Ordinary accounting read exceeded 10 s.');
+      accountingTimings.push(ordinary.elapsed);
+    }
+
+    const otherId=inventory862OtherBusiness(space.json.businesses,originalBusinessId);
     if(otherId){
       const foreignInventory=await pool.query(
         'SELECT id FROM inventory WHERE business_id=$1 ORDER BY id LIMIT 1',[otherId]
@@ -176,6 +245,10 @@ export async function runInventoryLocationRead862Acceptance({
       expectStatus(switched,200,'Inventory 862 switched Merchant workspace');
       if(Number(switched.json?.active_business_id)!==otherId)
         throw new Error('Inventory 862 selected workspace did not update.');
+      const ordinaryB=await measureOrdinaryAccounting(base,INVENTORY_862_ACCOUNTING_PATHS[0],merchant.token);
+      assertHttp(ordinaryB,200,'Ordinary Merchant accounting switched B');
+      inventory862AssertWorkspace(ordinaryB.body,otherId);
+      accountingTimings.push(ordinaryB.elapsed);
       const beforeB=await fingerprintBusiness(pool,otherId);
       for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS]){
         const result=await measureAuthorized(base,path,merchant.token,otherId);
@@ -187,6 +260,10 @@ export async function runInventoryLocationRead862Acceptance({
         throw new Error('Inventory 862 GETs unexpectedly changed business B stock or ledger.');
       await selectBusiness({base,token:merchant.token,businessId:originalBusinessId});
       changedBusiness=false;
+      const ordinaryBack=await measureOrdinaryAccounting(base,INVENTORY_862_ACCOUNTING_PATHS[0],merchant.token);
+      assertHttp(ordinaryBack,200,'Ordinary Merchant accounting restored A');
+      inventory862AssertWorkspace(ordinaryBack.body,originalBusinessId);
+      accountingTimings.push(ordinaryBack.elapsed);
       const back=await measureAuthorized(base,INVENTORY_862_PATHS[0],merchant.token,originalBusinessId);
       assertHttp(back,200,'Merchant restored A');
       inventory862AssertPayload(back.body,originalBusinessId,INVENTORY_862_PATHS[0]);
@@ -195,14 +272,24 @@ export async function runInventoryLocationRead862Acceptance({
     if(JSON.stringify(before)!==JSON.stringify(after))
       throw new Error('Inventory 862 GETs unexpectedly changed business A stock or ledger.');
 
-    const p95=Object.fromEntries(INVENTORY_862_PATHS.map(path=>[path,inventory862Percentile(timings[path])]));
-    if(Object.values(p95).some(n=>n>=2000))
-      throw new Error('Inventory 862 authenticated p95 >=2000 ms: '+JSON.stringify(p95));
+    const p95=Object.fromEntries(INVENTORY_862_PATHS.map(path=>[
+      path,inventory862AssertLatency(timings[path],'Inventory 862 '+path)
+    ]));
+    const accountingP95=inventory862AssertLatency(accountingTimings,'Inventory 862 ordinary accounting workspace resolver');
+    const merchantTodayP95=inventory862Percentile(merchantTodayTimings);
     return {
       status:'PASS',wave:INVENTORY_LOCATION_READ_862_WAVE,
       authenticated_qa_merchant:true,customer_403:true,guest_401:true,
       business_a_b_verified:Boolean(otherId),queried_business_override_ignored:Boolean(otherId),
-      rounds,storage_summary_requests:rounds,
+      ordinary_workspace_context:true,ordinary_workspace_origin_header_sent:false,
+      accounting_context_path:INVENTORY_862_ACCOUNTING_PATHS[0],
+      accounting_context_rounds:rounds,accounting_context_p95_ms:accountingP95,
+      accounting_context_max_ms:Math.max(...accountingTimings),
+      merchant_today_path:INVENTORY_862_ACCOUNTING_E2E_PATHS[0],
+      merchant_today_rounds:merchantTodayTimings.length,
+      merchant_today_p95_ms:merchantTodayP95,
+      merchant_today_max_ms:Math.max(...merchantTodayTimings),
+      rounds,storage_summary_requests:rounds*2,storage_summary_concurrent_pairs:rounds,
       storage_summary_p95_ms:p95[INVENTORY_862_PATHS[0]],
       storage_summary_max_ms:Math.max(...timings[INVENTORY_862_PATHS[0]]),
       legacy_endpoints_authorized_and_tenant_scoped:true,
