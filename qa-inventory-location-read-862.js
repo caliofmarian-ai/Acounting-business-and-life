@@ -20,6 +20,16 @@ export function inventory862Percentile(values,percentage=0.95){
   if(!(percentage>=0&&percentage<=1))throw new TypeError('Invalid percentile.');
   return Number(samples[Math.max(0,Math.ceil(samples.length*percentage)-1)].toFixed(2));
 }
+export function inventory862AssertLatency(values,label='Inventory 862',limitMs=2000){
+  const p95=inventory862Percentile(values);
+  if(p95>=limitMs)throw new Error(label+' p95 >= '+limitMs+' ms: '+p95);
+  return p95;
+}
+export function inventory862OtherBusiness(businesses,activeBusinessId){
+  const otherId=(businesses||[]).map(b=>Number(b.id)).find(id=>id>0&&id!==Number(activeBusinessId));
+  if(!otherId)throw new Error('Inventory 862 requires a second authorized Merchant business to verify A/B workspace switching.');
+  return otherId;
+}
 export function inventory862AssertScopedRows(rows,businessId,path){
   if(!Array.isArray(rows))throw new Error('Inventory 862 '+path+' returned a non-array payload.');
   if(rows.some(row=>Number(row.business_id)!==Number(businessId)))
@@ -108,7 +118,7 @@ async function selectBusiness({base,token,businessId}){
 }
 
 export async function runInventoryLocationRead862Acceptance({
-  pool,base,secret,env=process.env,aliases,helpers,rounds=12
+  pool,base,secret,env=process.env,aliases,helpers,rounds=20
 }){
   const runtime=inventory862ValidateRuntime(env);
   const url=new URL(base);
@@ -173,11 +183,13 @@ export async function runInventoryLocationRead862Acceptance({
 
     // Replicate the concurrent GET pair performed by Merchant Storage UI.
     for(let n=0;n<rounds;n++){
-      const responses=await Promise.all(INVENTORY_862_PATHS.map(path=>
-        measureAuthorized(base,path,merchant.token,originalBusinessId)
-      ));
+      const responses=await Promise.all(
+        [...INVENTORY_862_PATHS,...INVENTORY_862_PATHS].map(path=>
+          measureAuthorized(base,path,merchant.token,originalBusinessId)
+        )
+      );
       for(let idx=0;idx<responses.length;idx++){
-        const path=INVENTORY_862_PATHS[idx],response=responses[idx];
+        const path=INVENTORY_862_PATHS[idx%INVENTORY_862_PATHS.length],response=responses[idx];
         assertHttp(response,200,'Merchant '+path);
         inventory862AssertPayload(response.body,originalBusinessId,path);
         if(response.elapsed>10000)throw new Error('Inventory 862 unexplained >10 s request: '+path);
@@ -202,7 +214,7 @@ export async function runInventoryLocationRead862Acceptance({
       accountingTimings.push(ordinary.elapsed);
     }
 
-    const otherId=space.json.businesses.map(b=>Number(b.id)).find(id=>id!==originalBusinessId);
+    const otherId=inventory862OtherBusiness(space.json.businesses,originalBusinessId);
     if(otherId){
       const foreignInventory=await pool.query(
         'SELECT id FROM inventory WHERE business_id=$1 ORDER BY id LIMIT 1',[otherId]
@@ -248,10 +260,10 @@ export async function runInventoryLocationRead862Acceptance({
     if(JSON.stringify(before)!==JSON.stringify(after))
       throw new Error('Inventory 862 GETs unexpectedly changed business A stock or ledger.');
 
-    const p95=Object.fromEntries(INVENTORY_862_PATHS.map(path=>[path,inventory862Percentile(timings[path])]));
-    const accountingP95=inventory862Percentile(accountingTimings);
-    if(Object.values(p95).some(n=>n>=2000))
-      throw new Error('Inventory 862 authenticated p95 >=2000 ms: '+JSON.stringify(p95));
+    const p95=Object.fromEntries(INVENTORY_862_PATHS.map(path=>[
+      path,inventory862AssertLatency(timings[path],'Inventory 862 '+path)
+    ]));
+    const accountingP95=inventory862AssertLatency(accountingTimings,'Inventory 862 ordinary accounting');
     return {
       status:'PASS',wave:INVENTORY_LOCATION_READ_862_WAVE,
       authenticated_qa_merchant:true,customer_403:true,guest_401:true,
@@ -260,7 +272,7 @@ export async function runInventoryLocationRead862Acceptance({
       accounting_context_path:INVENTORY_862_ACCOUNTING_PATHS[0],
       accounting_context_rounds:rounds,accounting_context_p95_ms:accountingP95,
       accounting_context_max_ms:Math.max(...accountingTimings),
-      rounds,storage_summary_requests:rounds,
+      rounds,storage_summary_requests:rounds*2,storage_summary_concurrent_pairs:rounds,
       storage_summary_p95_ms:p95[INVENTORY_862_PATHS[0]],
       storage_summary_max_ms:Math.max(...timings[INVENTORY_862_PATHS[0]]),
       legacy_endpoints_authorized_and_tenant_scoped:true,

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  INVENTORY_LOCATION_READ_862_WAVE,INVENTORY_862_PATHS,INVENTORY_862_ACCOUNTING_PATHS,INVENTORY_862_LEGACY_PATHS,inventory862Percentile,
+  INVENTORY_LOCATION_READ_862_WAVE,INVENTORY_862_PATHS,INVENTORY_862_ACCOUNTING_PATHS,INVENTORY_862_LEGACY_PATHS,inventory862Percentile,inventory862AssertLatency,inventory862OtherBusiness,
   inventory862AssertScopedRows,inventory862AssertPayload,inventory862AssertWorkspace,inventory862ValidateRuntime,
   runInventoryLocationRead862Acceptance
 } from '../qa-inventory-location-read-862.js';
@@ -22,6 +22,15 @@ test('862: percentile uses observed nearest-rank latency; missing samples are an
   assert.throws(()=>inventory862Percentile([]),/actual latency samples/);
   assert.throws(()=>inventory862Percentile([1],1.5),/Invalid percentile/);
 });
+test('862: p95 contract rejects either measured path at or above two seconds',()=>{
+  assert.equal(inventory862AssertLatency([900,1900],'ordinary accounting'),1900);
+  assert.throws(()=>inventory862AssertLatency([900,2000],'ordinary accounting'),/p95 >= 2000 ms/);
+});
+test('862: authenticated A/B acceptance requires a second existing Merchant business',()=>{
+  assert.equal(inventory862OtherBusiness([{id:11},{id:22}],11),22);
+  assert.throws(()=>inventory862OtherBusiness([{id:11}],11),/second authorized Merchant business/);
+});
+
 test('862: every returned location and balance must belong to the authenticated business',()=>{
   assert.equal(inventory862AssertScopedRows([{business_id:9},{business_id:'9'}],9,'locations'),2);
   assert.throws(()=>inventory862AssertScopedRows([{business_id:8}],9,'balances'),/cross-business/);
@@ -78,7 +87,7 @@ test('862: the authorized QA wave uses existing credential-restoration and runs 
 
 test('862: controlled Merchant + Customer sessions exercise origin-bound Inventory and ordinary accounting GETs with A/B scope',async()=>{
   const originalFetch=globalThis.fetch;
-  let business=111;
+  let business=111,activeSummary=0,maxSummaryConcurrency=0;
   const queries=[],calls=[],originHeaders=[];
   const pool={
     async query(sql,args=[]){
@@ -106,6 +115,12 @@ test('862: controlled Merchant + Customer sessions exercise origin-bound Invento
   };
   globalThis.fetch=async (url,opts={})=>{
     const pathname=new URL(url).pathname,params=new URL(url).searchParams;
+    if(pathname==='/api/inventory/location-summary'){
+      activeSummary++;
+      maxSummaryConcurrency=Math.max(maxSummaryConcurrency,activeSummary);
+      await Promise.resolve();
+      activeSummary--;
+    }
     originHeaders.push({pathname,value:opts.headers?.['x-abl-inventory-origin-business']});
     if(pathname==='/api/accounting/active-workspace'){
       business=Number(JSON.parse(opts.body).business_id);
@@ -152,7 +167,9 @@ test('862: controlled Merchant + Customer sessions exercise origin-bound Invento
     assert.equal(result.business_a_b_verified,true);
     assert.equal(result.guest_401,true);
     assert.equal(result.customer_403,true);
-    assert.equal(result.storage_summary_requests,12);
+    assert.equal(result.storage_summary_requests,24);
+    assert.equal(result.storage_summary_concurrent_pairs,12);
+    assert.ok(maxSummaryConcurrency>=2,'two Storage summary GETs must overlap in each measurement pair');
     assert.ok(Number.isFinite(result.storage_summary_p95_ms));
     assert.equal(result.legacy_endpoints_authorized_and_tenant_scoped,true);
     assert.equal(result.no_stock_or_money_write,true);
