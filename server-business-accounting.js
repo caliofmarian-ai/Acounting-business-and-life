@@ -13,6 +13,10 @@ import {startEmbeddedProfileGovernance,stopEmbeddedProfileGovernance} from './se
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {readOrderDetail} from './orders-read-core.js';
 import { ensureLegacyAccountingBaseSchema } from './accounting-base-schema.js';
+import {inventoryMutationOrigin,boundInventoryOrigin} from './inventory-origin-core.js';
+import {INVENTORY_PURCHASE_INTENT_SCHEMA,executeInventoryPurchaseIntent,lockInventoryPurchaseBusiness} from './inventory-purchase-intent-core.js';
+import {verifyV2SessionTokenSignature} from './auth-session-core.js';
+import {sessionCredentialFromHeaders} from './session-cookie-core.js';
 import { inventoryLotExpiryStatus,planPhysicalStockReduction } from './inventory-lot-core.js';
 import {inventoryStorageDefaults,requireValidInventoryStorage} from './inventory-storage-core.js';
 import { planInventoryFefo,applyLotAllocations,canUseSupplyLots,inventoryLotRows,applyPhysicalLotReductions,inventoryAvailabilityRows } from './inventory-lot-runtime.js';
@@ -23,6 +27,7 @@ import {
 } from './food-allergen-core.js';
 import {directProductCostEstimate} from './food-cost-core.js';
 import {buildWasteAnalytics} from './inventory-waste-core.js';
+import {parsePreparedRemoval,estimatedPreparedRemovalCost} from './prepared-portion-removal-core.js';
 import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} from './inventory-count-sessions.js';
 import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from './inventory-identifiers.js';
 import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance,reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions} from './inventory-locations.js';
@@ -242,6 +247,46 @@ async function initAccountingTenancyDb() {
     CREATE INDEX IF NOT EXISTS inventory_adjustment_lot_allocations_lot_idx
       ON inventory_adjustment_lot_allocations(lot_id,created_at DESC);
 
+
+    -- Prepared portions removed without a sale: costed, noncash and reason-specific.
+    -- Source ingredients are consumed on sale/disposition, not on batch recipe definition.
+    CREATE TABLE IF NOT EXISTS prepared_product_removals (
+      id BIGSERIAL PRIMARY KEY,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
+      product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      product_name_snapshot TEXT NOT NULL,
+      removal_reason TEXT NOT NULL CHECK(removal_reason IN ('owner_consumption','damaged','spoilage','quality_rejected')),
+      accounting_treatment TEXT NOT NULL CHECK(accounting_treatment IN ('noncash_owner_draw','noncash_product_loss')),
+      quantity NUMERIC(14,4) NOT NULL CHECK(quantity>0),
+      unit_cost_snapshot NUMERIC(14,6) NOT NULL DEFAULT 0,
+      estimated_cost NUMERIC(14,2) NOT NULL DEFAULT 0,
+      recipe_batch_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      note TEXT NOT NULL DEFAULT '',
+      actor_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+      idempotency_key TEXT NOT NULL,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(business_id,idempotency_key)
+    );
+    CREATE INDEX IF NOT EXISTS prepared_product_removals_business_time_idx
+      ON prepared_product_removals(business_id,occurred_at DESC,id DESC);
+    CREATE TABLE IF NOT EXISTS prepared_product_removal_ingredients (
+      removal_id BIGINT NOT NULL REFERENCES prepared_product_removals(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      ingredient_name_snapshot TEXT NOT NULL,
+      quantity_used NUMERIC(16,6) NOT NULL CHECK(quantity_used>0),
+      unit_cost_snapshot NUMERIC(14,6) NOT NULL DEFAULT 0,
+      cost_snapshot NUMERIC(16,4) NOT NULL DEFAULT 0,
+      PRIMARY KEY(removal_id,inventory_id)
+    );
+    CREATE TABLE IF NOT EXISTS prepared_product_removal_lots (
+      removal_id BIGINT NOT NULL REFERENCES prepared_product_removals(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      lot_id BIGINT NOT NULL,
+      quantity_used NUMERIC(16,6) NOT NULL CHECK(quantity_used>0),
+      expires_at_snapshot TIMESTAMPTZ,
+      PRIMARY KEY(removal_id,inventory_id,lot_id)
+    );
+
     CREATE TABLE IF NOT EXISTS product_sale_lot_allocations (
       sale_id BIGINT NOT NULL REFERENCES product_sales(id) ON DELETE CASCADE,
       inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
@@ -315,6 +360,7 @@ async function initAccountingTenancyDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`SELECT pg_advisory_xact_lock(hashtext('abl:inventory:purchase:intent-schema:v1'));\n${INVENTORY_PURCHASE_INTENT_SCHEMA}`);
   await ensureInventoryIdentifierSchema(pool);
   await ensureInventoryLocationSchema(pool);
   await ensureInventoryCountSessionSchema(pool);
@@ -400,15 +446,23 @@ async function accountingContext(req){
   const role=clean(me.account?.active_role,40);
   if(!['merchant','supplier'].includes(role)) throw Object.assign(new Error('Switch to Merchant or Supplier to use Accounting'),{status:403});
   if(!roleEnabled(me,role)) throw Object.assign(new Error(`${role} profile is not active`),{status:403});
+  const originBusinessId=inventoryMutationOrigin(req);
   let bindings=await profileBindings(Number(me.account.id),role);
-  if(!bindings.length){
+  if(!bindings.length&&originBusinessId==null){
     await ensureProfileBusinessBinding(Number(me.account.id),role,null,'');
     bindings=await profileBindings(Number(me.account.id),role);
   }
-  if(!bindings.length) throw Object.assign(new Error('No accounting workspace is bound to this profile'),{status:409});
-  const pref=await pool.query(`SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role=$2`,[me.account.id,role]);
-  let selected=bindings.find(b=>Number(b.id)===Number(pref.rows[0]?.business_id))||bindings[0];
-  await pool.query(`INSERT INTO account_business_preferences(account_id,role,business_id) VALUES($1,$2,$3) ON CONFLICT(account_id,role) DO UPDATE SET business_id=EXCLUDED.business_id,updated_at=NOW()`,[me.account.id,role,selected.id]);
+  if(!bindings.length&&originBusinessId==null) throw Object.assign(new Error('No accounting workspace is bound to this profile'),{status:409});
+  let selected;
+  if(originBusinessId==null){
+    const pref=await pool.query(`SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role=$2`,[me.account.id,role]);
+    selected=bindings.find(b=>Number(b.id)===Number(pref.rows[0]?.business_id))||bindings[0];
+    await pool.query(`INSERT INTO account_business_preferences(account_id,role,business_id) VALUES($1,$2,$3) ON CONFLICT(account_id,role) DO UPDATE SET business_id=EXCLUDED.business_id,updated_at=NOW()`,[me.account.id,role,selected.id]);
+  }else{
+    if(role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    selected=boundInventoryOrigin(bindings,originBusinessId);
+    // A delayed A request must not reset the user's newer B preference.
+  }
   await ensureBudgetRow(Number(selected.id));
   return {me,role,business:selected,businesses:bindings};
 }
@@ -755,49 +809,83 @@ app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
   res.status(201).json(rows[0])
 }catch(e){next(e)}});
 
+async function verifyInventoryPurchaseMerchant(client,{businessId,accountId},token){
+  const session=verifyV2SessionTokenSignature(TOKEN_SECRET,token);
+  if(!session||String(session.accountId)!==String(accountId))return false;
+  const grant=await client.query(`
+    SELECT 1 FROM accounts a
+    JOIN profiles p ON p.account_id=a.id AND p.role='merchant' AND p.enabled=TRUE
+    JOIN profile_business_bindings pb ON pb.account_id=a.id AND pb.role=p.role
+      AND pb.business_id=$2 AND pb.status='active'
+    JOIN business_memberships bm ON bm.account_id=a.id AND bm.business_id=pb.business_id AND bm.active=TRUE
+    WHERE a.id=$1 AND a.active_role='merchant' AND a.auth_status NOT IN ('suspended','closed')
+      AND (a.account_mode='company_test' OR a.email_verified_at IS NOT NULL)
+    FOR SHARE OF a,p,pb,bm
+  `,[accountId,businessId]);
+  if(grant.rowCount!==1)return false;
+  // Lock the account before its session, as account closure does.
+  const activeSession=await client.query(`
+    SELECT 1 FROM account_sessions WHERE session_id=$1 AND account_id=$2
+      AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR SHARE
+  `,[session.sessionId,accountId]);
+  return activeSession.rowCount===1;
+}
+
 app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
+  res.set('Cache-Control','private, no-store');
   try{
+    const {purchase_intent_key: intentKey,...instructions}=req.body??{};
     const ctx=await accountingContext(req);
     if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
-    let itemName=clean(req.body?.item,100);
-    const requestedInventoryId=req.body?.inventory_id==null||req.body?.inventory_id===''?null:Number(req.body.inventory_id);
+    let itemName=clean(instructions.item,100);
+    const requestedInventoryId=instructions.inventory_id==null||instructions.inventory_id===''?null:Number(instructions.inventory_id);
     if(requestedInventoryId!=null&&!Number.isInteger(requestedInventoryId))return res.status(400).json({error:'Choose a valid Inventory item.'});
+    // A reviewed paid CSV may create a NEW item only. Keep normal stock
+    // receiving backwards-compatible, but reject malformed opt-in flags.
+    if(instructions.create_only!==undefined&&typeof instructions.create_only!=='boolean')
+      return res.status(400).json({error:'create_only must be a boolean.'});
+    if(instructions.create_only===true&&requestedInventoryId!=null)
+      return res.status(400).json({error:'A create-only purchase cannot specify an Inventory item ID.'});
     if(!itemName&&requestedInventoryId==null)return res.status(400).json({error:'Item is required'});
-    const requestedLegacyType=normalizeInventoryType(req.body?.inventory_type);
-    const classificationExplicit=inventoryClassificationInputProvided(req.body||{});
-    const expiryAt=inventoryExpiryTimestamp(req.body?.expires_at);
-    const supplierLotCode=clean(req.body?.lot_code,90);
-    const account=clean(req.body?.account||'cash',30);
+    const requestedLegacyType=normalizeInventoryType(instructions.inventory_type);
+    const classificationExplicit=inventoryClassificationInputProvided(instructions);
+    const expiryAt=inventoryExpiryTimestamp(instructions.expires_at);
+    const supplierLotCode=clean(instructions.lot_code,90);
+    const account=clean(instructions.account||'cash',30);
     if(!ACCOUNTS.has(account))return res.status(400).json({error:'Choose where the purchase was paid from'});
     let purchase;
     try{
       purchase=deriveStockPurchase({
-        purchase_quantity:req.body?.purchase_quantity,
-        purchase_unit:req.body?.purchase_unit,
-        total_cost:req.body?.total_cost,
-        reorder_quantity:req.body?.reorder_quantity||0,
-        reorder_unit:req.body?.reorder_unit||req.body?.purchase_unit,
-        target_quantity:req.body?.target_quantity||0,
-        target_unit:req.body?.target_unit||req.body?.reorder_unit||req.body?.purchase_unit
+        purchase_quantity:instructions.purchase_quantity,
+        purchase_unit:instructions.purchase_unit,
+        total_cost:instructions.total_cost,
+        reorder_quantity:instructions.reorder_quantity||0,
+        reorder_unit:instructions.reorder_unit||instructions.purchase_unit,
+        target_quantity:instructions.target_quantity||0,
+        target_unit:instructions.target_unit||instructions.reorder_unit||instructions.purchase_unit
       });
     }catch(error){return res.status(400).json({error:error.message})}
 
-    const client=await pool.connect();
-    try{
-      await client.query('BEGIN');
+    const createPurchase=async client=>{
       const current=requestedInventoryId==null
         ?await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND LOWER(item)=LOWER($2) FOR UPDATE`,[ctx.business.id,itemName])
         :await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND id=$2 FOR UPDATE`,[ctx.business.id,requestedInventoryId]);
       if(requestedInventoryId!=null&&!current.rowCount)throw Object.assign(new Error('Inventory item not found.'),{status:404});
       if(requestedInventoryId!=null)itemName=current.rows[0].item;
       const existing=current.rows[0]||null;
+      // Under the same serialized business transaction and row lock that
+      // owns stock+lot+expense, fail closed if another device created the
+      // name after a CSV preflight. A reused intent key replays its earlier
+      // receipt BEFORE this callback, even though its item now exists.
+      if(instructions.create_only===true&&existing)
+        throw Object.assign(new Error('Inventory item already exists. Reconcile Stock and Money; no new purchase was posted.'),{status:409});
       let classification;
       try{
         classification=classificationExplicit
-          ?normalizeInventoryClassification(req.body||{},{inventoryType:requestedLegacyType})
+          ?normalizeInventoryClassification(instructions,{inventoryType:requestedLegacyType})
           :existing?.inventory_domain&&existing?.stock_role
             ?normalizeInventoryClassification({inventory_domain:existing.inventory_domain,stock_role:existing.stock_role},{inventoryType:existing.inventory_type})
-            :normalizeInventoryClassification(req.body||{},{inventoryType:existing?.inventory_type||requestedLegacyType});
+            :normalizeInventoryClassification(instructions,{inventoryType:existing?.inventory_type||requestedLegacyType});
       }catch(error){throw Object.assign(error,{status:400})}
       const inventoryType=classificationExplicit
         ?compatibilityInventoryType(classification,requestedLegacyType)
@@ -812,10 +900,10 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         inventoryType,
         inventoryDomain:classification.inventory_domain,
         stockRole:classification.stock_role,
-        storageCondition:req.body?.storage_condition??fallback.storage_condition??defaults.storage_condition,
-        storageAreaType:req.body?.storage_area_type??fallback.storage_area_type??defaults.storage_area_type,
-        storageLocationLabel:req.body?.storage_location_label??fallback.storage_location_label??defaults.storage_location_label,
-        storageSegregated:req.body?.storage_segregated??fallback.storage_segregated??defaults.storage_segregated
+        storageCondition:instructions.storage_condition??fallback.storage_condition??defaults.storage_condition,
+        storageAreaType:instructions.storage_area_type??fallback.storage_area_type??defaults.storage_area_type,
+        storageLocationLabel:instructions.storage_location_label??fallback.storage_location_label??defaults.storage_location_label,
+        storageSegregated:instructions.storage_segregated??fallback.storage_segregated??defaults.storage_segregated
       });
 
       let inventoryRow;
@@ -884,7 +972,7 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
           business_id,inventory_id,purchase_quantity,purchase_unit,base_quantity,base_unit,total_cost,account,note
         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
         RETURNING *
-      `,[ctx.business.id,inventoryRow.id,purchase.purchase_quantity,purchase.purchase_unit,purchase.base_quantity,purchase.base_unit,purchase.total_cost,account,clean(req.body?.note,300)]);
+      `,[ctx.business.id,inventoryRow.id,purchase.purchase_quantity,purchase.purchase_unit,purchase.base_quantity,purchase.base_unit,purchase.total_cost,account,clean(instructions.note,300)]);
 
       let lot=null;
       if(await canUseSupplyLots(client)){
@@ -908,21 +996,22 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
           purchase.purchase_quantity>0?purchase.base_quantity/purchase.purchase_quantity:null,
           purchase.purchase_quantity,expiryAt,
           inventoryRow.storage_condition,inventoryRow.storage_area_type,inventoryRow.storage_location_label,inventoryRow.storage_segregated,
-          clean(req.body?.note,1000),ctx.me.account.id
+          clean(instructions.note,1000),ctx.me.account.id
         ]);
         lot=lotInsert.rows[0];
       }
 
       let transaction=null;
-      if(purchase.total_cost>0&&req.body?.record_expense!==false){
+      if(purchase.total_cost>0&&instructions.record_expense!==false){
         const tx=await client.query(`
           INSERT INTO transactions(
             business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at
           ) VALUES($1,'business_expense','Stock purchase',$2,$3,$3,$4,'inventory_purchase',$5,NOW())
           RETURNING *
-        `,[ctx.business.id,purchase.total_cost,account,clean(`${itemName} · ${purchase.purchase_quantity} ${purchase.purchase_unit}${req.body?.note?' · '+req.body.note:''}`,250),purchaseRecord.rows[0].id]);
+        `,[ctx.business.id,purchase.total_cost,account,clean(`${itemName} · ${purchase.purchase_quantity} ${purchase.purchase_unit}${instructions.note?' · '+instructions.note:''}`,250),purchaseRecord.rows[0].id]);
         transaction=tx.rows[0];
         await client.query(`UPDATE inventory_purchases SET transaction_id=$1 WHERE id=$2`,[transaction.id,purchaseRecord.rows[0].id]);
+        purchaseRecord.rows[0].transaction_id=transaction.id;
       }
 
       await reconcileInventoryLocationBalance(client,{
@@ -932,8 +1021,7 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         businessId:ctx.business.id,inventoryId:Number(inventoryRow.id),lotId:Number(lot.id),actorAccountId:ctx.me.account.id
       });
 
-      await client.query('COMMIT');
-      res.status(201).json({
+      return {
         inventory:inventoryRow,
         purchase:purchaseRecord.rows[0],
         lot,
@@ -943,11 +1031,45 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
           stored:`${purchase.base_quantity} ${purchase.base_unit}`,
           unit_cost:purchase.base_unit_cost
         }
-      });
+      };
+    };
+
+    const client=await pool.connect();
+    let discardClient=false;
+    try{
+      const businessId=ctx.business.id,accountId=ctx.me.account.id;
+      let response;
+      if(intentKey!==undefined){
+        const {token}=sessionCredentialFromHeaders(req.headers);
+        const result=await executeInventoryPurchaseIntent(client,{
+          businessId,accountId,intentKey,payload:instructions,
+          verifyCurrentMerchantAuthority:(tx,origin)=>verifyInventoryPurchaseMerchant(tx,origin,token)
+        },async tx=>{
+          const response=await createPurchase(tx);
+          return {purchaseId:response.purchase.id,response};
+        });
+        response=result.response;
+      }else{
+        // Older clients have no durable replay key. They still take the same
+        // lock before looking up an item so first-time receiving cannot race.
+        try{
+          await client.query('BEGIN');
+          await lockInventoryPurchaseBusiness(client,businessId);
+          response=await createPurchase(client);
+          await client.query('COMMIT');
+        }catch(error){
+          await client.query('ROLLBACK').catch(()=>{discardClient=true});
+          throw error;
+        }
+      }
+      res.status(201).json(response);
     }catch(error){
-      await client.query('ROLLBACK').catch(()=>{});
+      if(error?.code?.startsWith('INVENTORY_PURCHASE_INTENT_')){
+        discardClient=error.status===503;
+        return res.status(error.status).json({error:error.message,code:error.code});
+      }
       throw error;
-    }finally{client.release()}
+    }finally{client.release(discardClient)}
   }catch(error){next(error)}
 });
 
@@ -1520,6 +1642,125 @@ app.put('/api/products/:id/recipe-batch',jsonBody,async(req,res,next)=>{
       throw error;
     }finally{client.release()}
   }catch(error){next(error)}
+});
+
+
+// Prepared-product removals are not transactions/sales: keep cash, revenue and
+// existing raw-ingredient waste evidence unchanged. This ledger holds costed
+// personal use and prepared-food quality losses at their actual reason.
+app.get('/api/prepared-product-removals',async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const [history,summary]=await Promise.all([
+      pool.query(
+        "SELECT id,product_id,product_name_snapshot,removal_reason,accounting_treatment,quantity,unit_cost_snapshot,estimated_cost,recipe_batch_snapshot,note,actor_account_id,occurred_at FROM prepared_product_removals WHERE business_id=$1 ORDER BY occurred_at DESC,id DESC LIMIT 250",
+        [ctx.business.id]
+      ),
+      pool.query(
+        "SELECT removal_reason,accounting_treatment,COALESCE(SUM(quantity),0) portions,COALESCE(SUM(estimated_cost),0) estimated_cost FROM prepared_product_removals WHERE business_id=$1 AND occurred_at>=NOW()-INTERVAL '30 days' GROUP BY removal_reason,accounting_treatment ORDER BY removal_reason",
+        [ctx.business.id]
+      )
+    ]);
+    res.json({entries:history.rows,summary_30d:summary.rows});
+  }catch(error){next(error)}
+});
+
+app.post('/api/prepared-product-removals',jsonBody,async(req,res,next)=>{
+  let client;
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const parsed=parsePreparedRemoval(req.body,ctx.business.id);
+    client=await pool.connect();
+    await client.query('BEGIN');
+    const productResult=await client.query(
+      "SELECT * FROM products WHERE id=$1 AND business_id=$2 FOR SHARE",
+      [parsed.productId,ctx.business.id]
+    );
+    if(!productResult.rowCount)throw Object.assign(new Error('Prepared product not found in this Merchant business.'),{status:404});
+    const product=productResult.rows[0];
+    if(product.product_kind!=='prepared_recipe'){
+      throw Object.assign(new Error('This action only removes portions made from a saved prepared recipe.'),{status:409});
+    }
+    const recipeBatch=await client.query(
+      "SELECT yield_quantity,yield_unit,selling_quantity,selling_unit,sale_units_per_batch FROM product_recipe_batches WHERE product_id=$1",
+      [parsed.productId]
+    );
+    const claimed=await client.query(
+      "INSERT INTO prepared_product_removals(business_id,product_id,product_name_snapshot,removal_reason,accounting_treatment,quantity,unit_cost_snapshot,estimated_cost,recipe_batch_snapshot,note,actor_account_id,idempotency_key) VALUES($1,$2,$3,$4,$5,$6,0,0,$7::jsonb,$8,$9,$10) ON CONFLICT (business_id,idempotency_key) DO NOTHING RETURNING *",
+      [ctx.business.id,parsed.productId,product.name,parsed.reason,parsed.treatment,parsed.quantity,
+       JSON.stringify(recipeBatch.rows[0]||{}),clean(req.body?.note,300),ctx.me.account.id,parsed.idempotencyKey]
+    );
+    if(!claimed.rowCount){
+      const existing=await client.query(
+        "SELECT * FROM prepared_product_removals WHERE business_id=$1 AND idempotency_key=$2",
+        [ctx.business.id,parsed.idempotencyKey]
+      );
+      const row=existing.rows[0];
+      if(!row||Number(row.product_id)!==parsed.productId||Number(row.quantity)!==parsed.quantity||row.removal_reason!==parsed.reason){
+        throw Object.assign(new Error('A different removal already used this confirmation key.'),{status:409});
+      }
+      await client.query('COMMIT');
+      return res.status(200).json({removal:row,already_recorded:true});
+    }
+    const removalId=claimed.rows[0].id;
+    const ingredients=await client.query(
+      "SELECT r.inventory_id,r.quantity recipe_quantity,i.item,i.unit,i.quantity stock_quantity,i.unit_cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2 ORDER BY i.id FOR UPDATE OF i",
+      [parsed.productId,ctx.business.id]
+    );
+    if(!ingredients.rowCount){
+      throw Object.assign(new Error('Save the prepared product recipe before removing portions.'),{status:409});
+    }
+    const shortages=[],plans=new Map();
+    for(const ingredient of ingredients.rows){
+      const needed=Number(ingredient.recipe_quantity)*parsed.quantity;
+      const plan=await planInventoryFefo(client,{
+        businessId:ctx.business.id,inventoryId:ingredient.inventory_id,
+        inventoryQuantity:Number(ingredient.stock_quantity),quantityNeeded:needed,lock:true
+      });
+      plans.set(Number(ingredient.inventory_id),plan);
+      if(!plan.ok)shortages.push({
+        item:ingredient.item,unit:ingredient.unit,required:needed,
+        available:plan.usable_quantity,reason:'expired_or_held_lot_stock'
+      });
+    }
+    if(shortages.length){
+      throw Object.assign(new Error('Not enough usable recipe ingredients to remove these prepared portions.'),{status:409,shortages});
+    }
+    const estimatedCost=estimatedPreparedRemovalCost(ingredients.rows,parsed.quantity);
+    for(const ingredient of ingredients.rows){
+      const used=Number(ingredient.recipe_quantity)*parsed.quantity;
+      const unitCost=Number(ingredient.unit_cost);
+      const stock=await client.query(
+        "UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3 AND quantity>=$1 RETURNING quantity",
+        [used,ingredient.inventory_id,ctx.business.id]
+      );
+      if(!stock.rowCount)throw Object.assign(new Error('Ingredient stock changed; nothing was removed.'),{status:409});
+      await client.query(
+        "INSERT INTO prepared_product_removal_ingredients(removal_id,inventory_id,ingredient_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot) VALUES($1,$2,$3,$4,$5,$6)",
+        [removalId,ingredient.inventory_id,ingredient.item,used,unitCost,Number((used*unitCost).toFixed(4))]
+      );
+      const plan=plans.get(Number(ingredient.inventory_id));
+      await applyLotAllocations(client,plan?.allocations||[]);
+      for(const allocation of plan?.allocations||[]){
+        await client.query(
+          "INSERT INTO prepared_product_removal_lots(removal_id,inventory_id,lot_id,quantity_used,expires_at_snapshot) VALUES($1,$2,$3,$4,$5)",
+          [removalId,ingredient.inventory_id,allocation.lot_id,allocation.quantity,allocation.expires_at||null]
+        );
+      }
+    }
+    const saved=await client.query(
+      "UPDATE prepared_product_removals SET unit_cost_snapshot=$1,estimated_cost=$2 WHERE id=$3 AND business_id=$4 RETURNING *",
+      [Number((estimatedCost/parsed.quantity).toFixed(6)),estimatedCost,removalId,ctx.business.id]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({removal:saved.rows[0],ingredient_lines:ingredients.rows.length,already_recorded:false});
+  }catch(error){
+    if(client)await client.query('ROLLBACK').catch(()=>{});
+    if(error.shortages)return res.status(error.status||409).json({error:error.message,shortages:error.shortages});
+    next(error);
+  }finally{if(client)client.release()}
 });
 
 app.post('/api/product-sales',jsonBody,async(req,res,next)=>{

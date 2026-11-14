@@ -1,218 +1,56 @@
 <!doctype html>
 <html lang="en-PH">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0f172a">
-<title>Business & Life — Promotion Center</title>
-<style>
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#eef4fa}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 90% 0,#bae6fd 0,transparent 32rem),linear-gradient(#f8fbff,#edf4fa)}button,a,select,input{font:inherit}main{width:min(100%,540px);margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.brand{font-size:12px;font-weight:900;letter-spacing:.12em}.state{font-size:11px;font-weight:800;color:#0369a1;background:#e0f2fe;padding:7px 10px;border-radius:999px}.card{background:#fff;border:1px solid #dbe5ef;border-radius:26px;padding:22px;box-shadow:0 20px 60px #0f172a18}.meta{font-size:11px;font-weight:900;letter-spacing:.08em;color:#0369a1}h1{font-size:34px;line-height:1;margin:6px 0 10px;letter-spacing:-.04em}.lead{color:#64748b;line-height:1.55;margin:0 0 18px}.role{display:grid;gap:7px;margin:14px 0}.role label{font-size:11px;font-weight:900;letter-spacing:.08em;color:#0369a1}select{width:100%;padding:13px;border:1px solid #cbd5e1;border-radius:12px;background:#fff}.identity{background:#f0f9ff;border:1px solid #bae6fd;border-radius:20px;padding:18px;display:grid;gap:6px}.code{font:800 18px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.link{font-size:12px;color:#475569;overflow-wrap:anywhere;line-height:1.45}.qrbox{margin-top:12px;display:grid;grid-template-columns:110px 1fr;gap:14px;align-items:center;background:#f8fafc;border:1px dashed #94a3b8;border-radius:18px;padding:14px}.qrimage{width:110px;height:110px;border-radius:14px;background:#fff;display:block;object-fit:contain;border:1px solid #e2e8f0}.qrimage.hidden{display:none!important}.qrfallback{width:110px;height:110px;border-radius:14px;background:#f1f5f9;display:grid;place-items:center;text-align:center;padding:10px;font-size:11px;font-weight:800;color:#475569}.small{font-size:12px;color:#64748b;line-height:1.45}.actions{display:grid;gap:9px;margin-top:16px}.actions button,.actions a{min-height:48px;border-radius:13px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-weight:800;text-decoration:none;display:grid;place-items:center;cursor:pointer}.actions .primary{background:#0f172a;color:#fff;border-color:#0f172a}.channels{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}.channels a{padding:10px;text-align:center;border-radius:11px;background:#f0f9ff;color:#0369a1;text-decoration:none;font-weight:800;font-size:13px}.progress{margin-top:14px;border:1px solid #dbe5ef;border-radius:18px;padding:15px;background:#fff}.progresshead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.progress h2{font-size:18px;margin:3px 0 0}.progresspill{font-size:11px;font-weight:900;padding:6px 9px;border-radius:999px;background:#e0f2fe;color:#0369a1;white-space:nowrap}.progressgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}.progressitem{border-radius:12px;background:#f8fafc;padding:10px;display:grid;gap:3px;min-width:0}.progressitem span{font-size:10px;font-weight:900;letter-spacing:.05em;color:#64748b}.progressitem strong{font-size:13px;overflow-wrap:anywhere}.progressitem.full{grid-column:1/-1}.notice{margin-top:16px;padding:13px;border-radius:14px;background:#f8fafc;color:#475569;font-size:12px;line-height:1.5}.status{min-height:20px;color:#0369a1;font-size:12px;margin-top:10px}.direct{margin-top:18px;border-top:1px solid #e2e8f0;padding-top:18px}.direct h2{font-size:18px;margin:0 0 8px}.disabled{opacity:.58}.direct input{width:100%;padding:13px;border:1px solid #cbd5e1;border-radius:12px;margin:5px 0 8px}.direct button{width:100%;padding:13px;border:0;border-radius:12px;font-weight:800}.signin{display:none;margin-top:14px;padding:14px;border-radius:14px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-size:13px;line-height:1.5}.signin a{color:#9a3412;font-weight:900}.hidden{display:none!important}@media(max-width:410px){main{padding:12px}.card{padding:18px}.qrbox{grid-template-columns:1fr}.qrimage,.qrfallback{margin:auto}.progressgrid{grid-template-columns:1fr}.progressitem.full{grid-column:auto}}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#087560">
+  <title>Business &amp; Life — Promotion Center</title>
+  <link rel="stylesheet" href="/referral/promotion.css">
 </head>
-<body><main>
-<div class="top"><div class="brand">BUSINESS &amp; LIFE</div><div id="modeState" class="state">LIVE</div></div>
-<section class="card">
-<div class="meta">INVITE &amp; SHARE</div>
-<h1>Promotion Center</h1>
-<p class="lead">Your referral identity belongs to your account. The active profile only tells us where you shared it from.</p>
-
-<div class="role"><label for="role">SHARING FROM PROFILE</label><select id="role">
-<option value="customer">Customer</option>
-<option value="merchant">Merchant</option>
-<option value="supplier">Supplier</option>
-<option value="courier">Courier / Delivery Provider</option>
-<option value="service_provider">Service Provider / Local Services</option>
-</select></div>
-
-<div id="identity" class="identity">
-<div class="meta">YOUR REFERRAL CODE</div>
-<div id="referralCode" class="code">Loading…</div>
-<div id="referralUrl" class="link"></div>
-</div>
-
-<div id="qrBox" class="qrbox">
-<div>
-<img id="qrImage" class="qrimage hidden" alt="Personal referral QR code">
-<div id="qrFallback" class="qrfallback">Use your referral code if QR is unavailable.</div>
-</div>
-<div><strong>Personal QR</strong><div class="small">Scan to open your live referral link. The QR carries a one-shot local <code>#qr</code> origin marker so scans can be measured separately from ordinary link opens; the marker is removed on landing and is not propagated when resharing. Changing the sharing profile regenerates this QR locally; no external QR service receives your referral URL.</div></div>
-</div>
-
-<div id="progressSummary" class="progress" aria-labelledby="progressTitle">
-<div class="progresshead"><div><div class="meta">REFERRAL PROGRESS</div><h2 id="progressTitle">What is ready now</h2></div><span id="progressProfile" class="progresspill">Loading…</span></div>
-<div class="progressgrid">
-<div class="progressitem"><span>SHARE LINK</span><strong id="progressLink">Loading…</strong></div>
-<div class="progressitem"><span>PERSONAL QR</span><strong id="progressQr">Loading…</strong></div>
-<div class="progressitem full"><span>JOURNEY SIGNALS</span><strong id="progressJourney">Ready through account creation start</strong></div>
-<div class="progressitem"><span>COMPLETED REFERRALS</span><strong id="progressConversions">Not counted yet</strong></div>
-<div class="progressitem"><span>REWARDS</span><strong id="progressRewards">Not enabled</strong></div>
-</div>
-<p class="small">Completed referrals and rewards are not shown as zero: durable conversion attribution and reward policy are not enabled yet.</p>
-</div>
-
-<div id="signin" class="signin">Sign in to Business &amp; Life to load your personal referral identity. <a href="/">Open the app</a>.</div>
-
-<div class="actions">
-<button class="primary" id="share" type="button">Share invitation</button>
-<button id="copy" type="button">Copy referral link</button>
-<a href="/referral/marketing-kit.html?profile=customer" id="marketingKit">Create Marketing Kit</a>
-<a href="/" id="backToApp">Back to Business &amp; Life</a>
-</div>
-
-<div id="channels" class="channels">
-<a id="wa" rel="noopener noreferrer">WhatsApp</a>
-<a id="tg" rel="noopener noreferrer">Telegram</a>
-<a id="sms">SMS</a>
-<a id="mail">Email</a>
-</div>
-
-<div id="status" class="status" role="status" aria-live="polite"></div>
-
-<div class="notice"><strong>Authority boundary:</strong> a referral records who introduced a person to Business &amp; Life. It never approves Merchant, Supplier, Courier, Service Provider or Admin authority.</div>
-
-<div class="direct disabled"><h2>Email or phone</h2><p class="small">The platform now has Notifications and versioned marketing-consent foundations, but direct referral sending stays disabled until referral-specific templates, consent binding, rate limits, deduplication, suppression and abuse monitoring are enabled.</p><input disabled placeholder="name@example.com or phone number"><button disabled>Send invitation</button></div>
-</section></main>
+<body data-promotion-page="center">
+<main>
+  <header class="top"><div class="brand">BUSINESS &amp; LIFE</div><a class="back" href="/" data-i18n="backApp">Back to Business &amp; Life</a></header>
+  <section class="card" aria-labelledby="pageTitle">
+    <p class="eyebrow" data-i18n="inviteShare">INVITE &amp; SHARE</p>
+    <h1 id="pageTitle" data-i18n="promotionTitle">Promotion Center</h1>
+    <p class="lead" data-i18n="promotionIntro">Invite people to Business &amp; Life with your personal link or QR code.</p>
+    <section id="signin" class="signin" hidden aria-labelledby="signInTitle">
+      <h2 id="signInTitle" data-i18n="signInTitle">Sign in to continue</h2>
+      <p data-i18n="signInBody">Open Business &amp; Life and sign in to load your own invitation. Then return here.</p>
+      <div class="actions"><a class="button primary" href="/" data-i18n="openApp">Open Business &amp; Life</a><button class="button" id="signinRetry" type="button" data-i18n="retry">Try again</button></div>
+    </section>
+    <div id="feedback" class="feedback" hidden role="status"><p id="feedbackText"></p><button class="button" id="retry" type="button" data-i18n="retry">Try again</button></div>
+    <div class="controls">
+      <div class="field"><label for="role" data-i18n="profileLabel">Sharing profile</label><select id="role" disabled><option value="" data-i18n="loading">Loading…</option></select></div>
+      <div class="field"><label for="locale" data-i18n="languageLabel">Language</label><select id="locale"><option value="en-PH">English (Philippines)</option><option value="fil-PH">Filipino / Tagalog</option></select></div>
+    </div>
+    <fieldset class="artworkPicker" aria-describedby="artworkHelp artworkStatus">
+      <legend data-i18n="artworkLabel">Choose your artwork</legend>
+      <p id="artworkHelp" class="small" data-i18n="artworkHelp">This image appears in your Marketing Kit design. Share invitation sends your link.</p>
+      <div id="artworkOptions" class="artworkOptions"></div>
+      <p id="artworkStatus" class="small artworkStatus" role="status" aria-live="polite" data-i18n="artworkWaiting">Your artwork will load with your verified invitation.</p>
+      <button id="artworkRetry" class="button artworkRetry" type="button" hidden data-i18n="artworkRetry">Try artwork again</button>
+    </fieldset>
+    <img id="brandArtwork" class="heroArtwork" hidden alt="">
+    <div class="identityGrid">
+      <div>
+        <div class="identity">
+          <div class="field"><label for="referralUrl" data-i18n="yourLink">Your invitation link</label><input id="referralUrl" type="text" readonly value="" aria-label="Invitation link. Select this text to copy it manually." autocomplete="off" spellcheck="false"></div>
+          <div class="codeRow"><span class="fieldLabel" data-i18n="yourCode">Referral code</span><span id="referralCode" class="code">—</span></div>
+        </div>
+        <div class="actions"><button class="button primary" id="copy" type="button" disabled data-i18n="copyLink">Copy link</button><button class="button" id="share" type="button" disabled data-i18n="shareInvitation">Share invitation</button></div>
+        <p class="small shareHeading" data-i18n="moreShare">Or choose an app</p>
+        <nav id="channels" class="channels" aria-label="Share invitation" hidden><a id="wa" rel="noopener noreferrer" data-i18n="whatsapp">WhatsApp</a><a id="tg" rel="noopener noreferrer" data-i18n="telegram">Telegram</a><a id="sms" data-i18n="sms">SMS</a><a id="mail" data-i18n="email">Email</a></nav>
+        <div class="actions"><a class="button secondary" id="marketingKit" href="/referral/marketing-kit.html" aria-disabled="true" tabindex="-1" data-i18n="createKit">Create Marketing Kit</a></div>
+      </div>
+      <div class="qrbox"><strong data-i18n="yourQr">Your QR code</strong><img id="qrImage" class="qrimage" hidden alt="Your QR code"><div id="qrFallback" class="qrplaceholder" data-i18n="loadingIdentity">Loading your invitation…</div><p class="small" data-i18n="qrInstruction">People can scan this code to open your invitation.</p></div>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite" data-i18n="loadingIdentity">Loading your invitation…</p>
+    <details id="progressSummary" class="availability"><summary data-i18n="availability">Availability</summary><div class="availabilityGrid"><div><span data-i18n="linkStatus">Invitation link</span><strong id="progressLink">—</strong></div><div><span data-i18n="qrStatus">Personal QR</span><strong id="progressQr">—</strong></div></div><p class="small" data-i18n="availabilityNote">Referral totals are not available here. Rewards and automatic invitations are not enabled.</p></details>
+    <aside class="scope"><h2 data-i18n="scopeTitle">About these tools</h2><p data-i18n="invitationScope">These tools invite people to Business &amp; Life. They do not create product discounts or automatically approve business profiles.</p></aside>
+  </section>
+</main>
 <script src="/session-security.js"></script>
-<script type="module">
-import { captureReferralEvent } from '/referral/referral-analytics.js';
-
-const PUBLIC_ROLES=new Set(['customer','merchant','supplier','courier','service_provider']);
-const params=new URLSearchParams(location.search);
-const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
-const role=document.querySelector('#role');
-const status=document.querySelector('#status');
-const codeNode=document.querySelector('#referralCode');
-const urlNode=document.querySelector('#referralUrl');
-const signin=document.querySelector('#signin');
-const channels=document.querySelector('#channels');
-const shareButton=document.querySelector('#share');
-const copyButton=document.querySelector('#copy');
-const marketingKit=document.querySelector('#marketingKit');
-const modeState=document.querySelector('#modeState');
-const qrImage=document.querySelector('#qrImage');
-const qrFallback=document.querySelector('#qrFallback');
-const progressProfile=document.querySelector('#progressProfile');
-const progressLink=document.querySelector('#progressLink');
-const progressQr=document.querySelector('#progressQr');
-const progressJourney=document.querySelector('#progressJourney');
-const progressConversions=document.querySelector('#progressConversions');
-const progressRewards=document.querySelector('#progressRewards');
-let live=null;
-
-const requestedRole=PUBLIC_ROLES.has(params.get('profile'))?params.get('profile'):'customer';
-role.value=requestedRole;
-
-function setStatus(message){status.textContent=message}
-function profileLabel(value){
-  return {customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Courier / Delivery Provider',service_provider:'Service Provider / Local Services'}[value]||'Account';
-}
-function renderProgress({ready=false,profileRole='',campaign='',qrReady=false,reason=''}={}){
-  progressProfile.textContent=ready?profileLabel(profileRole):(reason||'Unavailable');
-  progressLink.textContent=ready?'Ready':'Unavailable';
-  progressQr.textContent=ready?(qrReady?'Ready':'Code fallback ready'):'Unavailable';
-  progressJourney.textContent=ready?'Ready through account creation start':'Available after referral identity loads';
-  progressConversions.textContent='Not counted yet';
-  progressRewards.textContent='Not enabled';
-  progressProfile.title=ready&&campaign?'Campaign: '+campaign:'';
-}
-function syncMarketingKit(){marketingKit.href='/referral/marketing-kit.html?profile='+encodeURIComponent(role.value)}
-function disableSharing(disabled){
-  shareButton.disabled=disabled;copyButton.disabled=disabled;channels.classList.toggle('hidden',disabled);
-}
-function clearQr(){
-  qrImage.removeAttribute('src');
-  qrImage.classList.add('hidden');
-  qrFallback.classList.remove('hidden');
-}
-function applyQr(data){
-  if(!data?.qr?.dataUrl||data.qr.referralUrl!==data.referralUrl||data.qr.marker!=='qr'){clearQr();return false}
-  qrImage.src=data.qr.dataUrl;
-  qrImage.alt='Personal referral QR for '+(data.profileRole||'account')+' campaign';
-  qrImage.classList.remove('hidden');
-  qrFallback.classList.add('hidden');
-  return true;
-}
-function syncChannels(){
-  if(!live?.referralUrl)return;
-  const invitation=live.share?.text||'You are invited to try Business & Life.';
-  const message=invitation+' '+live.referralUrl;
-  document.querySelector('#wa').href='https://wa.me/?text='+encodeURIComponent(message);
-  document.querySelector('#tg').href='https://t.me/share/url?url='+encodeURIComponent(live.referralUrl)+'&text='+encodeURIComponent(invitation);
-  document.querySelector('#sms').href='sms:?body='+encodeURIComponent(message);
-  document.querySelector('#mail').href='mailto:?subject='+encodeURIComponent(live.share?.title||'Business & Life invitation')+'&body='+encodeURIComponent(message);
-}
-function trackAccountReferral(event,properties){
-  const auth=token();
-  if(!auth)return;
-  void captureReferralEvent({event,properties,authenticated:true});
-}
-function trackShare(channel){
-  if(!live?.campaign||!live?.profileRole)return;
-  trackAccountReferral('referral_shared',{channel,campaign:live.campaign,source_profile_role:live.profileRole});
-}
-function applyIdentity(data){
-  live=data;
-  codeNode.textContent=data.code;
-  urlNode.textContent=data.referralUrl;
-  signin.classList.add('hidden');
-  disableSharing(false);
-  const qrReady=applyQr(data);
-  renderProgress({ready:true,profileRole:data.profileRole,campaign:data.campaign,qrReady});
-  syncChannels();
-  if(data.campaign&&data.profileRole){
-    trackAccountReferral('referral_link_created',{campaign:data.campaign,source_profile_role:data.profileRole});
-  }
-}
-async function loadIdentity(){
-  const auth=token();
-  if(!auth){
-    live=null;
-    clearQr();
-    codeNode.textContent='Sign in required';
-    urlNode.textContent='';
-    signin.classList.remove('hidden');
-    disableSharing(true);
-    renderProgress({reason:'Sign in required'});
-    return;
-  }
-  codeNode.textContent='Loading…';urlNode.textContent='';disableSharing(true);
-  try{
-    const response=await fetch('/api/growth/referral?profile='+encodeURIComponent(role.value));
-    const data=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(data.error||'Could not load referral identity');
-    applyIdentity(data);
-    setStatus('');
-  }catch(err){
-    live=null;clearQr();urlNode.textContent='';disableSharing(true);renderProgress({reason:'Unavailable'});
-    const message=String(err?.message||'Could not load referral identity');
-    if(/profile is not enabled/i.test(message)){
-      codeNode.textContent='Profile not enabled';
-      setStatus('This sharing profile is not enabled for your account yet. Choose another enabled profile or complete its approval first.');
-    }else if(/public referral origin|temporarily|unavailable/i.test(message)){
-      codeNode.textContent='Sharing temporarily unavailable';
-      setStatus('Your referral identity is safe, but a public share link could not be prepared right now. Try again shortly.');
-    }else{
-      codeNode.textContent='Could not load referral';
-      setStatus(message);
-    }
-  }
-}
-role.addEventListener('change',()=>{syncMarketingKit();loadIdentity()});
-copyButton.addEventListener('click',async()=>{
-  if(!live?.referralUrl)return;
-  try{await navigator.clipboard.writeText(live.referralUrl);trackShare('copy_link');setStatus('Referral link copied.')}catch{setStatus('Copy unavailable — use the browser address/share menu.')}
-});
-shareButton.addEventListener('click',async()=>{
-  if(!live?.referralUrl)return;
-  const payload={title:live.share?.title||'Business & Life',text:live.share?.text||'You are invited to try Business & Life.',url:live.referralUrl};
-  if(navigator.share){try{await navigator.share(payload);trackShare('native_share');return}catch(err){if(err?.name==='AbortError')return}}
-  try{await navigator.clipboard.writeText(live.referralUrl);trackShare('copy_link');setStatus('Native share unavailable, so the referral link was copied.')}catch{setStatus('Use one of the channel buttons below.')}
-});
-for(const [id,channel] of [['wa','whatsapp'],['tg','telegram'],['sms','sms'],['mail','email']]){
-  document.querySelector('#'+id)?.addEventListener('click',()=>trackShare(channel));
-}
-modeState.textContent='LIVE';
-syncMarketingKit();
-loadIdentity();
-</script>
-</body></html>
+<script type="module" src="/referral/promotion-page.js"></script>
+</body>
+</html>

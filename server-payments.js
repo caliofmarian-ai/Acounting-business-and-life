@@ -5,9 +5,9 @@ import { readFileSync } from 'node:fs';
 import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,createServiceJobPaymentIntent,
+  ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,createServiceJobPaymentIntent,paymentRequestIdempotencyKey,
   serviceJobPaymentSummary,paymentIntentDetail,
-  createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,createReconciliationRun,
+  createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,lockCurrentRefundAdminAuthority,createReconciliationRun,
   paymentFinanceOverview,mirrorConfirmedOrderPayment
 } from './payment-core.js';
 import {
@@ -370,7 +370,7 @@ app.post('/api/profile-money/:role/entries',body,async(req,res,next)=>{try{
   if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile does not use the personal/profile Money ledger'});
   if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before recording Money entries'});
   profileMoneyEntryCapabilities(role);
-  const key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await createProfileMoneyEntry(pool,{
     publicId:'pme_'+crypto.randomUUID().replaceAll('-',''),entryKey:key,accountId:me.account.id,profileRole:role,
     entryType:req.body?.entry_type,direction:req.body?.direction,category:req.body?.category,
@@ -387,7 +387,7 @@ app.post('/api/profile-money/:role/entries/:id/reverse',body,async(req,res,next)
   const me=await identity(req),role=clean(req.params.role,40);
   if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile does not use the personal/profile Money ledger'});
   if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before correcting Money entries'});
-  const key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await reverseProfileMoneyEntry(pool,{
     publicId:'pme_rev_'+crypto.randomUUID().replaceAll('-',''),reversalKey:key,accountId:me.account.id,
     profileRole:role,entryId:Number(req.params.id),note:req.body?.note||'',actorAccountId:me.account.id
@@ -525,7 +525,7 @@ app.post('/api/settings/budgets',body,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.post('/api/settings/budgets/:id/entries',body,async(req,res,next)=>{try{
-  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const me=await identity(req),key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const direction=req.body?.direction==='debit'?'debit':'credit';
   const entryType=clean(req.body?.entry_type||(direction==='credit'?'allocation':'release'),40);
   const row=await postProfileBudgetEntry(pool,{
@@ -537,7 +537,7 @@ app.post('/api/settings/budgets/:id/entries',body,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.post('/api/settings/budget-transfers',body,async(req,res,next)=>{try{
-  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const me=await identity(req),key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await transferProfileBudgetAllocation(pool,{
     publicId:'btx_'+crypto.randomUUID().replaceAll('-',''),transferKey:key,accountId:me.account.id,
     sourceEnvelopeId:req.body?.source_envelope_id,destinationEnvelopeId:req.body?.destination_envelope_id,
@@ -553,7 +553,7 @@ app.get('/api/settings/money-movements',async(req,res,next)=>{try{
 
 app.post('/api/settings/money-movements',body,async(req,res,next)=>{try{
   rejectSensitiveFinancialFields(req.body);
-  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const me=await identity(req),key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await createProfileMoneyMovementRequest(pool,{
     publicId:'move_'+crypto.randomUUID().replaceAll('-',''),idempotencyKey:key,accountId:me.account.id,
     movementType:req.body?.movement_type,sourceFinancialAccountId:req.body?.source_financial_account_id,
@@ -570,7 +570,7 @@ app.post('/api/settings/money-movements',body,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.post('/api/settings/profile-fund-transfers',body,async(req,res,next)=>{try{
-  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const me=await identity(req),key=req.headers['idempotency-key']??req.body?.idempotency_key;
   const row=await transferFundsBetweenProfiles(pool,{
     publicId:'pft_'+crypto.randomUUID().replaceAll('-',''),transferKey:key,accountId:me.account.id,
     sourceProfileRole:req.body?.source_profile_role,sourceBusinessId:req.body?.source_business_id||null,
@@ -601,16 +601,18 @@ app.get('/api/payments/open-orders',async(req,res,next)=>{try{
 
 app.post('/api/payments/intents/order/:id',body,async(req,res,next)=>{try{
   const me=await identity(req);
-  const idempotency=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
-  const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
+  const idempotency=paymentRequestIdempotencyKey(req.headers,req.body);
+  const provider=(req.body?.provider_code==null||req.body.provider_code==='')
+    ?(process.env.PAYMENT_PROVIDER_DEFAULT??''):req.body.provider_code;
   const intent=await createOrderPaymentIntent(pool,{orderId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,clientReference:req.body?.client_reference||''});
   res.status(201).json({...intent,provider_ready:intent.status!=='requires_provider',next_action:intent.status==='requires_provider'?'CONNECT_REAL_PAYMENT_PROVIDER':'PROVIDER_ADAPTER_REQUIRED'});
 }catch(e){next(e)}});
 
 app.post('/api/payments/intents/service-job/:id',body,async(req,res,next)=>{try{
   const me=await identity(req);
-  const idempotency=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
-  const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
+  const idempotency=paymentRequestIdempotencyKey(req.headers,req.body);
+  const provider=(req.body?.provider_code==null||req.body.provider_code==='')
+    ?(process.env.PAYMENT_PROVIDER_DEFAULT??''):req.body.provider_code;
   const intent=await createServiceJobPaymentIntent(pool,{
     serviceJobId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,
     logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,
@@ -951,10 +953,25 @@ app.post('/api/payments/admin/fee-policies/:id/rules',body,async(req,res,next)=>
 
 app.post('/api/payments/admin/refunds',body,async(req,res,next)=>{try{
   const me=await identity(req),assignment=await requireAdminPermission(pool,me.account.id,'payment.manage');
+  const requestKey=paymentRequestIdempotencyKey(req.headers,req.body);
   await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'refund_request',subjectType:'payment_intent',subjectId:req.body?.payment_intent_id||req.body?.payment_intent});
-  const row=await createRefundRequest(pool,{intentId:req.body?.payment_intent_id||req.body?.payment_intent,amount:req.body?.amount,reason:req.body?.reason||'',requestedBy:me.account.id});
-  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'payment.manage',targetType:'refund',targetId:String(row.id),eventCode:'refund_requested_provider_action_required',after:{amount:row.amount,status:row.status},reason:row.reason,correlationId:correlation(req)});
-  res.status(201).json({...row,next_action:'PROVIDER_REFUND_ADAPTER_REQUIRED'});
+  const row=await createRefundRequest(pool,{intentId:req.body?.payment_intent_id||req.body?.payment_intent,amount:req.body?.amount,reason:req.body?.reason||'',requestedBy:me.account.id,idempotencyKey:requestKey,
+    adminAudit:{assignmentId:assignment.id,correlationId:correlation(req)},
+    reauthorize:async client=>{
+      const current=await identity(req);
+      if(Number(current?.account?.id)!==Number(me.account.id))
+        throw Object.assign(new Error('Refund request session changed'),{status:401});
+      const active=await requireAdminPermission(client,me.account.id,'payment.manage');
+      if(Number(active?.id)!==Number(assignment.id))
+        throw Object.assign(new Error('Refund admin assignment changed'),{status:403});
+      // Permission helpers use transaction-scoped NOW(); validate a grant
+      // against wall-clock time after any lock wait, not transaction start.
+      await lockCurrentRefundAdminAuthority(client,{
+        actorAccountId:me.account.id,assignmentId:assignment.id
+      });
+    }});
+  const {__idempotent_replay:replayed,...publicRefund}=row;
+  res.status(replayed?200:201).json({...publicRefund,next_action:'PROVIDER_REFUND_ADAPTER_REQUIRED',already_reserved:Boolean(replayed)});
 }catch(e){next(e)}});
 
 app.post('/api/payments/admin/reconciliation',body,async(req,res,next)=>{try{

@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "issue": 819,
+  "agent": 8,
+  "research_date": "2026-10-26",
+  "timezone": "Europe/Dublin",
+  "audited_main": "bc34c9e783c76a068d05b5e737714739e15d3510",
+  "production": {
+    "origin": "https://caliof.com",
+    "health_path": "/health",
+    "observed_health": {"ok": true, "db": true, "environment": "production", "revision": "bc34c9e783c7"},
+    "deployment_id_independently_queried": false,
+    "session": "existing company-managed Merchant test account; identity and credentials omitted",
+    "viewport_css_px": {"width": 1363, "height": 936},
+    "business_domain": "food",
+    "navigation_only": true,
+    "business_forms_submitted": false,
+    "signed_out_or_changed_account": false,
+    "final_page": "Merchant Today"
+  },
+  "merchant_navigation": {
+    "today_top": ["Today", "Orders", "Catalog", "Storefront", "Suppliers", "Delivery", "Settings"],
+    "today_bottom": ["Today", "Orders", "Catalog", "Stock", "Money"],
+    "repeated_destinations": ["Today", "Orders", "Catalog"],
+    "top_missing_bottom_destinations": ["Stock", "Money"],
+    "feature_pages_hide_bottom_navigation": ["Orders", "Catalog", "Storefront", "Merchant settings"],
+    "top_nav_viewport_y_at_scroll_top": {"Orders": 968, "Catalog": 2382, "Storefront": 2911},
+    "measurement_method": "Read-only getBoundingClientRect().top of the observed Merchant workspace navigation after page data rendered; one dataset, not a benchmark"
+  },
+  "live_inspected": ["Account Home", "Merchant Today", "Merchant Orders", "Merchant Catalog", "Merchant Storefront", "Merchant Money", "Merchant Stock", "Merchant settings", "global More", "Production health"],
+  "source_inspected_only": ["Guest exploration", "Customer hub and features", "Supplier hub and sections", "Courier hub and sections", "Local Services hub and sections", "delegated Admin module navigation"],
+  "not_claimed": ["physical Android acceptance", "live responsive mobile acceptance", "other roles authenticated Production acceptance", "runtime implementation", "new deployment", "financial or security incident", "complete WCAG audit", "cloud browser rendering of local concept"],
+  "evidence_images": [
+    {"path": "ui-navigation-evidence/merchant-today-production.jpg", "purpose": "Today desktop with duplicate top/bottom destinations"},
+    {"path": "ui-navigation-evidence/merchant-orders-production.jpg", "purpose": "Orders desktop first viewport lacks Merchant navigation and business context"}
+  ],
+  "reproduction": [
+    "Use an authorised controlled Merchant account without changing the shared browser authentication identity.",
+    "Open Today and compare the top and bottom navigation labels.",
+    "Open Orders via the existing Merchant nav; after it renders, inspect the nav's viewport rectangle at scroll top.",
+    "Repeat read-only for Catalog and Storefront; do not submit any form.",
+    "Open Money and Stock from Today/bottom nav, then Merchant settings; record hierarchy and labels only.",
+    "Return to Merchant Today and preserve the existing session."
+  ],
+  "proposal": {
+    "primary": ["Today", "Orders", "Catalog", "Stock", "Money"],
+    "public_business_entry": "Storefront beside business identity",
+    "secondary": ["Suppliers", "Delivery", "Business settings", "Promotion", "Profile tutorial"],
+    "bottom_navigation": false,
+    "status": "proposal only; no runtime code modified"
+  },
+  "references": [
+    "https://design-system.service.gov.uk/components/service-navigation/",
+    "https://www.w3.org/WAI/WCAG22/Understanding/consistent-navigation.html",
+    "https://www.w3.org/WAI/WCAG22/Understanding/reflow.html",
+    "https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html"
+  ]
+}

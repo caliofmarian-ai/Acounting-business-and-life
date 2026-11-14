@@ -6,7 +6,9 @@ export function createInventoryLocationUi({
   refreshInventory,
   escapeHtml,
   formatNumber,
-  onLocationsChanged
+  onLocationsChanged,
+  beginWrite=()=>null,
+  getReadGuard=()=>()=>true
 }){
   const esc=escapeHtml;
   const num=formatNumber;
@@ -14,6 +16,7 @@ export function createInventoryLocationUi({
   let balances=[];
   let transfers=[];
   let wired=false;
+  let readGeneration=0;
 
   function setText(id,text,tone=''){
     const node=byId(id);
@@ -129,30 +132,61 @@ export function createInventoryLocationUi({
     return node;
   }
 
-  async function load(){
+  // The Stock page can begin this read while its independent Inventory item GET is in flight.
+  // Prefetch never renders: the normal load() guard still owns all DOM and state updates.
+  // Consume failures here to avoid an unhandled rejection if Inventory is unavailable.
+  function prefetch(){
+    if(!byId('inventoryLocationsCard'))return null;
+    const isCurrent=getReadGuard();
+    return Promise.resolve().then(()=>{
+      if(!isCurrent())throw new Error('Inventory context changed before Storage prefetch.');
+      return api('/api/inventory/location-summary');
+    })
+      .then(storage=>({ok:true,storage}),error=>({ok:false,error}));
+  }
+
+  async function load({isCurrent=getReadGuard(),prefetched=null}={}){
+    const generation=++readGeneration,current=()=>generation===readGeneration&&isCurrent();
     if(!byId('inventoryLocationsCard'))return{locations:[],balances:[],transfers:[]};
     try{
-      const result=await Promise.all([
-        api('/api/inventory/locations'),
-        api('/api/inventory/location-balances'),
-        api('/api/inventory/transfers')
-      ]);
-      locations=Array.isArray(result[0])?result[0]:[];
-      balances=Array.isArray(result[1])?result[1]:[];
-      transfers=Array.isArray(result[2])?result[2]:[];
+      const prepared=prefetched?await prefetched:null;
+      if(prepared&&!prepared.ok)throw prepared.error;
+      const storage=prepared?prepared.storage:await api('/api/inventory/location-summary');
+      if(!current())return null;
+      if(!storage||!Array.isArray(storage.locations)||
+         !Array.isArray(storage.balances)||!Array.isArray(storage.transfers)){
+        throw new Error('Storage summary could not be loaded. Retry to refresh.');
+      }
+      locations=storage.locations;
+      balances=storage.balances;
+      transfers=storage.transfers;
       renderBalances();
       fillTransferItems();
       renderTransfers();
       onLocationsChanged?.(locations);
       return{locations,balances,transfers};
     }catch(error){
+      if(!current())return null;
+      locations=[];balances=[];transfers=[];
+      for(const id of ['inventoryLocationBalanceList','inventoryTransferList'])byId(id)?.replaceChildren();
+      for(const id of ['inventoryTransferItem','inventoryTransferSource','inventoryTransferDestination'])byId(id)?.replaceChildren(new Option('Reload locations first',''));
       setText('inventoryTransferMessage',error.message||'Storage locations could not be loaded.','negative');
-      return{locations,balances,transfers};
+      return{readError:true};
     }
+  }
+
+  // The Stock page owns the canonical post-write refresh and reloads both
+  // Inventory and the selected tool in one pass. Standalone consumers still
+  // refresh this module locally when no owner callback is supplied.
+  async function refreshAfterTransfer(){
+    if(typeof refreshInventory==='function')await refreshInventory();
+    else await load();
   }
 
   async function createLocation(event){
     event.preventDefault();
+    const write=beginWrite(byId('inventoryLocationsCard'));if(!write)return;
+    try{
     setText('inventoryLocationMessage','Saving location…');
     try{
       await api('/api/inventory/locations',{
@@ -165,16 +199,21 @@ export function createInventoryLocationUi({
           storage_segregated:Boolean(byId('inventoryLocationSegregated')?.checked)
         })
       });
+      if(!write.accept())return;
       event.target.reset();
       setText('inventoryLocationMessage','Location added.','positive');
       await load();
-    }catch(error){
+      if(!write.isCurrent())return;
+    }catch(error){if(!write.isCurrent())return;
       setText('inventoryLocationMessage',error.message||'Location could not be added.','negative');
     }
+    }finally{write.finish()}
   }
 
   async function transfer(event){
     event.preventDefault();
+    const write=beginWrite(byId('inventoryLocationsCard'));if(!write)return;
+    try{
     const inventoryId=Number(byId('inventoryTransferItem')?.value);
     const sourceId=Number(byId('inventoryTransferSource')?.value);
     const destinationId=Number(byId('inventoryTransferDestination')?.value);
@@ -195,29 +234,35 @@ export function createInventoryLocationUi({
           note:byId('inventoryTransferNote')?.value||''
         })
       });
+      if(!write.accept())return;
       setText('inventoryTransferMessage','Transfer saved. Business total remains '+num(saved.business_total,4)+' '+(inventoryRows().find(x=>Number(x.id)===inventoryId)?.unit||'')+'.','positive');
       if(byId('inventoryTransferQuantity'))byId('inventoryTransferQuantity').value='';
       if(byId('inventoryTransferNote'))byId('inventoryTransferNote').value='';
-      await load();
-      if(typeof refreshInventory==='function')await refreshInventory();
-    }catch(error){
+      await refreshAfterTransfer();
+      if(!write.isCurrent())return;
+    }catch(error){if(!write.isCurrent())return;
       setText('inventoryTransferMessage',error.message||'Transfer could not be saved.','negative');
     }
+    }finally{write.finish()}
   }
 
   async function reverseTransfer(id){
+    const write=beginWrite(byId('inventoryLocationsCard'));if(!write)return;
+    try{
     setText('inventoryTransferMessage','Reversing transfer…');
     try{
       await api('/api/inventory/transfers/'+Number(id)+'/reverse',{
         method:'POST',
         body:JSON.stringify({note:'Reversed from Merchant Inventory'})
       });
+      if(!write.accept())return;
       setText('inventoryTransferMessage','Transfer reversed with linked audit evidence.','positive');
-      await load();
-      if(typeof refreshInventory==='function')await refreshInventory();
-    }catch(error){
+      await refreshAfterTransfer();
+      if(!write.isCurrent())return;
+    }catch(error){if(!write.isCurrent())return;
       setText('inventoryTransferMessage',error.message||'Transfer could not be reversed.','negative');
     }
+    }finally{write.finish()}
   }
 
   function wire(){
@@ -234,7 +279,9 @@ export function createInventoryLocationUi({
 
   return{
     wire,
+    prefetch,
     load,
+    reset(){readGeneration+=1;locations=[];balances=[];transfers=[];},
     getLocations:()=>locations.slice(),
     getBalances:()=>balances.slice()
   };

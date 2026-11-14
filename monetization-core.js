@@ -1,3 +1,5 @@
+import {resolveAcceptedServiceJobPayable} from './local-services-pricing-core.js';
+
 const clean=(v,max=300)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v||0)+Number.EPSILON)*100)/100;
 
@@ -220,8 +222,15 @@ async function historicalRows(pool){
     },
     {
       serviceScope:'local_services',subjectType:'account',sourceType:'service_job',
-      sql:`SELECT j.id source_id,j.provider_account_id subject_id,NULL::bigint territory_id,j.customer_confirmed_at completed_at,COALESCE(j.final_price,j.quote_amount,0) gross_value,j.currency_code
+      sql:`SELECT j.id source_id,j.id service_job_id,j.provider_account_id subject_id,
+                  NULL::bigint territory_id,j.customer_confirmed_at completed_at,
+                  j.status job_status,j.pricing_locked_at,j.accepted_quote_id,j.agreed_total,
+                  j.legacy_final_adjustment,j.final_price,j.quote_amount,j.currency_code,
+                  q.id accepted_quote_ref_id,q.job_id accepted_quote_job_id,
+                  q.status accepted_quote_status,q.total_amount accepted_quote_total,
+                  q.currency_code accepted_quote_currency,q.legacy_record accepted_quote_legacy
            FROM service_jobs j
+           LEFT JOIN service_job_quotes q ON q.id=j.accepted_quote_id
            LEFT JOIN service_monetization_events e ON e.event_key=('local_services:account:'||j.provider_account_id||':service_job:'||j.id)
            WHERE j.status='completed' AND j.customer_confirmed_at IS NOT NULL AND e.id IS NULL
            ORDER BY j.customer_confirmed_at,j.id LIMIT 5000`
@@ -231,7 +240,27 @@ async function historicalRows(pool){
   for(const spec of queries){
     try{
       const q=await pool.query(spec.sql);
-      for(const row of q.rows)out.push({...spec,...row,sql:undefined});
+      for(const row of q.rows){
+        let grossValue=row.gross_value;
+        if(spec.serviceScope==='local_services'){
+          // The same accepted quote, job/currency, legacy-only adjustment and
+          // completed-price checks as Payment Core. Never backfill zero or a
+          // fabricated amount for a broken or missing approved quote snapshot.
+          const job={
+            id:row.service_job_id,status:row.job_status,currency_code:row.currency_code,
+            pricing_locked_at:row.pricing_locked_at,accepted_quote_id:row.accepted_quote_id,
+            agreed_total:row.agreed_total,legacy_final_adjustment:row.legacy_final_adjustment,
+            final_price:row.final_price,quote_amount:row.quote_amount
+          };
+          const acceptedQuote=row.accepted_quote_ref_id==null?null:{
+            id:row.accepted_quote_ref_id,job_id:row.accepted_quote_job_id,
+            status:row.accepted_quote_status,total_amount:row.accepted_quote_total,
+            currency_code:row.accepted_quote_currency,legacy_record:row.accepted_quote_legacy
+          };
+          grossValue=resolveAcceptedServiceJobPayable(job,acceptedQuote).payable_value;
+        }
+        out.push({...spec,...row,gross_value:grossValue,sql:undefined});
+      }
     }catch(e){
       if(e.code==='42P01'||e.code==='42703')continue;
       throw e;
@@ -304,4 +333,4 @@ export async function promotionKpi(pool,{from,to,territoryId=null}={}){
   };
 }
 
-export const monetizationInternals=Object.freeze({eventKey,phaseAt,promoDaysForScope});
+export const monetizationInternals=Object.freeze({eventKey,phaseAt,promoDaysForScope,historicalRows});

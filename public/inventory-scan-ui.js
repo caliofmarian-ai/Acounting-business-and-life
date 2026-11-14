@@ -11,11 +11,14 @@ export function createInventoryScanUi({
   escapeHtml,
   formatNumber,
   onReceiveItem,
-  onCountItem
+  onCountItem,
+  beginWrite=()=>null,
+  getReadGuard=()=>()=>true
 }){
   const esc=escapeHtml;
   const num=formatNumber;
   let wired=false;
+  let lookupGeneration=0;
   let stream=null;
   let detector=null;
   let scanning=false;
@@ -136,6 +139,8 @@ export function createInventoryScanUi({
   }
 
   async function lookup({query='',barcode=''}={}){
+    const generation=++lookupGeneration,isCurrent=getReadGuard();
+    const current=()=>generation===lookupGeneration&&isCurrent();
     const cleanQuery=String(query||'').trim();
     const cleanBarcode=String(barcode||'').trim();
     if(!cleanQuery&&!cleanBarcode){
@@ -148,9 +153,11 @@ export function createInventoryScanUi({
         ?'/api/inventory/lookup?barcode='+encodeURIComponent(cleanBarcode)
         :'/api/inventory/lookup?q='+encodeURIComponent(cleanQuery);
       const rows=await api(path);
+      if(!current())return[];
       renderResults(rows,{source:cleanBarcode?'scan':'search'});
       return rows;
     }catch(error){
+      if(!current())return[];
       renderResults([],{source:cleanBarcode?'scan':'search'});
       setMessage(error.message||'Inventory lookup failed.','negative');
       return[];
@@ -243,6 +250,8 @@ export function createInventoryScanUi({
   }
 
   async function saveIdentifiers(){
+    const write=beginWrite(byId('inventoryIdentifiersEditor'));if(!write)return;
+    try{
     const inventoryId=Number(byId('inventoryIdentifierItem')?.value);
     if(!Number.isInteger(inventoryId)){
       setIdentifierMessage('Choose an Inventory item first.','negative');
@@ -257,13 +266,16 @@ export function createInventoryScanUi({
           barcode:byId('inventoryBarcode')?.value||''
         })
       });
+      if(!write.accept())return;
       if(typeof refreshInventory==='function')await refreshInventory();
+      if(!write.isCurrent())return;
       fillIdentifierItems(saved.id);
       setIdentifierMessage('Identifiers saved. Manual search and camera lookup now use these values.','positive');
-    }catch(error){
+    }catch(error){if(!write.isCurrent())return;
       const detail=error?.data?.conflicting_item?' Conflicts with '+error.data.conflicting_item+'.':'';
       setIdentifierMessage((error.message||'Identifiers could not be saved.')+detail,'negative');
     }
+    }finally{write.finish()}
   }
 
   function syncInventory(){
@@ -299,6 +311,7 @@ export function createInventoryScanUi({
     syncInventory,
     lookup,
     stopCamera,
+    reset(){lookupGeneration+=1;stopCamera();byId('inventoryLookupResults')?.replaceChildren();},
     selectIdentifierItem(id){
       byId('inventoryIdentifiersEditor')?.setAttribute('open','');
       fillIdentifierItems(id);

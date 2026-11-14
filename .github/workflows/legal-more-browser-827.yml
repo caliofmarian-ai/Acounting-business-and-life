@@ -1,0 +1,46 @@
+name: Legal More Native Browser 827
+on:
+  pull_request:
+    paths:
+      - 'public/mobile-feature-loader.js'
+      - 'public/legal-ui.js'
+      - 'public/legal.css'
+      - 'tests/legal-more-launcher.test.js'
+      - 'scripts/legal-more-browser-827.mjs'
+      - '.github/workflows/legal-more-browser-827.yml'
+permissions:
+  contents: read
+concurrency:
+  group: legal-more-827-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Exact source and More/Legal regressions
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --check scripts/legal-more-browser-827.mjs
+          node --test tests/legal-more-launcher.test.js tests/global-chrome-first-paint-v1.test.js
+      - name: Native Chrome reproduces the original missing-launcher defect
+        env:
+          LEGAL_BROWSER_LEGACY_CONTROL: '1'
+        run: node scripts/legal-more-browser-827.mjs
+      - name: Native Chrome verifies fixed More navigation with read-only role fixtures
+        run: node scripts/legal-more-browser-827.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legal-more-827
+          path: artifacts/legal-more-827/
+          if-no-files-found: warn
