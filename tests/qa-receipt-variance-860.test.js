@@ -43,13 +43,14 @@ test('the deployed variance route and resume route serialize on the same count-s
   assert.match(count,/SELECT \* FROM inventory_count_sessions\s+WHERE id=\$1 AND business_id=\$2 FOR UPDATE/);
 });
 
+
 test('the authenticated blind-count resume sends only its exact Inventory-origin business',()=>{
   const wave=read('qa-receipt-variance-860.js');
-  assert.match(wave,/const httpJson=async\\(path,\\{method='GET',token='',body,headers:extraHeaders=\\{\\}\\}\\=\\{\\}\\)=>\\{/);
-  assert.match(wave,/const headers=\\{Accept:'application\\/json','Cache-Control':'no-store',\\.\\.\\.extraHeaders\\};/);
+  assert.ok(wave.includes("const httpJson=async(path,{method='GET',token='',body,headers:extraHeaders={}}={})=>{"));
+  assert.ok(wave.includes("const headers={Accept:'application/json','Cache-Control':'no-store',...extraHeaders};"));
   const start=wave.indexOf('secondResume=call(');
   const end=wave.indexOf('await waitForLock',start);
   assert.ok(start>=0&&end>start,'resume request exists before the lock wait');
-  assert.match(wave.slice(start,end),/headers:\\{'x-abl-inventory-origin-business':String\\(businessA\\)\\}/);
+  assert.ok(wave.slice(start,end).includes("headers:{'x-abl-inventory-origin-business':String(businessA)}"));
   assert.equal((wave.match(/x-abl-inventory-origin-business/g)||[]).length,1);
 });
