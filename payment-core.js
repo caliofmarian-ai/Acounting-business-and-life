@@ -1,8 +1,100 @@
 import crypto from 'node:crypto';
+import {resolveAcceptedServiceJobPayable} from './local-services-pricing-core.js';
 
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
+// A refund reservation is money movement authority, never display rounding.
+// Reject coercions (booleans, arrays, exponents) and fractional cents BEFORE
+// acquiring locks or writing anything. PostgreSQL NUMERIC(14,2) requests are
+// stored as canonical decimal text to preserve each exact cent.
+const refundCents=(value,{request=false}={})=>{
+  if(typeof value!=='string'&&typeof value!=='number')
+    throw Object.assign(new Error('Refund amount must contain exact decimal cents'),{status:409,code:'REFUND_AMOUNT_INVALID'});
+  const raw=String(value);
+  const pattern=request
+    ? /^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/
+    : /^(?:0|[1-9]\d{0,29})(?:\.\d{1,2})?$/;
+  if(!pattern.test(raw))
+    throw Object.assign(new Error('Refund amount must contain exact decimal cents'),{status:409,code:'REFUND_AMOUNT_INVALID'});
+  const [whole,fraction='']=raw.split('.');
+  return BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));
+};
+const refundDecimal=cents=>(cents/100n).toString()+'.'+String(cents%100n).padStart(2,'0');
 const hash=v=>crypto.createHash('sha256').update(String(v??''),'utf8').digest('hex');
+const paymentIntentIdempotencyKey=raw=>{
+  // This is a literal caller-owned identity, not display text. Trimming or
+  // coercing a number can alias a different caller's already-committed intent.
+  if(typeof raw!=='string'||!raw.length||raw.length>220||
+     raw!==raw.trim()||/[\u0000-\u001F\u007F]/.test(raw)){
+    throw Object.assign(new Error('Payment idempotency key must be a literal, unpadded 1-220-character string'),{
+      status:400,code:'PAYMENT_IDEMPOTENCY_KEY_INVALID'
+    });
+  }
+  return raw;
+};
+
+const paymentProviderCode=raw=>{
+  // Provider identity is part of the original payment instruction. Trimming,
+  // coercion or truncation could replay another provider's committed intent.
+  if(raw==null||raw==='')return '';
+  if(typeof raw!=='string'||raw.length>80||raw!==raw.trim()||
+     /[\u0000-\u001F\u007F]/.test(raw)){
+    throw Object.assign(new Error('Payment provider code must be a literal, unpadded string of 0-80 characters'),{
+      status:400,code:'PAYMENT_PROVIDER_CODE_INVALID'
+    });
+  }
+  return raw;
+};
+// Intent creation accepts canonical logical methods only. The broader
+// normalizeMethod() is retained for legacy historical imports, but must not
+// silently collapse two different customer-supplied payment instructions into
+// one idempotent replay (e.g. unknown wallet names -> online_other).
+const PAYMENT_INTENT_METHOD_CODES=new Set([
+  'cash','external_transfer','ewallet','bank_transfer','card','online_other'
+]);
+function paymentIntentLogicalMethod(raw){
+  if(typeof raw!=='string'||!PAYMENT_INTENT_METHOD_CODES.has(raw)){
+    throw Object.assign(new Error('Use an explicit canonical payment method code'),{
+      status:400,code:'PAYMENT_METHOD_INVALID'
+    });
+  }
+  return raw;
+}
+// HTTP callers may supply this identity in either header or JSON body.
+// Contradictory values cannot be silently resolved in favor of one channel:
+// that could acknowledge a different committed same-scope payment.
+export function paymentRequestIdempotencyKey(headers={},body={}){
+  const header=headers?.['idempotency-key'];
+  const payload=body?.idempotency_key;
+  if(header!==undefined&&payload!==undefined&&header!==payload){
+    throw Object.assign(new Error('Payment idempotency header and body conflict'),{
+      status:400,code:'PAYMENT_IDEMPOTENCY_KEY_CONFLICT'
+    });
+  }
+  return paymentIntentIdempotencyKey(header!==undefined?header:payload);
+}
+
+// A replay is authoritative only for its original payment channel and source
+// currency. Reusing the same key for a different method/provider must not
+// acknowledge an unrelated checkout, even when the Order/Job identity matches.
+// Amount is intentionally NOT compared: a legitimate settled retry may see a
+// smaller (or zero) outstanding balance than its original committed intent.
+function assertPaymentIntentReplayDetails(existing,{logicalMethod,providerCode,currencyCode}){
+  const method=paymentIntentLogicalMethod(logicalMethod),provider=paymentProviderCode(providerCode);
+  const currency=String(currencyCode||'PHP').toUpperCase();
+  if(existing.logical_method!==method||String(existing.provider_code??'')!==provider||
+     String(existing.currency_code??'').toUpperCase()!==currency){
+    throw Object.assign(new Error('Idempotency key belongs to different payment details'),{
+      status:409,code:'PAYMENT_INTENT_DETAILS_CONFLICT'
+    });
+  }
+}
+
+// Serializes the global key across both Order and Service Job transactions.
+// A SELECT of an absent row cannot lock another concurrent insert.
+const lockPaymentIntentIdempotencyKey=(client,key)=>
+  client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))',[key]);
+
 
 export const PAYMENT_COMPONENTS=Object.freeze([
   'merchandise','delivery','platform_fee','country_operator_fee','territory_operator_fee',
@@ -22,6 +114,8 @@ export async function ensurePaymentSchema(pool){
     "CREATE TABLE IF NOT EXISTS payment_allocations(id BIGSERIAL PRIMARY KEY,payment_intent_id BIGINT NOT NULL REFERENCES payment_intents(id) ON DELETE CASCADE,component_code TEXT NOT NULL,economic_party_type TEXT NOT NULL,economic_party_id TEXT NOT NULL DEFAULT '',gross_base NUMERIC(14,2) NOT NULL DEFAULT 0,amount NUMERIC(14,2) NOT NULL,currency_code TEXT NOT NULL DEFAULT 'PHP',fee_policy_version_id BIGINT REFERENCES fee_policy_versions(id),rule_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,settlement_status TEXT NOT NULL DEFAULT 'pending',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(component_code IN ('merchandise','delivery','platform_fee','country_operator_fee','territory_operator_fee','processor_fee','tax','withholding','refund','merchant_net','supplier_net','service_provider_net','courier_net')),CHECK(settlement_status IN ('pending','eligible','held','processing','paid','failed','reversed','manual_review')))",
     "CREATE INDEX IF NOT EXISTS payment_allocations_intent_idx ON payment_allocations(payment_intent_id,id)",
     "CREATE TABLE IF NOT EXISTS refunds(id BIGSERIAL PRIMARY KEY,payment_intent_id BIGINT NOT NULL REFERENCES payment_intents(id) ON DELETE RESTRICT,public_id TEXT NOT NULL UNIQUE,provider_refund_id TEXT NOT NULL DEFAULT '',amount NUMERIC(14,2) NOT NULL CHECK(amount>0),currency_code TEXT NOT NULL DEFAULT 'PHP',reason TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'requested',requested_by_account_id BIGINT REFERENCES accounts(id),provider_status TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),processed_at TIMESTAMPTZ,CHECK(status IN ('requested','processing','succeeded','failed','cancelled','manual_review')))",
+    "ALTER TABLE refunds ADD COLUMN IF NOT EXISTS request_key TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS refunds_request_key_unique ON refunds(request_key) WHERE request_key IS NOT NULL",
     "CREATE TABLE IF NOT EXISTS settlements(id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,beneficiary_type TEXT NOT NULL,beneficiary_ref TEXT NOT NULL,provider_code TEXT NOT NULL DEFAULT '',provider_settlement_id TEXT NOT NULL DEFAULT '',currency_code TEXT NOT NULL DEFAULT 'PHP',gross_amount NUMERIC(14,2) NOT NULL DEFAULT 0,deduction_amount NUMERIC(14,2) NOT NULL DEFAULT 0,net_amount NUMERIC(14,2) NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'pending',evidence_reference TEXT NOT NULL DEFAULT '',period_start TIMESTAMPTZ,period_end TIMESTAMPTZ,created_by_account_id BIGINT REFERENCES accounts(id),paid_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(status IN ('pending','eligible','held','processing','paid','failed','reversed','manual_review')))",
     "CREATE TABLE IF NOT EXISTS settlement_lines(id BIGSERIAL PRIMARY KEY,settlement_id BIGINT NOT NULL REFERENCES settlements(id) ON DELETE CASCADE,payment_allocation_id BIGINT NOT NULL REFERENCES payment_allocations(id) ON DELETE RESTRICT,amount NUMERIC(14,2) NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(settlement_id,payment_allocation_id))",
     "CREATE TABLE IF NOT EXISTS reconciliation_runs(id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,provider_code TEXT NOT NULL,period_start TIMESTAMPTZ NOT NULL,period_end TIMESTAMPTZ NOT NULL,status TEXT NOT NULL DEFAULT 'running',internal_payment_total NUMERIC(14,2) NOT NULL DEFAULT 0,provider_payment_total NUMERIC(14,2) NOT NULL DEFAULT 0,internal_settlement_total NUMERIC(14,2) NOT NULL DEFAULT 0,provider_settlement_total NUMERIC(14,2) NOT NULL DEFAULT 0,mismatch_count INTEGER NOT NULL DEFAULT 0,statement_sha256 TEXT NOT NULL DEFAULT '',started_by_account_id BIGINT REFERENCES accounts(id),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),completed_at TIMESTAMPTZ,CHECK(status IN ('running','matched','mismatch','failed','manual_review')))",
@@ -151,21 +245,55 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    const provider=paymentProviderCode(providerCode);
+    const requestedMethod=paymentIntentLogicalMethod(logicalMethod);
     const q=await client.query("SELECT o.*,b.territory_id FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1 FOR UPDATE OF o",[Number(orderId)]);
     if(!q.rowCount)throw Object.assign(new Error('Order not found'),{status:404});
     const o=q.rows[0];
     if(Number(o.customer_account_id)!==Number(payerAccountId))throw Object.assign(new Error('This order belongs to another Customer'),{status:403});
     if(o.payment_method!=='online')throw Object.assign(new Error('This order is not configured for online payment'),{status:409});
     const outstanding=money(o.outstanding_amount);
-    if(outstanding<=0)throw Object.assign(new Error('Order is already paid'),{status:409});
-    const key=clean(idempotencyKey,220);
-    if(!key)throw Object.assign(new Error('Idempotency key is required'),{status:400});
+    const key=paymentIntentIdempotencyKey(idempotencyKey);
+    await lockPaymentIntentIdempotencyKey(client,key);
     const existing=await client.query("SELECT * FROM payment_intents WHERE idempotency_key=$1",[key]);
-    if(existing.rowCount){await client.query('COMMIT');return existing.rows[0]}
-    const provider=clean(providerCode,80);
+    if(existing.rowCount){
+      // An idempotency key is globally unique, but a replay may only read
+      // the original Order, payer and business payment intent.
+      const old=existing.rows[0];
+      if(old.source_type!=='order'||
+        Number(old.source_id)!==Number(o.id)||
+        Number(old.payer_account_id)!==Number(payerAccountId)||
+        Number(old.business_id)!==Number(o.business_id)){
+        throw Object.assign(new Error('Idempotency key belongs to another payment scope'),{
+          status:409,code:'PAYMENT_INTENT_SCOPE_CONFLICT'
+        });
+      }
+      assertPaymentIntentReplayDetails(old,{logicalMethod,providerCode,currencyCode:o.currency_code});
+      await client.query('COMMIT');
+      return old;
+    }
+    // A retry of the original key must remain recoverable after settlement
+    // reduced outstanding to zero; only a NEW key is rejected as already paid.
+    if(outstanding<=0)throw Object.assign(new Error('Order is already paid'),{status:409});
+    // A different key must not create a second live checkout for the same
+    // Order. The FOR UPDATE lock above serializes distinct-key requests too.
+    // Processing is never assumed safe to retry just because TTL elapsed.
+    const pending=await client.query(`
+      SELECT id FROM payment_intents
+      WHERE source_type='order' AND source_id=$1
+        AND (
+          status='processing'
+          OR (status IN ('requires_provider','requires_action')
+              AND (expires_at IS NULL OR expires_at>NOW()))
+        )
+      LIMIT 1
+    `,[o.id]);
+    if(pending.rowCount)throw Object.assign(new Error('An Order payment is already pending'),{
+      status:409,code:'ORDER_PAYMENT_ALREADY_PENDING'
+    });
     const configured=provider?await client.query("SELECT 1 FROM payment_provider_configs WHERE provider_code=$1 AND status IN ('sandbox','active')",[provider]):{rowCount:0};
     const ins=await client.query("INSERT INTO payment_intents(public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,provider_code,logical_method,currency_code,amount,status,client_reference,expires_at) VALUES($1,$2,'order',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW()+INTERVAL '30 minutes') RETURNING *",[
-      'pi_'+crypto.randomBytes(16).toString('hex'),key,o.id,payerAccountId,o.business_id,o.territory_id,provider,normalizeMethod(logicalMethod),o.currency_code||'PHP',outstanding,configured.rowCount?'requires_action':'requires_provider',clean(clientReference,200)
+      'pi_'+crypto.randomBytes(16).toString('hex'),key,o.id,payerAccountId,o.business_id,o.territory_id,provider,requestedMethod,o.currency_code||'PHP',outstanding,configured.rowCount?'requires_action':'requires_provider',clean(clientReference,200)
     ]);
     await insertBaseOrderAllocations(client,ins.rows[0],o);
     await client.query('COMMIT');
@@ -187,20 +315,22 @@ async function serviceJobPaymentSummaryDb(db,jobId,{jobRow=null,lockJob=false}={
     job=q.rows[0];
   }
 
-  const [activity,refunds,settlement,latest]=await Promise.all([
+  const [activity,refunds,settlement,latest,acceptedQuote]=await Promise.all([
     db.query(`
       SELECT
         COALESCE(SUM(amount) FILTER(
           WHERE status IN ('succeeded','partially_refunded','refunded')
         ),0) gross_confirmed,
         COALESCE(SUM(amount) FILTER(
-          WHERE status IN ('requires_provider','requires_action','processing')
-            AND (expires_at IS NULL OR expires_at>NOW())
+          WHERE status='processing'
+            OR (status IN ('requires_provider','requires_action')
+                AND (expires_at IS NULL OR expires_at>NOW()))
         ),0) pending_amount,
         COUNT(*) FILTER(WHERE status IN ('succeeded','partially_refunded','refunded'))::int confirmed_count,
         COUNT(*) FILTER(
-          WHERE status IN ('requires_provider','requires_action','processing')
-            AND (expires_at IS NULL OR expires_at>NOW())
+          WHERE status='processing'
+            OR (status IN ('requires_provider','requires_action')
+                AND (expires_at IS NULL OR expires_at>NOW()))
         )::int pending_count
       FROM payment_intents
       WHERE source_type='service_job' AND source_id=$1
@@ -231,10 +361,17 @@ async function serviceJobPaymentSummaryDb(db,jobId,{jobRow=null,lockJob=false}={
       FROM payment_intents
       WHERE source_type='service_job' AND source_id=$1
       ORDER BY created_at DESC,id DESC LIMIT 1
-    `,[id])
+    `,[id]),
+    job.accepted_quote_id==null
+      ?Promise.resolve({rows:[]})
+      :db.query(`
+        SELECT id,job_id,status,total_amount,currency_code,legacy_record
+        FROM service_job_quotes WHERE id=$1
+      `,[job.accepted_quote_id])
   ]);
 
-  const payable=money(job.final_price??job.quote_amount??0);
+  const pricing=resolveAcceptedServiceJobPayable(job,acceptedQuote.rows[0]||null);
+  const payable=pricing.payable_value;
   const gross=money(activity.rows[0]?.gross_confirmed||0);
   const refunded=money(refunds.rows[0]?.refunded_amount||0);
   const effectivePaid=money(Math.max(0,gross-refunded));
@@ -258,7 +395,11 @@ async function serviceJobPaymentSummaryDb(db,jobId,{jobRow=null,lockJob=false}={
       customer_confirmed_at:job.customer_confirmed_at,
       quote_amount:job.quote_amount==null?null:money(job.quote_amount),
       final_price:job.final_price==null?null:money(job.final_price),
+      accepted_quote_id:pricing.accepted_quote_id,
+      agreed_total:pricing.agreed_total,
+      legacy_final_adjustment:pricing.legacy_final_adjustment,
       payable_value:payable,
+      payable_authority:pricing.payable_authority,
       payable_state:payableState
     },
     payment:{
@@ -297,6 +438,8 @@ export async function createServiceJobPaymentIntent(pool,{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    const provider=paymentProviderCode(providerCode);
+    const requestedMethod=paymentIntentLogicalMethod(logicalMethod);
     const id=Number(serviceJobId);
     const q=await client.query("SELECT * FROM service_jobs WHERE id=$1 FOR UPDATE",[id]);
     if(!q.rowCount)throw Object.assign(new Error('Service Job not found'),{status:404});
@@ -304,17 +447,19 @@ export async function createServiceJobPaymentIntent(pool,{
     if(Number(job.customer_account_id)!==Number(payerAccountId))throw Object.assign(new Error('This Service Job belongs to another Customer'),{status:403});
     if(job.status!=='completed')throw Object.assign(new Error('Service Job is not completed yet'),{status:409});
     if(!job.customer_confirmed_at)throw Object.assign(new Error('Confirm Service Job completion before payment'),{status:409});
-    const payable=money(job.final_price??job.quote_amount??0);
+    const summary=await serviceJobPaymentSummaryDb(client,id,{jobRow:job});
+    const payable=summary.commercial.payable_value;
     if(payable<=0)throw Object.assign(new Error('Service Job has no payable amount'),{status:409});
 
-    const key=clean(idempotencyKey,220);
-    if(!key)throw Object.assign(new Error('Idempotency key is required'),{status:400});
+    const key=paymentIntentIdempotencyKey(idempotencyKey);
+    await lockPaymentIntentIdempotencyKey(client,key);
     const existing=await client.query("SELECT * FROM payment_intents WHERE idempotency_key=$1",[key]);
     if(existing.rowCount){
       const old=existing.rows[0];
       if(old.source_type!=='service_job'||Number(old.source_id)!==id||Number(old.payer_account_id)!==Number(payerAccountId)){
         throw Object.assign(new Error('Idempotency key belongs to another payment scope'),{status:409});
       }
+      assertPaymentIntentReplayDetails(old,{logicalMethod,providerCode,currencyCode:job.currency_code});
       await client.query('COMMIT');
       return old;
     }
@@ -322,15 +467,14 @@ export async function createServiceJobPaymentIntent(pool,{
     await client.query(`
       UPDATE payment_intents SET status='cancelled',cancelled_at=NOW(),updated_at=NOW()
       WHERE source_type='service_job' AND source_id=$1
-        AND status IN ('requires_provider','requires_action','processing')
+        AND status IN ('requires_provider','requires_action')
         AND expires_at IS NOT NULL AND expires_at<=NOW()
     `,[id]);
 
-    const summary=await serviceJobPaymentSummaryDb(client,id,{jobRow:job});
     if(summary.payment.outstanding<=0)throw Object.assign(new Error('Service Job is already paid'),{status:409});
-    if(summary.payment.pending_amount>0)throw Object.assign(new Error('A Service Job payment is already pending'),{status:409});
+    // A processing provider may settle even after expires_at: never treat TTL as cancellation.
+    if(summary.payment.pending_count>0||summary.payment.pending_amount>0)throw Object.assign(new Error('A Service Job payment is already pending'),{status:409});
 
-    const provider=clean(providerCode,80);
     const ins=await client.query(`
       INSERT INTO payment_intents(
         public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,
@@ -339,14 +483,18 @@ export async function createServiceJobPaymentIntent(pool,{
       RETURNING *
     `,[
       'pi_'+crypto.randomBytes(16).toString('hex'),key,id,Number(payerAccountId),provider,
-      normalizeMethod(logicalMethod),job.currency_code||'PHP',summary.payment.outstanding,clean(clientReference,200)
+      requestedMethod,job.currency_code||'PHP',summary.payment.outstanding,clean(clientReference,200)
     ]);
     await client.query(`
       INSERT INTO payment_audit_events(actor_account_id,payment_intent_id,event_code,provider_code,after_json,correlation_id)
       VALUES($1,$2,'service_job_payment_intent_created',$3,$4::jsonb,$5)
     `,[
       Number(payerAccountId),ins.rows[0].id,provider,
-      JSON.stringify({service_job_id:id,payable_value:summary.commercial.payable_value,outstanding:summary.payment.outstanding,checkout_supported:true}),
+      JSON.stringify({
+        service_job_id:id,accepted_quote_id:summary.commercial.accepted_quote_id,
+        payable_value:summary.commercial.payable_value,payable_authority:summary.commercial.payable_authority,
+        outstanding:summary.payment.outstanding,checkout_supported:true
+      }),
       'service-job-intent:'+ins.rows[0].public_id
     ]);
     await client.query('COMMIT');
@@ -417,17 +565,116 @@ export async function feePolicyOverview(pool){
   return rows;
 }
 
-export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null}){
-  const i=await paymentIntentDetail(pool,intentId);
-  if(!i)throw Object.assign(new Error('Payment intent not found'),{status:404});
-  if(!['succeeded','partially_refunded'].includes(i.status))throw Object.assign(new Error('Only confirmed payments can be refunded'),{status:409});
-  const done=await pool.query("SELECT COALESCE(SUM(amount),0) total FROM refunds WHERE payment_intent_id=$1 AND status IN ('processing','succeeded','requested','manual_review')",[i.id]);
-  const remaining=money(Number(i.amount)-Number(done.rows[0].total)),amt=money(amount);
-  if(!Number.isFinite(amt)||amt<=0||amt>remaining+0.001)throw Object.assign(new Error('Refund amount exceeds refundable balance'),{status:409});
-  const q=await pool.query("INSERT INTO refunds(payment_intent_id,public_id,amount,currency_code,reason,status,requested_by_account_id) VALUES($1,$2,$3,$4,$5,'requested',$6) RETURNING *",[
-    i.id,'rf_'+crypto.randomBytes(14).toString('hex'),amt,i.currency_code,clean(reason,1000),requestedBy||null
-  ]);
-  return q.rows[0];
+// Hold the active assignment and its delegated payment.manage grant with
+// transaction-scoped PostgreSQL SHARE row locks until refund COMMIT/ROLLBACK.
+// Otherwise a revocation can commit after the last authorization SELECT.
+export async function lockCurrentRefundAdminAuthority(client,{actorAccountId,assignmentId}){
+  const actor=Number(actorAccountId),assignment=Number(assignmentId);
+  if(!Number.isSafeInteger(actor)||actor<1||!Number.isSafeInteger(assignment)||assignment<1)
+    throw Object.assign(new Error('Current refund admin authority is required'),{status:403});
+  const assigned=await client.query(`
+    SELECT admin_role,authority_rank FROM platform_admin_assignments
+     WHERE id=$1 AND account_id=$2 AND status='active'
+       AND effective_from<=clock_timestamp()
+       AND (effective_until IS NULL OR effective_until>clock_timestamp())
+     FOR SHARE`,[assignment,actor]);
+  if(assigned.rowCount!==1)
+    throw Object.assign(new Error('Refund admin assignment expired or was revoked'),{status:403});
+  const row=assigned.rows[0];
+  if(row.admin_role==='super_admin'||(row.authority_rank||row.admin_role)==='super_admin')return true;
+  const granted=await client.query(`
+    SELECT 1 FROM admin_permission_grants
+     WHERE assignment_id=$1 AND permission_code='payment.manage' AND status='active'
+       AND effective_from<=clock_timestamp()
+       AND (effective_until IS NULL OR effective_until>clock_timestamp())
+     FOR SHARE`,[assignment]);
+  if(granted.rowCount<1)
+    throw Object.assign(new Error('Refund admin permission expired or was revoked'),{status:403});
+  return true;
+}
+
+export async function createRefundRequest(pool,{intentId,amount,reason='',requestedBy=null,idempotencyKey,adminAudit=null,reauthorize=null}){
+  // Serialize one request identity globally (even across intent IDs) and all
+  // refund reservations per parent intent. Recovery must never post twice.
+  const requestKey=paymentIntentIdempotencyKey(idempotencyKey);
+  const amtCents=refundCents(amount,{request:true});
+  const amt=refundDecimal(amtCents),normalizedReason=clean(reason,1000);
+  // Validate verified admin assignment before opening a financial transaction.
+  // Core-only isolated ledgers may omit adminAudit; HTTP always supplies it.
+  const auditAssignment=adminAudit===null?null:Number(adminAudit?.assignmentId);
+  if(adminAudit!==null&&(!Number.isSafeInteger(auditAssignment)||auditAssignment<1))
+    throw Object.assign(new Error('Verified admin assignment is required for refund audit'),{status:403});
+  if(adminAudit!==null&&typeof reauthorize!=='function')
+    throw Object.assign(new Error('Current admin authorization is required for refund reservation'),{status:403});
+  if(amtCents<=0n)
+    throw Object.assign(new Error('Refund amount must be positive'),{status:409});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('refund:' || $1::text, 0))",[requestKey]);
+    const locked=await client.query(
+      'SELECT id,amount,currency_code,status FROM payment_intents WHERE id::text=$1 OR public_id=$1 FOR UPDATE',
+      [String(intentId)]
+    );
+    const i=locked.rows[0];
+    if(!i)throw Object.assign(new Error('Payment intent not found'),{status:404});
+    // A blocked transaction may resume after a session or admin grant was
+    // revoked. Recheck authority AFTER the lock, before replay or mutation.
+    // The callback uses the same client to avoid pool-connection starvation.
+    if(adminAudit!==null)await reauthorize(client);
+    const previousQuery=await client.query('SELECT * FROM refunds WHERE request_key=$1',[requestKey]);
+    if(previousQuery.rowCount){
+      const previous=previousQuery.rows[0];
+      if(Number(previous.payment_intent_id)!==Number(i.id)||
+         refundCents(previous.amount)!==amtCents||
+         String(previous.currency_code)!==String(i.currency_code)||
+         String(previous.reason)!==normalizedReason||
+         Number(previous.requested_by_account_id??0)!==Number(requestedBy??0))
+        throw Object.assign(new Error('Refund key belongs to different details'),{
+          status:409,code:'REFUND_REQUEST_KEY_CONFLICT'
+        });
+      // A delayed replay read can outlive a time-limited grant or session.
+      // Validate current authority again just before acknowledging its result.
+      if(adminAudit!==null)await reauthorize(client);
+      await client.query('COMMIT');
+      return {...previous,__idempotent_replay:true};
+    }
+    if(!['succeeded','partially_refunded'].includes(i.status))
+      throw Object.assign(new Error('Only confirmed payments can be refunded'),{status:409});
+    const done=await client.query(
+      "SELECT COALESCE(SUM(amount),0) total FROM refunds WHERE payment_intent_id=$1 AND status IN ('processing','succeeded','requested','manual_review')",
+      [i.id]
+    );
+    const remainingCents=refundCents(i.amount)-refundCents(done.rows[0].total);
+    if(remainingCents<0n||amtCents>remainingCents)
+      throw Object.assign(new Error('Refund amount exceeds refundable balance'),{status:409});
+    const q=await client.query(
+      "INSERT INTO refunds(payment_intent_id,public_id,amount,currency_code,reason,status,requested_by_account_id,request_key) VALUES($1,$2,$3,$4,$5,'requested',$6,$7) RETURNING *",
+      [i.id,'rf_'+crypto.randomBytes(14).toString('hex'),amt,i.currency_code,normalizedReason,requestedBy||null,requestKey]
+    );
+    // appendAdminAudit is best-effort and historically runs AFTER COMMIT.
+    // Financial reservation and mandatory audit must instead commit together:
+    // a failed audit INSERT rolls back refund, idempotency key and row locks.
+    if(adminAudit!==null){
+      await client.query(`INSERT INTO admin_audit_events(
+        actor_account_id,assignment_id,permission_code,country_code,target_type,
+        target_id,event_code,after_json,reason,correlation_id
+      ) VALUES($1,$2,'payment.manage','PH','refund',$3,
+        'refund_requested_provider_action_required',$4::jsonb,$5,$6)`,[
+        requestedBy,auditAssignment,String(q.rows[0].id),
+        JSON.stringify({amount:q.rows[0].amount,status:q.rows[0].status}),
+        normalizedReason,clean(adminAudit.correlationId,120)
+      ]);
+    }
+    // Audit triggers and SQL can cross a wall-clock grant expiry. Assignment
+    // and grant rows stay locked, but time can still pass while they are held.
+    if(adminAudit!==null)await reauthorize(client);
+    await client.query('COMMIT');
+    return {...q.rows[0],__idempotent_replay:false};
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    throw error;
+  }finally{client.release()}
 }
 
 export async function createReconciliationRun(pool,{providerCode,periodStart,periodEnd,statement='',startedBy=null}){

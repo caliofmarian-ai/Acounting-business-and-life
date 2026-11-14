@@ -120,6 +120,30 @@ async function browserEntry(actor) {
   await page.goto(origin + '/');
   const entry = page.locator('#accountHomeKnowledge');
   await entry.waitFor({ state: 'visible' });
+
+  // Follow the real language-first onboarding gate before opening the private
+  // Knowledge entry. Never force-click through the coachmark overlay.
+  const onboarding = page.locator('#guidedOnboardingOverlay');
+  await onboarding.waitFor({ state: 'attached', timeout: 5000 }).catch(() => {});
+  if (await onboarding.count()) {
+    const languageChoice = onboarding.locator('[data-guide-locale="en-PH"]');
+    if (await languageChoice.count()) {
+      await languageChoice.click();
+      await page.waitForSelector('#guidedOnboardingOverlay .guidedLanguageCoach', {
+        state: 'detached',
+        timeout: 5000
+      });
+    }
+
+    const pause = page.locator('#guidedOnboardingOverlay [data-guide-pause]');
+    if (await pause.count()) {
+      await pause.click();
+      await onboarding.waitFor({ state: 'detached', timeout: 5000 });
+    } else if (await onboarding.count()) {
+      throw new Error('Guided onboarding remained active without its normal pause action');
+    }
+  }
+
   assert.equal(await entry.count(), 1);
   await entry.click();
   await page.waitForURL(origin + '/knowledge');

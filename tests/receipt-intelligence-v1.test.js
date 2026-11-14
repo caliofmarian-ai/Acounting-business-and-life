@@ -136,7 +136,7 @@ test('route and UI preserve scope, verified originals, blind-count gate and NO i
   assert.match(routes,/status='processing'/);
   assert.match(routes,/ON CONFLICT\(purchase_document_id,source_sha256\) DO NOTHING/);
   assert.match(routes,/receipt_intelligence_reviews/);
-  assert.match(routes,/SELECT status FROM inventory_count_sessions WHERE id=\$1 AND business_id=\$2/);
+  assert.match(routes,/SELECT status FROM inventory_count_sessions WHERE id=\$1 AND business_id=\$2 FOR SHARE/);
   assert.match(routes,/Finish blind counting/);
   assert.doesNotMatch(routes,/UPDATE inventory SET|INSERT INTO inventory_purchases|INSERT INTO transactions/);
   assert.match(server,/registerReceiptIntelligenceRoutes/);

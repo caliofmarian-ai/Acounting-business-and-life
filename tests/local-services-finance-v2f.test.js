@@ -10,7 +10,7 @@ const ui=read('public/profile-money-ui.js');
 const shell=read('public/shell.js');
 
 test('Local Services Finance derives Customer paid and receivable from canonical Payment Core evidence',()=>{
-  assert.match(money,/async function serviceProviderPaymentEvidence/);
+  assert.match(money,/function serviceProviderPaymentEvidence/);
   assert.match(money,/pi\.source_type='service_job'/);
   assert.match(money,/pi\.status IN \('succeeded','partially_refunded','refunded'\)/);
   assert.match(money,/JOIN refunds r|FROM refunds r/);
@@ -18,11 +18,11 @@ test('Local Services Finance derives Customer paid and receivable from canonical
   assert.match(money,/confirmed_customer_payments/);
   assert.match(money,/refunded_customer_payments/);
   assert.match(money,/outstanding_receivables/);
-  assert.match(money,/GREATEST\(payable-effective_paid,0\)/);
+  assert.match(money,/outstanding_receivable:confirmed\?money\(Math\.max\(payable\.payable_value-paid,0\)\):0/);
 });
 
 test('payment evidence and payout settlement stay distinct',()=>{
-  assert.match(money,/payments,/);
+  assert.match(money,/payments:serviceProviderPaymentEvidence\(rows\)/);
   assert.match(money,/income:allocations/);
   assert.match(money,/payment_tracking:'payment_intents \+ succeeded refunds'/);
   assert.match(money,/settlement_tracking:allocations\.tracked\?'payment_allocations\.service_provider_net':'not_configured'/);

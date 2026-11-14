@@ -358,18 +358,24 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
   });
 
   app.get('/api/procurement/receipt-intelligence/count-sessions/:id/variance-evidence',async(req,res,next)=>{
+    res.set('Cache-Control','private, no-store, max-age=0');
+    let client,discardClient=false;
     try{
       const {businessId}=await scope(pool,identity,req);
       const vault=await pool.query("SELECT to_regclass('public.merchant_purchase_documents') vault");
       if(!vault.rows[0]?.vault)fail('Receipt archive is not installed',503);
       const session=id(req.params.id,'count_session_id');
-      const q=await pool.query(
-        'SELECT status FROM inventory_count_sessions WHERE id=$1 AND business_id=$2',
+      client=await pool.connect();
+      await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+      // Resume takes FOR UPDATE on this same row. Keep the review grant locked
+      // until the expected quantities have been read on this connection.
+      const q=await client.query(
+        'SELECT status FROM inventory_count_sessions WHERE id=$1 AND business_id=$2 FOR SHARE',
         [session,businessId]
       );
       if(!q.rowCount)fail('Count session not found',404);
       if(!['review','posted'].includes(q.rows[0].status))fail('Finish blind counting before viewing documents',409);
-      const rows=await pool.query(`
+      const rows=await client.query(`
         SELECT si.inventory_id,i.item,i.unit,si.expected_quantity,si.counted_quantity,
           p.id purchase_id,p.total_cost,p.purchase_quantity,p.purchase_unit,p.created_at purchase_at,
           d.id receipt_id,d.issuer_name,d.document_number,d.issue_date
@@ -389,6 +395,7 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
           AND ABS(si.expected_quantity-si.counted_quantity)>0.000001
         ORDER BY i.item,d.issue_date DESC NULLS LAST LIMIT 120
       `,[session,businessId]);
+      await client.query('COMMIT');
       res.json({count_session_id:session,session_status:q.rows[0].status,
         stock_posted:false,findings:rows.rows.map(row=>({
           inventory_id:Number(row.inventory_id),name:row.item,unit:row.unit,
@@ -401,6 +408,9 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
             supplier:row.issuer_name,number:row.document_number,date:row.issue_date},
           message:'Purchase evidence suggests what to investigate, not actual shelf quantity.'
         }))});
-    }catch(e){next(e)}
+    }catch(error){
+      if(client)await client.query('ROLLBACK').catch(()=>{discardClient=true});
+      next(error);
+    }finally{client?.release(discardClient)}
   });
 }

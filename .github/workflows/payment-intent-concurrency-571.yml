@@ -1,0 +1,54 @@
+name: Payment Intent Concurrency 571
+on:
+  pull_request:
+    paths:
+      - 'payment-core.js'
+      - 'server-payments.js'
+      - 'tests/order-payment-intent-scope-571.test.js'
+      - 'scripts/payment-intent-concurrency-postgres-571.mjs'
+      - '.github/workflows/payment-intent-concurrency-571.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_payment_intent_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_payment_intent_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_payment_intent_ci
+      NODE_ENV: test
+      RAILWAY_SERVICE_NAME: accounting-payment-concurrency-ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Verify exact-head SQL key serialization, rollback and replay
+        run: |
+          node --check payment-core.js
+          node --check scripts/payment-intent-concurrency-postgres-571.mjs
+          node --test tests/order-payment-intent-scope-571.test.js
+          node --test scripts/payment-intent-concurrency-postgres-571.mjs

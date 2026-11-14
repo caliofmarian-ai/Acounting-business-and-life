@@ -41,7 +41,8 @@ test('Service Job checkout descriptor uses Customer-owned payable job and generi
     call++;
     if(call===1)return{rowCount:1,rows:[{
       id:92,public_id:'pi_service_92',source_type:'service_job',source_id:44,payer_account_id:9,
-      currency_code:'PHP',amount:'1250.00',status:'requires_provider'
+      currency_code:'PHP',amount:'1250.00',status:'requires_provider',
+      expires_at:new Date(Date.now()+30*60_000).toISOString()
     }]};
     if(call===2){
       assert.match(sql,/FROM service_jobs j JOIN accounts p/);
@@ -57,13 +58,19 @@ test('Service Job checkout descriptor uses Customer-owned payable job and generi
       return{rowCount:1,rows:[{
         id:44,customer_account_id:9,provider_account_id:15,service_label:'Aircon cleaning',
         status:'completed',quote_amount:'1250.00',final_price:'1250.00',currency_code:'PHP',
-        customer_confirmed_at:'2026-09-26T10:00:00Z'
+        accepted_quote_id:77,agreed_total:'1250.00',pricing_locked_at:'2026-09-25T10:00:00Z',
+        legacy_final_adjustment:null,customer_confirmed_at:'2026-09-26T10:00:00Z'
       }]};
     }
     if(call===4)return{rows:[{gross_confirmed:'0',pending_amount:'1250',confirmed_count:0,pending_count:1}]};
     if(call===5)return{rows:[{refunded_amount:'0',refund_count:0}]};
     if(call===6)return{rows:[{allocation_count:0,pending:'0',eligible:'0',processing:'0',paid:'0',held:'0',reversed:'0'}]};
     if(call===7)return{rows:[{id:92,public_id:'pi_service_92',provider_code:'paymongo',logical_method:'online_other',amount:'1250.00',status:'requires_provider'}]};
+    if(call===8){
+      assert.match(sql,/FROM service_job_quotes WHERE id=\$1/);
+      assert.deepEqual(args,[77]);
+      return{rows:[{id:77,job_id:44,status:'accepted',total_amount:'1250.00',currency_code:'PHP',legacy_record:false}]};
+    }
     throw new Error('Unexpected query '+sql);
   }};
   const d=await resolvePayMongoCheckoutDescriptor(pool,{intentPublicId:'pi_service_92',accountId:9});
@@ -76,6 +83,8 @@ test('Service Job checkout descriptor uses Customer-owned payable job and generi
   assert.equal(d.metadata.bl_source_id,'44');
   assert.equal('bl_order_id' in d.metadata,false);
   assert.equal(d.context.provider_account_id,15);
+  assert.equal(d.context.accepted_quote_id,77);
+  assert.equal(d.context.payable_authority,'accepted_quote');
 });
 
 test('unsupported checkout sources fail closed before source-domain queries',async()=>{
@@ -176,4 +185,62 @@ test('checkout payload carries generic source metadata while retaining legacy Or
   assert.match(adapter,/bl_source_id:String\(i\.source_id\)/);
   assert.match(adapter,/bl_order_id:String\(i\.source_id\)/);
   assert.match(adapter,/bl_business_id:String\(o\.business_id\)/);
+});
+
+test('Service Job expired, missing or invalid intent expiry fails closed before checkout source queries',async()=>{
+  for(const [status,expiresAt] of [
+    ['requires_provider','2020-01-01T00:00:00Z'],
+    ['requires_action',null],
+    ['processing','invalid-expiration']
+  ]){
+    let calls=0;
+    const pool={query:async()=>{
+      calls++;
+      return{rowCount:1,rows:[{
+        id:92,public_id:'pi_expired_92',source_type:'service_job',source_id:44,
+        payer_account_id:9,currency_code:'PHP',amount:'1250.00',status,expires_at:expiresAt
+      }]};
+    }};
+    await assert.rejects(
+      resolvePayMongoCheckoutDescriptor(pool,{intentPublicId:'pi_expired_92',accountId:9}),
+      err=>err?.status===409&&err?.code==='SERVICE_JOB_PAYMENT_INTENT_EXPIRED'
+    );
+    assert.equal(calls,1,'expired service intent must be rejected before job/quote queries');
+  }
+});
+
+test('pending Service Job checkout refuses inconsistent currencies before monetary lookup or provider call',async()=>{
+  // Regression: earlier descriptor code returned a EUR checkout for a PHP job.
+  for(const [intentCurrency,jobCurrency] of [
+    ['EUR','PHP'],['PHP','EUR'],['EUR','EUR'],['','PHP'],['PHP',''],[null,'PHP'],['php','PHP']
+  ]){
+    let queries=0;
+    const pool={query:async(sql)=>{
+      queries++;
+      if(queries===1){
+        assert.match(sql,/FROM payment_intents/);
+        return{rowCount:1,rows:[{
+          id:92,public_id:'pi_currency_92',source_type:'service_job',source_id:44,
+          payer_account_id:9,currency_code:intentCurrency,amount:'1250.00',
+          status:'requires_provider',expires_at:new Date(Date.now()+30*60_000).toISOString()
+        }]};
+      }
+      if(queries===2){
+        assert.match(sql,/FROM service_jobs j JOIN accounts p/);
+        return{rowCount:1,rows:[{
+          id:44,customer_account_id:9,provider_account_id:15,
+          status:'completed',service_label:'Aircon cleaning',
+          currency_code:jobCurrency,customer_confirmed_at:'2026-10-29T10:00:00Z',
+          provider_name:'Synthetic provider'
+        }]};
+      }
+      throw new Error('Must reject mismatched currency before Service Job money queries');
+    }};
+    await assert.rejects(
+      resolvePayMongoCheckoutDescriptor(pool,{intentPublicId:'pi_currency_92',accountId:9}),
+      error=>error?.status===409&&error?.code==='SERVICE_JOB_CURRENCY_INTEGRITY_MISMATCH',
+      'pending Service Job mismatch: '+String(intentCurrency)+' / '+String(jobCurrency)
+    );
+    assert.equal(queries,2,'currency mismatch must not fetch payable summary or call provider');
+  }
 });

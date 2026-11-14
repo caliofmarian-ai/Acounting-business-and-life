@@ -16,8 +16,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Pin npm
-        run: npm install --global npm@10.8.2
+      - name: Pin npm without writing to protected runner-global paths
+        shell: bash
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/npm" npm@10.8.2
+          echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/npm/bin/npm" --version
       - name: Dependency evidence
         run: |
           node --version

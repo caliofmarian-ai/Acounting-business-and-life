@@ -11,6 +11,10 @@ on:
       - tests/inventory-location-read-performance-862.test.js
       - tests/inventory-location-read-postgres-862.test.js
       - .github/workflows/inventory-location-read-862.yml
+      - server-business-accounting.js
+      - accounting-context-query-core.js
+      - scripts/accounting-context-query-postgres-862.mjs
+      - tests/accounting-context-query-862.test.js
 
 permissions:
   contents: read
@@ -47,10 +51,22 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Check source syntax
-        run: node --check inventory-locations.js && node --check public/inventory-location-ui.js && node --check qa-inventory-location-read-862.js && node --check qa-acceptance.js && node --check tests/inventory-location-read-performance-862.test.js && node --check tests/inventory-location-read-postgres-862.test.js && node --check tests/qa-inventory-location-read-862.test.js
+        run: node --check inventory-locations.js && node --check public/inventory-location-ui.js && node --check qa-inventory-location-read-862.js && node --check qa-acceptance.js && node --check tests/inventory-location-read-performance-862.test.js && node --check tests/inventory-location-read-postgres-862.test.js && node --check tests/qa-inventory-location-read-862.test.js && node --check server-business-accounting.js && node --check accounting-context-query-core.js && node --check tests/accounting-context-query-862.test.js && node --check scripts/accounting-context-query-postgres-862.mjs
       - name: Execute isolated source regression
         run: node --test tests/inventory-location-read-performance-862.test.js tests/qa-inventory-location-read-862.test.js
       - name: Real PostgreSQL concurrency and business-isolation regression
         env:
           INVENTORY_862_PG_URL: postgres://qa862:qa862_only@127.0.0.1:5432/inventory862
         run: node --test tests/inventory-location-read-postgres-862.test.js
+      - name: Accounting context one-query unit regression
+        run: node --test tests/accounting-context-query-862.test.js
+      - name: PostgreSQL 16 accounting context resolver
+        env:
+          NODE_ENV: test
+          ABL_ACCOUNTING_CONTEXT_862_CI: '1'
+          PGHOST: 127.0.0.1
+          PGUSER: qa862
+          PGPASSWORD: qa862_only
+          PGDATABASE: inventory862
+          PAYMONGO_LIVE_ENABLED: 'false'
+        run: node --test scripts/accounting-context-query-postgres-862.mjs

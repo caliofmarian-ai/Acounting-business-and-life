@@ -27,6 +27,7 @@ import {createInventoryScanUi} from '/inventory-scan-ui.js';
 const $=id=>document.getElementById(id);window.__context={accountId:1,businessId:11,session:'synthetic-a',profileEpoch:1};
 const merchantReadContext=()=>({...window.__context});
 const merchantReadIsCurrent=context=>JSON.stringify(context)===JSON.stringify(window.__context);
+let stockToolActive=null; // Browser fixture has no active disclosure; legacy full-read control remains observable.
 const staleMerchantRead=()=>Object.assign(new Error('context changed'),{staleMerchantRead:true});
 const inventoryWrites=createInventoryWriteController({captureContext:merchantReadContext,isContextCurrent:merchantReadIsCurrent,byId:$});
 const beginInventoryWrite=root=>inventoryWrites.begin(root);
@@ -49,7 +50,7 @@ window.fetch=(path,options={})=>{
   window.__calls.push({path,method:options.method||'GET',headers:options.headers,body:options.body});
   return new Promise(resolve=>{window.__resolve=(status,data)=>resolve(new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}}))});
 };
-`+block('async function api(', '\nasync function cachedJson(')+'\n'+callbacks+'\n'+functionSource('loadInventoryUnavailableAllocations')+'\n'+functionSource('loadConsumableRules')+'\n'+block('function wireInventoryUnavailableUi(){','\nlet inventoryLoadGeneration=')+`
+`+block('async function api(', '\nasync function cachedJson(')+'\n'+functionSource('refreshStockTool')+'\n'+callbacks+'\n'+functionSource('loadInventoryUnavailableAllocations')+'\n'+functionSource('loadConsumableRules')+'\n'+block('function wireInventoryUnavailableUi(){','\nlet inventoryLoadGeneration=')+`
 const options={api,getReadGuard:()=>{const c=merchantReadContext();return()=>merchantReadIsCurrent(c)},beginWrite:beginInventoryWrite,
  getInventory:()=>[{id:10,item:'Synthetic flour',unit:'g'}],getLocations:()=>[],
  refreshInventory:loadStock,escapeHtml:String,formatNumber:String};

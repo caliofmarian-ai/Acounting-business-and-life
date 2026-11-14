@@ -1,0 +1,57 @@
+name: Receipt Intelligence blind count 860
+
+on:
+  pull_request:
+    paths:
+      - receipt-intelligence-routes.js
+      - inventory-count-sessions.js
+      - tests/receipt-count-evidence-route.test.js
+      - tests/receipt-intelligence-v1.test.js
+      - tests/receipt-intelligence-variance-postgres-860.test.js
+      - qa-acceptance.js
+      - qa-receipt-variance-860.js
+      - tests/qa-receipt-variance-860.test.js
+      - .github/workflows/receipt-intelligence-variance-860.yml
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: receipt860
+          POSTGRES_PASSWORD: ci_receipt860_only
+          POSTGRES_DB: abl_receipt_variance_860_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U receipt860 -d abl_receipt_variance_860_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify literal PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Exercise blind-count resume against isolated PostgreSQL
+        env:
+          RECEIPT_860_PG_URL: postgresql://receipt860:ci_receipt860_only@127.0.0.1:5432/abl_receipt_variance_860_test
+        run: |
+          node --check qa-acceptance.js
+          node --check qa-receipt-variance-860.js
+          node --check tests/qa-receipt-variance-860.test.js
+          node --test tests/receipt-count-evidence-route.test.js tests/receipt-intelligence-v1.test.js tests/receipt-intelligence-variance-postgres-860.test.js tests/qa-receipt-variance-860.test.js

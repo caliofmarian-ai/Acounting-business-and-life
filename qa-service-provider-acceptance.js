@@ -11,10 +11,10 @@ const SECONDARY_TERRITORY_CODE='QA-SERVICE-OTHER';
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
-async function latestServiceApplication(pool,accountId){
+async function latestServiceApplication(pool,accountId,territoryId){
   const q=await pool.query(
-    "SELECT * FROM profile_applications WHERE account_id=$1 AND role='service_provider' ORDER BY id DESC LIMIT 1",
-    [Number(accountId)]
+    "SELECT * FROM profile_applications WHERE account_id=$1 AND role='service_provider' AND territory_id=$2 ORDER BY id DESC LIMIT 1",
+    [Number(accountId),Number(territoryId)]
   );
   return q.rows[0]||null;
 }
@@ -23,7 +23,7 @@ async function ensureServiceProviderApproved({
   pool,base,provider,adminToken,territoryId,categoryId,
   requestJson,expectStatus,ensureActiveRole
 }){
-  let application=await latestServiceApplication(pool,provider.accountId);
+  let application=await latestServiceApplication(pool,provider.accountId,territoryId);
 
   if(!application){
     const started=await requestJson(base,'/api/governance/service-provider/start',{
@@ -67,7 +67,7 @@ async function ensureServiceProviderApproved({
     expectStatus(submitted,200,'Local Services application submit');
   }
 
-  application=await latestServiceApplication(pool,provider.accountId);
+  application=await latestServiceApplication(pool,provider.accountId,territoryId);
   if(['submitted','under_review'].includes(application?.status)){
     const reviewed=await requestJson(base,'/api/governance/admin/applications/'+Number(application.id)+'/review',{
       method:'POST',
@@ -82,7 +82,7 @@ async function ensureServiceProviderApproved({
     expectStatus(reviewed,200,'Local Services Admin approval');
   }
 
-  application=await latestServiceApplication(pool,provider.accountId);
+  application=await latestServiceApplication(pool,provider.accountId,territoryId);
   if(application?.status!=='approved')throw new Error('Local Services application did not become approved.');
 
   const [profile,authorization,categoryAuthorization]=await Promise.all([
@@ -192,8 +192,193 @@ async function resetStaleQaCredentialEvidence({pool,providerAccountId}){
   return cleaned.rowCount;
 }
 
+// Match the credential review route's actual territory for existing company_test fixtures.
+// Never change profile authorizations or widen an admin permission to make QA pass.
+export async function resolveCredentialQaTerritories({pool,providerAccountId,credentialId,pilotTerritoryId,secondaryTerritoryId}){
+  const target=await pool.query(`
+    SELECT COALESCE(
+      (SELECT pa.territory_id FROM profile_authorizations pa
+        WHERE pa.account_id=pc.account_id AND pa.role='service_provider'
+          AND pa.status='active' AND pa.territory_id IS NOT NULL
+        ORDER BY pa.id DESC LIMIT 1),
+      (SELECT app.territory_id FROM profile_applications app
+        WHERE app.account_id=pc.account_id AND app.role='service_provider'
+          AND app.status NOT IN ('rejected','revoked')
+        ORDER BY app.id DESC LIMIT 1)
+    ) target_territory_id
+    FROM profile_credentials pc JOIN accounts a ON a.id=pc.account_id
+    WHERE pc.id=$1 AND pc.account_id=$2 AND a.account_mode='company_test'
+  `,[Number(credentialId),Number(providerAccountId)]);
+  if(target.rowCount!==1)throw new Error('Controlled company_test credential missing for territory QA.');
+  const reviewTerritoryId=Number(target.rows[0].target_territory_id);
+  const pilot=Number(pilotTerritoryId),secondary=Number(secondaryTerritoryId);
+  if(!Number.isSafeInteger(reviewTerritoryId)||reviewTerritoryId<1)throw new Error('Controlled credential has no authoritative review territory.');
+  if(!Number.isSafeInteger(pilot)||pilot<1||!Number.isSafeInteger(secondary)||secondary<1||pilot===secondary)throw new Error('Credential QA needs distinct pilot and secondary territories.');
+  const outsideTerritoryId=reviewTerritoryId===secondary?pilot:secondary;
+  if(outsideTerritoryId===reviewTerritoryId)throw new Error('Credential QA cannot establish out-of-scope territory.');
+  return{reviewTerritoryId,outsideTerritoryId,reviewTargetMatchesPilot:reviewTerritoryId===pilot};
+}
+
+export async function resolveQaCredentialRecoveryTerritories({
+  pool,providerAccountId,pilotTerritoryId,secondaryTerritoryId
+}){
+  const provider=Number(providerAccountId),pilot=Number(pilotTerritoryId),secondary=Number(secondaryTerritoryId);
+  if(!Number.isSafeInteger(provider)||provider<1||!Number.isSafeInteger(pilot)||pilot<1
+    ||!Number.isSafeInteger(secondary)||secondary<1||pilot===secondary){
+    throw new Error('Credential QA recovery needs a valid company_test provider and distinct territories.');
+  }
+  const target=await pool.query(`
+    SELECT COALESCE(
+      (SELECT pa.territory_id FROM profile_authorizations pa
+        WHERE pa.account_id=a.id AND pa.role='service_provider'
+          AND pa.status='active' AND pa.territory_id IS NOT NULL
+        ORDER BY pa.id DESC LIMIT 1),
+      (SELECT app.territory_id FROM profile_applications app
+        WHERE app.account_id=a.id AND app.role='service_provider'
+          AND app.status NOT IN ('rejected','revoked')
+        ORDER BY app.id DESC LIMIT 1),
+      $2
+    ) review_territory_id
+    FROM accounts a
+    WHERE a.id=$1 AND a.account_mode='company_test'
+      AND a.test_role='service_provider' AND a.auth_status='active'
+  `,[provider,pilot]);
+  if(target.rowCount!==1){
+    throw new Error('Controlled company_test Service Provider missing for QA Territory Admin recovery.');
+  }
+  const review=Number(target.rows[0].review_territory_id);
+  if(!Number.isSafeInteger(review)||review<1){
+    throw new Error('Controlled QA credential review territory is ambiguous; refusing automatic recovery.');
+  }
+  const validTerritory=await pool.query(
+    "SELECT id FROM territories WHERE id=$1 AND country_code='PH' AND status IN ('onboarding','active')",
+    [review]
+  );
+  if(validTerritory.rowCount!==1){
+    throw new Error('Controlled QA credential review territory is unavailable; refusing automatic recovery.');
+  }
+  const outside=review===secondary?pilot:secondary;
+  if(outside===review){
+    throw new Error('Credential QA recovery cannot establish a distinct out-of-scope territory.');
+  }
+  return{
+    pilotTerritoryId:pilot,
+    reviewTerritoryId:review,
+    outsideTerritoryId:outside,
+    reviewTargetMatchesPilot:review===pilot
+  };
+}
+
+
+/* Credential-review QA temporarily changes a controlled staff test account.
+ * Capture all active/inactive grants consistently, then restore their former
+ * effective state in a single transaction, retaining immutable Admin audits. */
+export async function captureQaCredentialAdminBaseline(pool,accountId){
+  const client=await pool.connect();let active=false;
+  try{
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');active=true;
+    const actor=await client.query(
+      "SELECT id FROM accounts WHERE id=$1 AND account_mode='company_test' AND test_role='territory_admin' AND auth_status='active'",[accountId]);
+    if(actor.rowCount!==1)throw new Error('QA Territory Admin is not an active company_test account; refusing privilege mutation.');
+    const a=await client.query(
+      "SELECT id,territory_id,authority_rank,status,assigned_by_account_id,reason,effective_from,effective_until FROM platform_admin_assignments WHERE account_id=$1 AND admin_role='territory_admin' AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin' ORDER BY id",[accountId]);
+    const ids=a.rows.map(x=>String(x.id));
+    const p=ids.length?await client.query(
+      'SELECT assignment_id,permission_code,status,granted_by_account_id,reason,effective_from,effective_until FROM admin_permission_grants WHERE assignment_id=ANY($1::bigint[])',[ids]):{rows:[]};
+    const f=ids.length?await client.query(
+      'SELECT assignment_id,function_code,status,granted_by_account_id,reason,effective_from,effective_until FROM admin_function_assignments WHERE assignment_id=ANY($1::bigint[])',[ids]):{rows:[]};
+    await client.query('COMMIT');active=false;
+    return{accountId:String(accountId),assignments:a.rows,permissions:p.rows,functions:f.rows};
+  }catch(e){if(active)await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+}
+
+/* Only existing company_test authorization is touched. Any new scoped QA
+ * grants are revoked, not deleted, because audit records may reference them.
+ * Unexpected concurrent assignments or grant rows fail closed before mutation;
+ * a failed restoration rolls back. */
+export async function restoreQaCredentialAdminBaseline(pool,accountId,snapshot,scopeIds){
+  if(!snapshot||snapshot.accountId!==String(accountId)
+    ||!Array.isArray(snapshot.assignments)||!Array.isArray(snapshot.permissions)
+    ||!Array.isArray(snapshot.functions)||!Array.isArray(scopeIds)||scopeIds.length!==2
+    ||scopeIds.some(x=>!Number.isSafeInteger(Number(x))||Number(x)<1))
+    throw new Error('QA credential Admin snapshot missing; unsafe to restore.');
+  const before=new Map(snapshot.assignments.map(a=>[String(a.id),a]));
+  const allowed=new Set(scopeIds.map(x=>String(x)));
+  const client=await pool.connect();let active=false;
+  try{
+    await client.query('BEGIN');active=true;
+    const actor=await client.query(
+      "SELECT id FROM accounts WHERE id=$1 AND account_mode='company_test' AND test_role='territory_admin' AND auth_status='active' FOR UPDATE",[accountId]);
+    if(actor.rowCount!==1)throw new Error('QA Territory Admin account changed before privilege restoration.');
+    const now=await client.query(
+      "SELECT id,territory_id FROM platform_admin_assignments WHERE account_id=$1 AND admin_role='territory_admin' AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin' ORDER BY id FOR UPDATE",[accountId]);
+    const ids=now.rows.map(r=>String(r.id)),found=new Set(ids);
+    if([...before.keys()].some(id=>!found.has(id)))
+      throw new Error('Original QA Territory Admin assignment missing.');
+    if(now.rows.some(r=>!before.has(String(r.id))&&!allowed.has(String(r.territory_id))))
+      throw new Error('Unrelated concurrent Territory Admin assignment; refusing overwrite.');
+    // Check every grant under row locks BEFORE restoring any assignment. A
+    // concurrent grant from another QA executor must never be silently revoked.
+    const sources=[
+      ['admin_permission_grants','permission_code',snapshot.permissions],
+      ['admin_function_assignments','function_code',snapshot.functions]
+    ];
+    const qaReasons=new Set([
+      'Controlled QA out-of-scope credential authority',
+      'Controlled QA in-scope credential authority'
+    ]);
+    const newQaGrants=[];
+    for(const [table,field,records] of sources){
+      const known=new Set(records.map(row=>JSON.stringify([String(row.assignment_id),String(row[field])])));
+      const live=ids.length?await client.query(
+        `SELECT g.assignment_id,g.${field},g.reason,a.territory_id FROM ${table} g JOIN platform_admin_assignments a ON a.id=g.assignment_id WHERE g.assignment_id=ANY($1::bigint[]) FOR UPDATE OF g`,[ids]):{rows:[]};
+      for(const row of live.rows){
+        const key=JSON.stringify([String(row.assignment_id),String(row[field])]);
+        if(known.has(key))continue;
+        if(table!=='admin_permission_grants'||!['credential.verify','members.view'].includes(String(row.permission_code))
+          ||!allowed.has(String(row.territory_id))||!qaReasons.has(row.reason))
+          throw new Error('Unexpected concurrent QA Admin grant; refusing overwrite.');
+        newQaGrants.push(row);
+      }
+    }
+    for(const row of now.rows){
+      const previous=before.get(String(row.id));
+      const response=previous?
+        await client.query(
+          "UPDATE platform_admin_assignments SET authority_rank=$3,status=$4,assigned_by_account_id=$5,reason=$6,effective_from=$7,effective_until=$8,updated_at=NOW() WHERE id=$1 AND account_id=$2",
+          [row.id,accountId,previous.authority_rank,previous.status,previous.assigned_by_account_id,previous.reason,previous.effective_from,previous.effective_until]):
+        await client.query(
+          "UPDATE platform_admin_assignments SET status='revoked',effective_until=NOW(),updated_at=NOW() WHERE id=$1 AND account_id=$2",
+          [row.id,accountId]);
+      if(response.rowCount!==1)throw new Error('QA Admin assignment compensation failed.');
+    }
+    // Only the two default QA assignment grants are revoked: members.view and
+    // credential.verify, on the exact QA territories and with exact QA reasons.
+    // Preserve immutable audit rows; do not touch any unrelated new grant.
+    for(const row of newQaGrants){
+      const compensated=await client.query(
+        "UPDATE admin_permission_grants SET status='revoked',effective_until=NOW(),updated_at=NOW() WHERE assignment_id=$1 AND permission_code=$2 AND reason=$3",
+        [row.assignment_id,row.permission_code,row.reason]);
+      if(compensated.rowCount!==1)throw new Error('QA-created credential grant compensation failed.');
+    }
+    for(const [table,field,records] of sources){
+      for(const row of records){
+        if(!before.has(String(row.assignment_id)))throw new Error('QA Admin grant snapshot contains foreign assignment.');
+        const result=await client.query(
+          `UPDATE ${table} SET status=$3,granted_by_account_id=$4,reason=$5,effective_from=$6,effective_until=$7,updated_at=NOW() WHERE assignment_id=$1 AND ${field}=$2`,
+          [row.assignment_id,row[field],row.status,row.granted_by_account_id,row.reason,row.effective_from,row.effective_until]);
+        if(result.rowCount!==1)throw new Error('QA Admin original grant compensation failed.');
+      }
+    }
+    await client.query('COMMIT');active=false;
+    return{restored:true,original_assignments:before.size,temporary_assignments_revoked:ids.length-before.size};
+  }catch(e){if(active)await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+}
+
 async function verifyCredentialAdminScope({
-  pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail,territoryId,jobId,
+  pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail,territoryId,secondaryTerritoryId,jobId,
   requestJson,expectStatus
 }){
   const created=await requestJson(base,'/api/service-provider/credentials',{
@@ -219,13 +404,17 @@ async function verifyCredentialAdminScope({
   });
   expectStatus(ordinaryDenied,403,'Ordinary Customer credential-review denial');
 
-  const otherTerritoryId=await ensureSecondaryServiceTerritory({
-    pool,base,adminToken:admin.token,requestJson,expectStatus
-  });
-  if(otherTerritoryId===Number(territoryId)){
-    throw new Error('Credential scope test requires two distinct QA territories.');
+  const otherTerritoryId=Number(secondaryTerritoryId);
+  if(!Number.isSafeInteger(otherTerritoryId)||otherTerritoryId<1||otherTerritoryId===Number(territoryId)){
+    throw new Error('Credential QA secondary territory is unavailable; refusing scope changes.');
   }
+  const {reviewTerritoryId,outsideTerritoryId,reviewTargetMatchesPilot}=await resolveCredentialQaTerritories({
+    pool,providerAccountId:provider.accountId,credentialId,
+    pilotTerritoryId:territoryId,secondaryTerritoryId:otherTerritoryId
+  });
 
+  const adminBaseline=await captureQaCredentialAdminBaseline(pool,territoryAdmin.accountId);
+  try{
   await pool.query(
     "UPDATE platform_admin_assignments SET status='revoked',updated_at=NOW() WHERE account_id=$1 AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin'",
     [territoryAdmin.accountId]
@@ -237,7 +426,7 @@ async function verifyCredentialAdminScope({
     body:{
       target_email:territoryAdminEmail,
       admin_role:'territory_admin',
-      territory_id:otherTerritoryId,
+      territory_id:outsideTerritoryId,
       permissions:['credential.verify'],
       reason:'Controlled QA out-of-scope credential authority'
     }
@@ -257,7 +446,7 @@ async function verifyCredentialAdminScope({
     body:{
       target_email:territoryAdminEmail,
       admin_role:'territory_admin',
-      territory_id:Number(territoryId),
+      territory_id:reviewTerritoryId,
       permissions:['credential.verify'],
       reason:'Controlled QA in-scope credential authority'
     }
@@ -269,6 +458,7 @@ async function verifyCredentialAdminScope({
     token:territoryAdmin.token,
     body:{verification_status:'verified'}
   });
+  if(verified.status!==200)throw new Error('In-scope credential verification HTTP '+Number(verified.status||0)+' code '+clean(verified.json?.code||'none',40));
   expectStatus(verified,200,'In-scope credential verification');
 
   const evidence=await pool.query(
@@ -286,7 +476,7 @@ async function verifyCredentialAdminScope({
     [String(credentialId),territoryAdmin.accountId]
   );
   if(!audit.rowCount||audit.rows[0].permission_code!=='credential.verify'
-    ||Number(audit.rows[0].territory_id)!==Number(territoryId)
+    ||Number(audit.rows[0].territory_id)!==Number(reviewTerritoryId)
     ||!audit.rows[0].assignment_id){
     throw new Error('Credential verification audit evidence is incomplete.');
   }
@@ -305,7 +495,168 @@ async function verifyCredentialAdminScope({
     auditId:Number(audit.rows[0].id),
     ordinaryDenied:true,
     outOfScopeDenied:true,
-    inScopeAllowed:true
+    inScopeAllowed:true,
+    reviewTargetMatchesPilot,
+    qa_admin_authorization_restored:true
+  };
+  }finally{
+    await restoreQaCredentialAdminBaseline(pool,territoryAdmin.accountId,adminBaseline,[outsideTerritoryId,reviewTerritoryId]);
+  }
+}
+
+
+const QA_CREDENTIAL_ADMIN_OUTSIDE_REASON='Controlled QA out-of-scope credential authority';
+const QA_CREDENTIAL_ADMIN_INSIDE_REASON='Controlled QA in-scope credential authority';
+const QA_OWNER_CONTROL_TOWER_REASON='Controlled Owner Control Tower delegated-scope acceptance';
+const QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS=['members.view','credential.verify'];
+const QA_OWNER_CONTROL_TOWER_PERMISSIONS=['admin.console','incident.triage','profile.suspend'];
+
+export function buildQaCredentialAdminRecoverySnapshot({
+  accountId,pilotTerritoryId,reviewTerritoryId,outsideTerritoryId,assignments,permissions,functions
+}={}){
+  const account=Number(accountId),pilot=Number(pilotTerritoryId);
+  const review=Number(reviewTerritoryId),outsideScope=Number(outsideTerritoryId);
+  if(!Number.isSafeInteger(account)||account<1||!Number.isSafeInteger(pilot)||pilot<1
+    ||!Number.isSafeInteger(review)||review<1||!Number.isSafeInteger(outsideScope)||outsideScope<1
+    ||review===outsideScope||!Array.isArray(assignments)||!Array.isArray(permissions)||!Array.isArray(functions)){
+    throw new Error('QA Territory Admin recovery inputs are incomplete; refusing automatic recovery.');
+  }
+  const knownReasons=new Set([QA_CREDENTIAL_ADMIN_OUTSIDE_REASON,QA_CREDENTIAL_ADMIN_INSIDE_REASON]);
+  if(assignments.some(row=>!row||!knownReasons.has(String(row.reason||'')))){
+    throw new Error('Unexpected QA Territory Admin assignment; refusing automatic recovery.');
+  }
+  const byCreation=(a,b)=>{
+    const left=Date.parse(a.created_at||'')||0,right=Date.parse(b.created_at||'')||0;
+    return left-right||Number(a.id)-Number(b.id);
+  };
+  const outsideRows=assignments.filter(row=>row.reason===QA_CREDENTIAL_ADMIN_OUTSIDE_REASON).sort(byCreation);
+  const insideRows=assignments.filter(row=>row.reason===QA_CREDENTIAL_ADMIN_INSIDE_REASON).sort(byCreation);
+  if(outsideRows.length!==1||insideRows.length<1||insideRows.length>2){
+    throw new Error('Controlled QA Territory Admin baseline is ambiguous; refusing automatic recovery.');
+  }
+  const outside=outsideRows[0],inside=insideRows[0],temporary=insideRows.slice(1);
+  if(!Number.isSafeInteger(Number(outside.territory_id))
+    ||Number(outside.territory_id)!==outsideScope
+    ||!Number.isSafeInteger(Number(inside.territory_id))
+    ||Number(inside.territory_id)!==pilot
+    ||temporary.some(row=>Number(row.territory_id)!==review)
+    ||temporary.some(row=>row.authority_rank!=='territory_admin')){
+    throw new Error('Controlled QA Territory Admin territory scope changed; refusing automatic recovery.');
+  }
+  const baselineIds=new Set([String(outside.id),String(inside.id)]);
+  const baselinePermissions=permissions.filter(row=>baselineIds.has(String(row.assignment_id)));
+  const baselineFunctions=functions.filter(row=>baselineIds.has(String(row.assignment_id)));
+  const assertGrant=(assignment,code,status,reason)=>{
+    const matches=baselinePermissions.filter(row=>String(row.assignment_id)===String(assignment.id)
+      &&String(row.permission_code)===code);
+    if(matches.length!==1||matches[0].status!==status||matches[0].reason!==reason){
+      throw new Error('Controlled QA Territory Admin baseline permission evidence changed; refusing automatic recovery.');
+    }
+  };
+  for(const code of QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS){
+    assertGrant(outside,code,'active',QA_CREDENTIAL_ADMIN_OUTSIDE_REASON);
+    assertGrant(inside,code,'active',QA_CREDENTIAL_ADMIN_INSIDE_REASON);
+  }
+  const outsidePermissions=baselinePermissions.filter(row=>String(row.assignment_id)===String(outside.id));
+  if(outsidePermissions.length!==QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS.length){
+    throw new Error('Controlled QA out-of-scope baseline has unexpected permissions; refusing automatic recovery.');
+  }
+  const insideLegacy=baselinePermissions.filter(row=>String(row.assignment_id)===String(inside.id)
+    &&!QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS.includes(String(row.permission_code)));
+  if(insideLegacy.length!==QA_OWNER_CONTROL_TOWER_PERMISSIONS.length
+    ||insideLegacy.some(row=>!QA_OWNER_CONTROL_TOWER_PERMISSIONS.includes(String(row.permission_code))
+      ||row.status!=='revoked'||row.reason!==QA_OWNER_CONTROL_TOWER_REASON)){
+    throw new Error('Controlled QA in-scope baseline has unexpected legacy permissions; refusing automatic recovery.');
+  }
+  if(baselineFunctions.length!==1
+    ||String(baselineFunctions[0].assignment_id)!==String(inside.id)
+    ||baselineFunctions[0].function_code!=='trust_safety'
+    ||baselineFunctions[0].status!=='revoked'
+    ||baselineFunctions[0].reason!==QA_OWNER_CONTROL_TOWER_REASON){
+    throw new Error('Controlled QA Territory Admin baseline function evidence changed; refusing automatic recovery.');
+  }
+  const temporaryIds=new Set(temporary.map(row=>String(row.id)));
+  const temporaryPermissions=permissions.filter(row=>temporaryIds.has(String(row.assignment_id)));
+  const temporaryFunctions=functions.filter(row=>temporaryIds.has(String(row.assignment_id)));
+  if(temporaryFunctions.length||temporaryPermissions.some(row=>
+    !QA_CREDENTIAL_ADMIN_CORE_PERMISSIONS.includes(String(row.permission_code))
+    ||row.reason!==QA_CREDENTIAL_ADMIN_INSIDE_REASON
+    ||!['active','revoked'].includes(String(row.status)))){
+    throw new Error('Unexpected temporary QA Territory Admin grant; refusing automatic recovery.');
+  }
+  const snapshot={
+    accountId:String(account),
+    assignments:[outside,inside].map(row=>({...row,status:'active'})),
+    permissions:baselinePermissions,
+    functions:baselineFunctions
+  };
+  const needsRestore=[outside,inside].some(row=>row.status!=='active')
+    ||temporary.some(row=>row.status!=='revoked')
+    ||temporaryPermissions.some(row=>row.status!=='revoked');
+  return{
+    snapshot,
+    scopeIds:[outsideScope,review],
+    needsRestore,
+    temporaryAssignments:temporary.length,
+    reviewTerritoryId:review,
+    outsideTerritoryId:outsideScope
+  };
+}
+
+export async function recoverStaleQaCredentialAdminBaseline(pool,accountId,territoryScope){
+  const actor=await pool.query(
+    "SELECT id FROM accounts WHERE id=$1 AND account_mode='company_test' AND test_role='territory_admin' AND auth_status='active'",
+    [accountId]
+  );
+  if(actor.rowCount!==1)throw new Error('QA Territory Admin recovery target is not an active company_test account.');
+  const assignments=await pool.query(
+    "SELECT id,territory_id,authority_rank,status,assigned_by_account_id,reason,effective_from,effective_until,created_at FROM platform_admin_assignments WHERE account_id=$1 AND admin_role='territory_admin' AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin' ORDER BY created_at,id",
+    [accountId]
+  );
+  const ids=assignments.rows.map(row=>String(row.id));
+  const [permissions,functions]=await Promise.all([
+    ids.length?pool.query(
+      "SELECT assignment_id,permission_code,status,granted_by_account_id,reason,effective_from,effective_until FROM admin_permission_grants WHERE assignment_id=ANY($1::bigint[]) ORDER BY assignment_id,permission_code",
+      [ids]
+    ):Promise.resolve({rows:[]}),
+    ids.length?pool.query(
+      "SELECT assignment_id,function_code,status,granted_by_account_id,reason,effective_from,effective_until FROM admin_function_assignments WHERE assignment_id=ANY($1::bigint[]) ORDER BY assignment_id,function_code",
+      [ids]
+    ):Promise.resolve({rows:[]})
+  ]);
+  const {pilotTerritoryId,reviewTerritoryId,outsideTerritoryId}=territoryScope||{};
+  const plan=buildQaCredentialAdminRecoverySnapshot({
+    accountId,pilotTerritoryId,reviewTerritoryId,outsideTerritoryId,
+    assignments:assignments.rows,permissions:permissions.rows,functions:functions.rows
+  });
+  if(!plan.needsRestore){
+    return{restored:false,original_assignments:plan.snapshot.assignments.length,temporary_assignments_revoked:0};
+  }
+  const restored=await restoreQaCredentialAdminBaseline(pool,accountId,plan.snapshot,plan.scopeIds);
+  const after=await pool.query(
+    "SELECT id,status FROM platform_admin_assignments WHERE account_id=$1 AND admin_role='territory_admin' AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin' ORDER BY id",
+    [accountId]
+  );
+  const baselineIds=new Set(plan.snapshot.assignments.map(row=>String(row.id)));
+  if(plan.snapshot.assignments.some(row=>!after.rows.some(current=>
+    String(current.id)===String(row.id)&&current.status==='active'))
+    ||after.rows.some(row=>!baselineIds.has(String(row.id))&&row.status!=='revoked')){
+    throw new Error('QA Territory Admin recovery could not verify the controlled baseline.');
+  }
+  const extraIds=after.rows.filter(row=>!baselineIds.has(String(row.id))).map(row=>String(row.id));
+  if(extraIds.length){
+    const grants=await pool.query(
+      "SELECT assignment_id,status FROM admin_permission_grants WHERE assignment_id=ANY($1::bigint[])",
+      [extraIds]
+    );
+    if(grants.rows.some(row=>row.status!=='revoked')){
+      throw new Error('QA Territory Admin recovery left a temporary permission active.');
+    }
+  }
+  return{
+    restored:true,
+    original_assignments:plan.snapshot.assignments.length,
+    temporary_assignments_revoked:restored.temporary_assignments_revoked
   };
 }
 
@@ -408,6 +759,139 @@ async function ensureServiceReview({
   return Number(review.json?.id||0);
 }
 
+// Runtime-only Payment Core acceptance for a controlled, already-completed QA job.
+// Deliberately uses an unconfigured provider: an intent is NOT payment or payout.
+async function verifyUnsettledServiceJobPaymentAuthority({
+  pool,base,customer,provider,jobId,acceptedQuoteId,expectedAmount,requestJson,expectStatus
+}){
+  const providerCode='qa_unconfigured_571';
+  const path='/api/payments/intents/service-job/'+jobId;
+  const summaryPath='/api/payments/service-jobs/'+jobId+'/summary';
+  const initial=await requestJson(base,summaryPath,{token:customer.token});
+  expectStatus(initial,200,'Local Services payment authority before intent');
+  const commercial=initial.json?.commercial;
+  if(Number(initial.json?.service_job_id)!==Number(jobId)
+    ||initial.json?.currency_code!=='PHP'
+    ||Number(commercial?.accepted_quote_id)!==Number(acceptedQuoteId)
+    ||Number(commercial?.agreed_total)!==expectedAmount
+    ||Number(commercial?.payable_value)!==expectedAmount
+    ||commercial?.payable_state!=='PAYABLE'
+    ||Number(initial.json?.payment?.outstanding)!==expectedAmount
+    ||Number(initial.json?.payment?.pending_count)!==0){
+    throw new Error('Controlled Service Job payable is not bound to the Customer-accepted quote.');
+  }
+  const key='qa-571-unsettled-service-job-'+jobId;
+  const body={
+    idempotency_key:key,
+    logical_method:'online_other',
+    provider_code:providerCode,
+    client_reference:'Synthetic QA; no provider checkout'
+  };
+  const foreign=await requestJson(base,path,{
+    method:'POST',token:provider.token,
+    body:{...body,idempotency_key:key+'-foreign'}
+  });
+  expectStatus(foreign,403,'Non-payer Service Job payment-intent denial');
+  let intentId=0;
+  try{
+    const created=await requestJson(base,path,{method:'POST',token:customer.token,body});
+    expectStatus(created,201,'Controlled unsettled Service Job payment intent');
+    const intent=created.json||{};
+    intentId=Number(intent.id);
+    if(!Number.isSafeInteger(intentId)||intentId<=0
+      ||intent.source_type!=='service_job'
+      ||Number(intent.source_id)!==Number(jobId)
+      ||Number(intent.payer_account_id)!==Number(customer.accountId)
+      ||intent.idempotency_key!==key
+      ||intent.provider_code!==providerCode
+      ||intent.currency_code!=='PHP'
+      ||Number(intent.amount)!==expectedAmount
+      ||intent.status!=='requires_provider'
+      ||created.json?.provider_adapter_ready!==false
+      ||created.json?.next_action!=='CONNECT_REAL_PAYMENT_PROVIDER'){
+      throw new Error('Controlled Service Job intent violated accepted-quote/payment-provider HOLD.');
+    }
+    const replay=await requestJson(base,path,{method:'POST',token:customer.token,body});
+    expectStatus(replay,201,'Service Job payment intent exact replay');
+    if(Number(replay.json?.id)!==intentId||replay.json?.public_id!==intent.public_id){
+      throw new Error('Service Job idempotent replay produced a second payment intent.');
+    }
+    const methodConflict=await requestJson(base,path,{
+      method:'POST',token:customer.token,
+      body:{...body,logical_method:'bank_transfer'}
+    });
+    expectStatus(methodConflict,409,'Service Job same-key method conflict');
+    const pendingConflict=await requestJson(base,path,{
+      method:'POST',token:customer.token,
+      body:{...body,idempotency_key:key+'-competing'}
+    });
+    expectStatus(pendingConflict,409,'Service Job second pending intent denial');
+    const detail=await requestJson(base,'/api/payments/intents/'+intent.public_id,{token:customer.token});
+    expectStatus(detail,200,'Customer Service Job intent detail');
+    if(Number(detail.json?.id)!==intentId||detail.json?.status!=='requires_provider'){
+      throw new Error('Customer Service Job intent read is inconsistent.');
+    }
+    const providerSummary=await requestJson(base,summaryPath,{token:provider.token});
+    expectStatus(providerSummary,200,'Service Provider payment summary');
+    if(Number(providerSummary.json?.payment?.pending_count)!==1
+      ||Number(providerSummary.json?.payment?.gross_confirmed)!==0
+      ||Number(providerSummary.json?.payment?.outstanding)!==expectedAmount){
+      throw new Error('Service Provider Money improperly treated pending QA intent as paid.');
+    }
+    const audit=await pool.query(
+      `SELECT COUNT(*)::int n FROM payment_audit_events
+         WHERE payment_intent_id=$1 AND actor_account_id=$2
+           AND event_code='service_job_payment_intent_created'`,
+      [intentId,customer.accountId]
+    );
+    const sideEffects=await pool.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM payment_allocations WHERE payment_intent_id=$1) allocations,
+         (SELECT COUNT(*)::int FROM provider_events WHERE payment_intent_id=$1) provider_events,
+         (SELECT COUNT(*)::int FROM refunds WHERE payment_intent_id=$1) refunds`,
+      [intentId]
+    );
+    if(Number(audit.rows[0]?.n)!==1
+      ||Number(sideEffects.rows[0]?.allocations)!==0
+      ||Number(sideEffects.rows[0]?.provider_events)!==0
+      ||Number(sideEffects.rows[0]?.refunds)!==0){
+      throw new Error('Unconfigured QA intent unexpectedly produced provider/settlement/refund evidence.');
+    }
+    const unauthorizedRefund=await requestJson(base,'/api/payments/admin/refunds',{
+      method:'POST',token:customer.token,
+      body:{payment_intent_id:intentId,amount:'1.00',
+        reason:'Controlled QA denial; do not reserve',idempotency_key:key+'-refund-denied'}
+    });
+    expectStatus(unauthorizedRefund,403,'Ordinary Customer admin refund denial');
+  }finally{
+    // Restore the controlled fixture without invoking any provider or real payout.
+    if(intentId){
+      const cancelled=await pool.query(
+        `UPDATE payment_intents SET status='cancelled',
+           cancelled_at=clock_timestamp(),updated_at=clock_timestamp()
+         WHERE id=$1 AND source_type='service_job' AND source_id=$2
+           AND payer_account_id=$3 AND provider_code=$4 AND status='requires_provider'
+         RETURNING id`,
+        [intentId,jobId,customer.accountId,providerCode]
+      );
+      if(cancelled.rowCount!==1){
+        throw new Error('Controlled QA payment intent cleanup could not prove cancellation.');
+      }
+    }
+  }
+  const restored=await requestJson(base,summaryPath,{token:customer.token});
+  expectStatus(restored,200,'Service Job payment fixture restored');
+  if(Number(restored.json?.payment?.pending_count)!==0
+    ||Number(restored.json?.payment?.gross_confirmed)!==0
+    ||Number(restored.json?.payment?.outstanding)!==expectedAmount){
+    throw new Error('Controlled QA payment intent cleanup left an active/paid balance.');
+  }
+  return{accepted_quote_bound:true,unsettled_intent_created:true,
+    exact_replay:true,method_conflict_denied:true,pending_conflict_denied:true,
+    non_payer_denied:true,refund_permission_denied:true,
+    provider_settlement_unchanged:true,fixture_cancelled:true};
+}
+
 export async function runServiceProviderExperienceAcceptance({
   pool,base,secret,aliases,helpers
 }){
@@ -444,6 +928,16 @@ export async function runServiceProviderExperienceAcceptance({
     requestJson,expectStatus,ensureActiveRole
   });
   await ensureActiveRole({base,token:customer.token,role:'customer',label:'Local Services Customer QA'});
+
+  const secondaryTerritoryId=await ensureSecondaryServiceTerritory({
+    pool,base,adminToken:admin.token,requestJson,expectStatus
+  });
+  const recoveryTerritories=await resolveQaCredentialRecoveryTerritories({
+    pool,providerAccountId:provider.accountId,pilotTerritoryId:territoryId,secondaryTerritoryId
+  });
+  const credentialAdminPreflightRecovery=await recoverStaleQaCredentialAdminBaseline(
+    pool,territoryAdmin.accountId,recoveryTerritories
+  );
 
   await publishQaServiceProvider({
     base,providerToken:provider.token,categoryId,requestJson,expectStatus
@@ -682,7 +1176,13 @@ export async function runServiceProviderExperienceAcceptance({
   if(!reviewId)throw new Error('Verified Local Services review was not created.');
 
   const credentialScope=await verifyCredentialAdminScope({
-    pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail:aliases.territoryAdmin,territoryId,jobId,
+    pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail:aliases.territoryAdmin,
+    territoryId,secondaryTerritoryId,jobId,requestJson,expectStatus
+  });
+
+  const paymentIntentQa=await verifyUnsettledServiceJobPaymentAuthority({
+    pool,base,customer,provider,jobId,
+    acceptedQuoteId:Number(job.accepted_quote_id),expectedAmount:SERVICE_FINAL_PRICE,
     requestJson,expectStatus
   });
 
@@ -796,11 +1296,14 @@ export async function runServiceProviderExperienceAcceptance({
     review_blocked_before_customer_confirmation:true,
     stale_qa_credentials_rejected:Number(staleQaCredentialsRejected),
     credential_scope_authority:true,
+    credential_qa_admin_preflight_recovery:credentialAdminPreflightRecovery,
     credential_id:credentialScope.credentialId,
     credential_audit_id:credentialScope.auditId,
     credential_ordinary_user_denied:credentialScope.ordinaryDenied,
     credential_out_of_scope_denied:credentialScope.outOfScopeDenied,
     credential_in_scope_allowed:credentialScope.inScopeAllowed,
+    credential_qa_admin_authorization_restored:credentialScope.qa_admin_authorization_restored,
+    credential_review_target_matches_pilot:credentialScope.reviewTargetMatchesPilot,
     finance_commercial_value:true,
     service_provider_net_allocations:providerNetCount,
     provider_income_settlement:providerNetCount>0?'TRACKED':'HOLD_NO_SERVICE_PROVIDER_NET',
@@ -811,6 +1314,7 @@ export async function runServiceProviderExperienceAcceptance({
     support_ticket_id:supportTicketId,
     support:true,
     logout_relogin:true,
+    payment_core_controlled_runtime:paymentIntentQa,
     online_service_payment:'HOLD_UNSUPPORTED_RUNTIME_FLOW',
     provider_payout_settlement:'HOLD_FOR_PROVIDER_EVIDENCE'
   };

@@ -66,6 +66,6 @@ test('Service Provider Money Home preserves allocation authority and defers deep
 test('explicit Local Services profile and Money intent keep the full detail paths available',()=>{
   assert.match(services,/res\.json\(await privateProfile\(Number\(me\.account\.id\)\)\)/);
   assert.match(money,/export async function serviceProviderMoneySnapshot/);
-  assert.match(money,/ORDER BY created_at DESC LIMIT 40/);
+  assert.match(money,/ORDER BY created_at DESC,id DESC LIMIT 40/);
   assert.match(payments,/profileMoneySnapshot\(pool,role,me\.account\.id\)/);
 });
