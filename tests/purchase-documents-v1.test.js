@@ -917,6 +917,16 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     "exact(restoredDetail.json?.supplementary_evidence?.length,1",
     "DELETE FROM merchant_purchase_document_evidence WHERE id=$1",
     "merchant_purchase_document_attachment_pending",
-    "supplementary_evidence_cleanup:true"
+    "supplementary_evidence_cleanup:true",
+    "exact(jpegUpload.status,201",
+    "exact(pdfUpload.status,201",
+    "exact(mismatch.status,400",
+    "exact(unsupported.status,400",
+    "exact(oversized.status,413",
+    "exact(infected.status,422",
+    "exact(wrongProfileArchive.status,403",
+    "exact(wrongProfileWrite.status,403",
+    "scan_status,'quarantined'",
+    "malware_quarantine_cleanup:true"
   ])assert.ok(qa.includes(fragment),'authenticated receipt acceptance is missing '+fragment);
 });
