@@ -905,6 +905,12 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   const qa=read('qa-purchase-documents-856.js');
   assert.equal((qa.match(/const otherArchive=/g)||[]).length,1,'one B archive read is declared');
   execFileSync(process.execPath,['--check',new URL('../qa-purchase-documents-856.js',import.meta.url).pathname]);
+  const {__purchaseDocuments856TestFixtures}=await import('../qa-purchase-documents-856.js');
+  const eicarBytes=Buffer.from(__purchaseDocuments856TestFixtures.eicarPdf.slice(
+    __purchaseDocuments856TestFixtures.eicarPdf.indexOf(',')+1
+  ),'base64');
+  assert.ok(eicarBytes.includes(Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*','ascii')),
+    'decoded EICAR PDF contains the complete scanner signature');
   for(const fragment of [
     "const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';",
     "const supportingInput={business_id:a,client_request_key:supportingKey,file_name:supportingFileName,data_url:png};",
@@ -917,6 +923,16 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     "exact(restoredDetail.json?.supplementary_evidence?.length,1",
     "DELETE FROM merchant_purchase_document_evidence WHERE id=$1",
     "merchant_purchase_document_attachment_pending",
-    "supplementary_evidence_cleanup:true"
+    "supplementary_evidence_cleanup:true",
+    "exact(jpegUpload.status,201",
+    "exact(pdfUpload.status,201",
+    "exact(mismatch.status,400",
+    "exact(unsupported.status,400",
+    "exact(oversized.status,413",
+    "exact(infected.status,422",
+    "exact(wrongProfileArchive.status,403",
+    "exact(wrongProfileWrite.status,403",
+    "scan_status,'quarantined'",
+    "malware_quarantine_cleanup:true"
   ])assert.ok(qa.includes(fragment),'authenticated receipt acceptance is missing '+fragment);
 });
