@@ -1,0 +1,51 @@
+name: Merchant Team PostgreSQL safety #863
+
+on:
+  pull_request:
+    paths:
+      - 'merchant-team-*.js'
+      - 'public/merchant-operator*'
+      - 'tests/merchant-team-terminal-*.test.js'
+      - 'public/merchant-team-*'
+      - 'tests/merchant-team-*.test.js'
+      - 'server-orders.js'
+      - 'merchant-voice-order-routes.js'
+      - 'merchant-voice-order-confirm.js'
+      - '.github/workflows/merchant-team-postgres-863.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  team-postgres-security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_voice_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_voice_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      VOICE_ORDER_TEST_ISOLATED: '1'
+      VOICE_ORDER_TEST_DB_URL: postgres://postgres:postgres@127.0.0.1:5432/abl_voice_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --global npm@10.8.2
+      - run: npm ci
+      - name: Verify operator shifts, PIN attempts, access and audit in disposable PostgreSQL
+        run: |
+          node --test tests/merchant-team-postgres.test.js
+          node --test tests/merchant-team-terminal-postgres.test.js
+          node --test tests/merchant-team-order-attribution-postgres.test.js
