@@ -916,6 +916,7 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   assert.ok(eicarStreamStart>=0 && eicarStreamEnd>eicarStreamStart &&
     eicarSignatureOffset>eicarStreamStart && eicarSignatureOffset<eicarStreamEnd,
     'decoded EICAR PDF contains the complete scanner signature inside its uncompressed content stream');
+  assert.ok(qa.includes('scanWithClamAv(Buffer.from(eicarSignature'), 'authenticated wave probes the existing ClamAV service directly');
   assert.ok(qa.includes('documentFileNames.add(eicarName)'), 'unexpected clean EICAR uploads remain eligible for scoped private-object cleanup');
   assert.ok(qa.includes("original_file_name LIKE 'qa856-%'"), 'prior fixture cleanup is restricted to this wave file prefix');
   for(const fragment of [

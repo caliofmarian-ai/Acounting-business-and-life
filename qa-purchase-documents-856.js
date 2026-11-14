@@ -2,7 +2,7 @@
 // No production accounts, orders or financial payments. Only temporary QA businesses.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import {deletePrivateEvidence} from './private-evidence-core.js';
+import {deletePrivateEvidence,scanWithClamAv} from './private-evidence-core.js';
 
 export const PURCHASE_DOCUMENTS_856_WAVE='purchase_documents_856';
 const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII=';
@@ -351,6 +351,13 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
 
     const eicarName='qa856-eicar-'+marker+'.pdf',eicarKey=newKey();
     quarantineFileName=eicarName;cleanupFileNames.add(eicarName);documentFileNames.add(eicarName);
+    const rawEicarScan=await scanWithClamAv(Buffer.from(eicarSignature,'ascii'),{
+      host:process.env.PRIVATE_EVIDENCE_CLAMAV_HOST,
+      port:Number(process.env.PRIVATE_EVIDENCE_CLAMAV_PORT||3310)
+    });
+    console.info('QA 856 raw ClamAV EICAR probe',JSON.stringify({status:rawEicarScan.status,result:rawEicarScan.result}));
+    exact(rawEicarScan.status,'infected','ClamAV detects the raw harmless EICAR test signature');
+    truth(/eicar/i.test(rawEicarScan.result),'ClamAV identifies the raw EICAR test signature');
     const infected=await post('/api/procurement/purchase-documents',payload(a,eicarKey,{file_name:eicarName,data_url:eicarPdf}));
     exact(infected.status,422,'ClamAV rejects the harmless EICAR PDF test signature');
     const quarantine=await pool.query(`
