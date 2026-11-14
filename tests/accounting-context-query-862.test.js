@@ -19,6 +19,7 @@ test('ordinary accounting context resolves all active bindings and selected busi
   assert.match(calls[0].sql,/JOIN business_memberships/);
   assert.match(calls[0].sql,/ON CONFLICT\(account_id,role\) DO UPDATE/);
   assert.match(calls[0].sql,/IS DISTINCT FROM EXCLUDED\.business_id/);
+  assert.match(calls[0].sql,/IS NOT DISTINCT FROM \(SELECT p\.business_id FROM preferred p\)/);
   assert.match(calls[0].sql,/ON CONFLICT\(business_id,id\) DO NOTHING/);
 });
 
