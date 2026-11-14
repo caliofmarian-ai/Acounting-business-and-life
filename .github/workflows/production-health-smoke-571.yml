@@ -1,0 +1,27 @@
+name: Public Production health and source parity (#571)
+
+on:
+  push:
+    branches:
+      - payments/local-services-v2-571-recovery
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-health-smoke-571
+  cancel-in-progress: false
+
+jobs:
+  public-production-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify public health body, deployed revision and served payment asset
+        env:
+          EXPECTED_PRODUCTION_REVISION: a1a367b87101bc914bcab4b033ba1801d2db0474
+        run: node scripts/production-health-smoke-571.mjs
