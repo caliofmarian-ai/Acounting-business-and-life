@@ -75,7 +75,8 @@ function makeController(){
     `const ROOT='/api/procurement/purchase-documents';
       let overlay=panel,businessId=14,pendingKey=null,pendingPayload=null,
           pendingSubmitted=false,chosenFile=null,saveInProgress=false,openAttempt=0,opening=false,saveAttempt=0,
-          metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
+          metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false,
+           supplementarySaveAttempt=0,supplementarySaveInProgress=false;
       const $=selector=>selector==='#mpdForm'?form:
         selector==='#mpdSave'?button:receiptLabel;
       let previousOverflow='';
