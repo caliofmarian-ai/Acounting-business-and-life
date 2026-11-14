@@ -58,15 +58,16 @@ test('862: the authorized QA wave uses existing credential-restoration and runs 
   assert.match(harness,/runInventoryLocationRead862Acceptance\(/);
   assert.match(harness,/await restoreAutomationCredentials\(pool\)/);
   assert.doesNotMatch(code,/POST \/api\/inventory|\/api\/inventory\/purchase|INSERT INTO inventory|DELETE FROM inventory/);
+  assert.doesNotMatch(code,/x-abl-inventory-origin-business/,'performance reads must exercise ordinary workspace context');
   assert.match(code,/AbortSignal\.timeout\(12000\)/);
   assert.match(code,/Math\.ceil\(samples\.length\*percentage\)/);
   assert.match(code,/originalBusinessId/);
 });
 
-test('862: controlled Merchant + Customer sessions exercise concurrent authenticated GETs and A/B scope',async()=>{
+test('862: controlled Merchant + Customer sessions exercise concurrent non-origin GETs and A/B scope',async()=>{
   const originalFetch=globalThis.fetch;
   let business=111;
-  const queries=[],calls=[];
+  const queries=[],calls=[],originHeaders=[];
   const pool={
     async query(sql,args=[]){
       queries.push({sql,args});
@@ -92,6 +93,7 @@ test('862: controlled Merchant + Customer sessions exercise concurrent authentic
     expectStatus(r,code,label){assert.equal(r.status,code,label)}
   };
   globalThis.fetch=async (url,opts={})=>{
+    originHeaders.push(opts.headers?.['x-abl-inventory-origin-business']);
     const pathname=new URL(url).pathname,params=new URL(url).searchParams;
     if(pathname==='/api/accounting/active-workspace'){
       business=Number(JSON.parse(opts.body).business_id);
@@ -125,6 +127,9 @@ test('862: controlled Merchant + Customer sessions exercise concurrent authentic
     });
     assert.equal(result.status,'PASS');
     assert.equal(result.authenticated_qa_merchant,true);
+    assert.equal(result.ordinary_workspace_context,true);
+    assert.equal(result.inventory_origin_header_sent,false);
+    assert.ok(originHeaders.every(value=>value===undefined),'no request may force the origin-bound resolver branch');
     assert.equal(result.business_a_b_verified,true);
     assert.equal(result.guest_401,true);
     assert.equal(result.customer_403,true);
