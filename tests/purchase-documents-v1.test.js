@@ -911,9 +911,11 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   ),'base64');
   const eicarSignature=Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*','ascii');
   const eicarSignatureOffset=eicarBytes.indexOf(eicarSignature);
-  const eicarEofOffset=eicarBytes.lastIndexOf(Buffer.from('%%EOF'));
-  assert.ok(eicarSignatureOffset>=0 && eicarSignatureOffset<eicarEofOffset,
-    'decoded EICAR PDF contains the complete scanner signature before EOF');
+  const eicarStreamStart=eicarBytes.indexOf(Buffer.from('stream\n','ascii'));
+  const eicarStreamEnd=eicarBytes.indexOf(Buffer.from('\nendstream','ascii'),eicarStreamStart);
+  assert.ok(eicarStreamStart>=0 && eicarStreamEnd>eicarStreamStart &&
+    eicarSignatureOffset>eicarStreamStart && eicarSignatureOffset<eicarStreamEnd,
+    'decoded EICAR PDF contains the complete scanner signature inside its uncompressed content stream');
   assert.ok(qa.includes('documentFileNames.add(eicarName)'), 'unexpected clean EICAR uploads remain eligible for scoped private-object cleanup');
   assert.ok(qa.includes("original_file_name LIKE 'qa856-%'"), 'prior fixture cleanup is restricted to this wave file prefix');
   for(const fragment of [
