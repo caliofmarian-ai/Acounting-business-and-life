@@ -16,6 +16,48 @@ const eicarPdf='data:application/pdf;base64,'+Buffer.concat([
 ]).toString('base64');
 export const __purchaseDocuments856TestFixtures=Object.freeze({eicarPdf});
 
+
+async function cleanupPreviousPurchaseDocuments856Fixtures(pool,accountId){
+  const preference=await pool.query("SELECT p.business_id,b.name FROM account_business_preferences p LEFT JOIN businesses b ON b.id=p.business_id WHERE p.account_id=$1 AND p.role='merchant'",[accountId]);
+  if(preference.rows[0]?.name?.startsWith('QA 856 ')){
+    throw new Error('QA 856 prior fixture remains selected; refusing to replace Merchant context');
+  }
+  const businesses=await pool.query("SELECT DISTINCT b.id FROM businesses b JOIN business_memberships m ON m.business_id=b.id WHERE m.account_id=$1 AND b.name LIKE 'QA 856 %' ORDER BY b.id",[accountId]);
+  const ids=businesses.rows.map(row=>Number(row.id)).filter(id=>Number.isSafeInteger(id)&&id>0);
+  for(const id of ids){
+    const owned=await pool.query('SELECT name FROM businesses WHERE id=$1',[id]);
+    if(!owned.rows[0]?.name?.startsWith('QA 856 '))throw new Error('QA 856 prior business ownership mismatch');
+    await pool.query('DELETE FROM merchant_purchase_document_evidence WHERE business_id=$1',[id]);
+    await pool.query('DELETE FROM merchant_purchase_document_metadata_audit WHERE business_id=$1',[id]);
+    await pool.query('DELETE FROM merchant_purchase_document_links WHERE document_id IN (SELECT id FROM merchant_purchase_documents WHERE business_id=$1)',[id]);
+    await pool.query('DELETE FROM merchant_purchase_documents WHERE business_id=$1',[id]);
+    for(const table of ['inventory_count_sessions','inventory_lot_location_balances','inventory_location_balances',
+      'inventory_purchases','supply_lots','transactions','inventory','inventory_storage_locations','budgets'])
+      await pool.query('DELETE FROM '+table+' WHERE business_id=$1',[id]);
+    await pool.query('DELETE FROM business_memberships WHERE business_id=$1 AND account_id=$2',[id,accountId]);
+    await pool.query('DELETE FROM profile_business_bindings WHERE business_id=$1 AND account_id=$2',[id,accountId]);
+    await pool.query('DELETE FROM businesses WHERE id=$1',[id]);
+  }
+  const objects=await pool.query("SELECT id,source_type,source_id,original_file_name FROM private_evidence_objects WHERE owner_account_id=$1 AND original_file_name LIKE 'qa856-%' AND source_type IN ('merchant_purchase_document','merchant_purchase_document_attachment','merchant_purchase_document_attachment_pending')",[accountId]);
+  for(const row of objects.rows){
+    const objectId=Number(row.id),fileName=String(row.original_file_name||'');
+    if(!Number.isSafeInteger(objectId)||objectId<1||!fileName.startsWith('qa856-')||
+       !['merchant_purchase_document','merchant_purchase_document_attachment','merchant_purchase_document_attachment_pending'].includes(row.source_type)){
+      throw new Error('QA 856 prior private-object ownership/source mismatch');
+    }
+    await deletePrivateEvidence(pool,{objectId,actorAccountId:accountId,purpose:'qa_856_previous_fixture_cleanup'});
+    await pool.query('DELETE FROM private_evidence_access_audit WHERE object_id=$1',[objectId]);
+    await pool.query('DELETE FROM private_evidence_objects WHERE id=$1 AND owner_account_id=$2 AND source_type=$3 AND source_id=$4 AND original_file_name=$5',
+      [objectId,accountId,row.source_type,row.source_id,fileName]);
+  }
+  const remainingBusinesses=await pool.query("SELECT COUNT(*)::int n FROM businesses b JOIN business_memberships m ON m.business_id=b.id WHERE m.account_id=$1 AND b.name LIKE 'QA 856 %'",[accountId]);
+  const remainingObjects=await pool.query("SELECT COUNT(*)::int n FROM private_evidence_objects WHERE owner_account_id=$1 AND original_file_name LIKE 'qa856-%' AND source_type IN ('merchant_purchase_document','merchant_purchase_document_attachment','merchant_purchase_document_attachment_pending')",[accountId]);
+  if(Number(remainingBusinesses.rows[0]?.n)!==0||Number(remainingObjects.rows[0]?.n)!==0){
+    throw new Error('QA 856 prior fixture cleanup left residual records');
+  }
+  return{businesses:ids.length,privateObjects:objects.rowCount};
+}
+
 export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliases,helpers}){
   const {requestJson,requestBinary,qaAccountSession,ensureActiveRole}=helpers;
   const merchant=await qaAccountSession({pool,base,secret,email:aliases.merchant,role:'merchant',label:'Purchase documents 856 Merchant QA'});
@@ -25,6 +67,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
   let supportingEvidenceId=null,supportingFileName=null,supportingKey=null,supportingDocumentId=null,supportingBusinessId=null;
   let quarantineObjectId=null,quarantineFileName=null;
   const exact=(actual,expected,label)=>{assert.equal(actual,expected,'Purchase documents 856: '+label);checks++};
+  const safeMessage=error=>String(error?.message||'unknown error').replace(/[\r\n\t]+/g,' ').slice(0,240);
   const truth=(condition,label)=>{assert.ok(condition,'Purchase documents 856: '+label);checks++};
   const call=(path,options={})=>requestJson(base,path,{token:merchant.token,...options});
   const post=(path,body)=>call(path,{method:'POST',body});
@@ -51,6 +94,8 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(me.json?.account?.account_mode,'company_test','classified QA account');
     exact(me.json?.account?.test_role,'merchant','Merchant-only fixture');
     await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Purchase documents 856 QA'});
+    const priorCleanup=await cleanupPreviousPurchaseDocuments856Fixtures(pool,merchant.accountId);
+    console.log('QA 856 prior fixture cleanup '+JSON.stringify(priorCleanup));
     original=await pool.query("SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role='merchant'",[merchant.accountId]);
     for(const suffix of ['A','B']){
       const r=await pool.query("INSERT INTO businesses(name,country_code,currency_code) VALUES($1,'PH','PHP') RETURNING id",[scope+' '+suffix]);
@@ -284,7 +329,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(oversizedDocuments.rows[0]?.n,0,'oversized file creates no receipt');
 
     const eicarName='qa856-eicar-'+marker+'.pdf',eicarKey=newKey();
-    quarantineFileName=eicarName;cleanupFileNames.add(eicarName);
+    quarantineFileName=eicarName;cleanupFileNames.add(eicarName);documentFileNames.add(eicarName);
     const infected=await post('/api/procurement/purchase-documents',payload(a,eicarKey,{file_name:eicarName,data_url:eicarPdf}));
     exact(infected.status,422,'ClamAV rejects the harmless EICAR PDF test signature');
     const quarantine=await pool.query(`
@@ -358,7 +403,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(restoredDetail.json?.supplementary_evidence?.length,1,'A supporting file remains attached after context switch');
     const persisted=await pool.query('SELECT COUNT(*)::int n FROM merchant_purchase_documents WHERE business_id=$1',[a]);
     exact(persisted.rows[0]?.n,4,'metadata, PNG, JPEG and PDF receipt documents persisted');
-  }catch(error){problem=error}
+  }catch(error){problem=error;console.error('QA 856 assertion failure:',safeMessage(error))}
   finally{
     try{
       if(original?.rowCount)await select(original.rows[0].business_id);
@@ -451,11 +496,11 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
         await pool.query('DELETE FROM businesses WHERE id=$1',[id]);
       }
       cleaned=true;
-    }catch(e){problem=new Error('QA 856 fixture cleanup failed'+(problem?' after test failure':''),{cause:e})}
+    }catch(e){console.error('QA 856 cleanup failure:',safeMessage(e));problem=new Error('QA 856 fixture cleanup failed'+(problem?' after test failure':''),{cause:e})}
     try{await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}})}
     catch(e){if(!problem)problem=e}
   }
-  if(problem)throw problem;
+  if(problem){if(problem.cause)console.error('QA 856 original failure:',safeMessage(problem.cause));throw problem;}
   return{status:'PASS',wave:PURCHASE_DOCUMENTS_856_WAVE,checks,authenticated_http:true,
     isolated_businesses:true,receipt_multi_purchase:true,replay_conflict_guard:true,
     scanned_original_download:true,metadata_archive:true,metadata_edit_audit:true,

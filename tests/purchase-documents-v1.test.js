@@ -911,6 +911,8 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   ),'base64');
   assert.ok(eicarBytes.includes(Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*','ascii')),
     'decoded EICAR PDF contains the complete scanner signature');
+  assert.ok(qa.includes('documentFileNames.add(eicarName)'), 'unexpected clean EICAR uploads remain eligible for scoped private-object cleanup');
+  assert.ok(qa.includes("original_file_name LIKE 'qa856-%'"), 'prior fixture cleanup is restricted to this wave file prefix');
   for(const fragment of [
     "const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';",
     "const supportingInput={business_id:a,client_request_key:supportingKey,file_name:supportingFileName,data_url:png};",
