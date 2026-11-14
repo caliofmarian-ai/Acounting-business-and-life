@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  INVENTORY_LOCATION_READ_862_WAVE,INVENTORY_862_PATHS,INVENTORY_862_ACCOUNTING_PATHS,INVENTORY_862_LEGACY_PATHS,inventory862Percentile,inventory862AssertLatency,inventory862OtherBusiness,
+  INVENTORY_LOCATION_READ_862_WAVE,INVENTORY_862_PATHS,INVENTORY_862_ACCOUNTING_PATHS,INVENTORY_862_ACCOUNTING_E2E_PATHS,INVENTORY_862_LEGACY_PATHS,inventory862Percentile,inventory862AssertLatency,inventory862OtherBusiness,
   inventory862AssertScopedRows,inventory862AssertPayload,inventory862AssertWorkspace,inventory862ValidateRuntime,
   runInventoryLocationRead862Acceptance
 } from '../qa-inventory-location-read-862.js';
@@ -48,6 +48,8 @@ test('862: every returned location and balance must belong to the authenticated 
 test('862: ordinary workspace response is tied to the authenticated selected Merchant business',()=>{
   assert.equal(inventory862AssertWorkspace({workspace:{role:'merchant',active_business_id:11,
     businesses:[{id:11},{id:22}]}},11),2);
+  assert.equal(inventory862AssertWorkspace({role:'merchant',active_business_id:11,
+    businesses:[{id:11},{id:22}]},11),2);
   assert.throws(()=>inventory862AssertWorkspace({workspace:{role:'merchant',active_business_id:22,
     businesses:[{id:11},{id:22}]}},11),/cross-business/);
   assert.throws(()=>inventory862AssertWorkspace({workspace:{role:'customer',active_business_id:11,
@@ -62,7 +64,8 @@ test('862: QA benchmark fails closed for production, wrong service and non-isola
 test('862: the authorized QA wave uses existing credential-restoration and runs no stock write',()=>{
   assert.equal(INVENTORY_LOCATION_READ_862_WAVE,'inventory_location_read_862');
   assert.deepEqual(INVENTORY_862_PATHS,['/api/inventory/location-summary']);
-  assert.deepEqual(INVENTORY_862_ACCOUNTING_PATHS,['/api/merchant/today']);
+  assert.deepEqual(INVENTORY_862_ACCOUNTING_PATHS,['/api/accounting/workspaces']);
+  assert.deepEqual(INVENTORY_862_ACCOUNTING_E2E_PATHS,['/api/merchant/today']);
   assert.deepEqual(INVENTORY_862_LEGACY_PATHS,[
     '/api/inventory/locations','/api/inventory/location-balances','/api/inventory/transfers'
   ]);
@@ -131,6 +134,8 @@ test('862: controlled Merchant + Customer sessions exercise origin-bound Invento
     const auth=String(opts.headers?.Authorization||'');
     const status=!auth?401:auth==='Bearer customer'?403:200;
     let body=status===200?[]:{error:'Unauthorized'};
+    if(status===200&&pathname==='/api/accounting/workspaces')
+      body={role:'merchant',active_business_id:business,businesses:[{id:111},{id:222}]};
     if(status===200&&pathname==='/api/merchant/today')
       body={workspace:{role:'merchant',active_business_id:business,businesses:[{id:111},{id:222}]}};
     if(status===200&&pathname==='/api/inventory/location-summary')
@@ -158,9 +163,11 @@ test('862: controlled Merchant + Customer sessions exercise origin-bound Invento
     assert.equal(result.authenticated_qa_merchant,true);
     assert.equal(result.ordinary_workspace_context,true);
     assert.equal(result.ordinary_workspace_origin_header_sent,false);
-    assert.equal(result.accounting_context_path,'/api/merchant/today');
+    assert.equal(result.accounting_context_path,'/api/accounting/workspaces');
     assert.ok(Number.isFinite(result.accounting_context_p95_ms));
-    assert.ok(originHeaders.filter(x=>x.pathname==='/api/merchant/today').every(x=>x.value===undefined),
+    assert.equal(result.merchant_today_path,'/api/merchant/today');
+    assert.ok(Number.isFinite(result.merchant_today_p95_ms));
+    assert.ok(originHeaders.filter(x=>x.pathname==='/api/accounting/workspaces'||x.pathname==='/api/merchant/today').every(x=>x.value===undefined),
       'ordinary accounting reads must not force the Inventory origin path');
     assert.ok(originHeaders.filter(x=>x.pathname.startsWith('/api/inventory/')).some(x=>x.value==='111'),
       'Inventory reads retain explicit origin authority');
