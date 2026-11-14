@@ -907,6 +907,7 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   execFileSync(process.execPath,['--check',new URL('../qa-purchase-documents-856.js',import.meta.url).pathname]);
   for(const fragment of [
     "const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';",
+    "const supportingInput={business_id:a,client_request_key:supportingKey,file_name:supportingFileName,data_url:png};",
     "exact(supporting.status,201",
     "exact(supportingReplay.status,200",
     "exact(supportingConflict.status,409",

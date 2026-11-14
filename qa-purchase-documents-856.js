@@ -138,7 +138,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     supportingKey=newKey();
     supportingFileName='qa856-support-'+marker+'.png';
     const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';
-    const supportingInput={client_request_key:supportingKey,file_name:supportingFileName,data_url:png};
+    const supportingInput={business_id:a,client_request_key:supportingKey,file_name:supportingFileName,data_url:png};
     const economicBefore=await pool.query(`
       SELECT (SELECT COUNT(*)::int FROM inventory_purchases WHERE business_id=$1) purchase_count,
              (SELECT COUNT(*)::int FROM transactions WHERE business_id=$1) transaction_count
