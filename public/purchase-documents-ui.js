@@ -349,9 +349,20 @@
       catch{message(notice+' The archive could not refresh; close and reopen Purchase receipts to reload it.',true);return;}
       if(panel===overlay&&biz===businessId)await editDocument(id);
     }catch(error){
-      if(panel===overlay){
-        if(error.status===401||error.status===403)close(true);
-        else message(error.message,true);
+      if(panel===overlay&&biz===businessId&&owner===metadataSaveAttempt){
+        if(error.status===401||error.status===403){close(true);return;}
+        let current;
+        try{current=await api('/api/accounting/workspaces')}
+        catch{
+          if(panel===overlay&&biz===businessId&&owner===metadataSaveAttempt)close(true);
+          return;
+        }
+        if(panel!==overlay||biz!==businessId||owner!==metadataSaveAttempt)return;
+        const active=current?.active_business_id;
+        const valid=(typeof active==='number'&&Number.isSafeInteger(active)&&active>0)||
+          (typeof active==='string'&&/^[1-9][0-9]*$/.test(active)&&Number.isSafeInteger(Number(active)));
+        if(current?.role!=='merchant'||!valid||Number(active)!==biz){close(true);return;}
+        message(error.message,true);
       }
     }
     finally{
@@ -426,9 +437,20 @@
       try{await archive();if(panel===overlay&&biz===businessId)await editDocument(id)}
       catch{message(notice+' The receipt archive could not refresh; close and reopen it.',true);}
     }catch(error){
-      if(panel===overlay){
-        if(error.status===401||error.status===403)close(true);
-        else message(error.message+' Retry with the same selected file; its request key is preserved.',true);
+      if(panel===overlay&&biz===businessId&&owner===supplementarySaveAttempt){
+        if(error.status===401||error.status===403){close(true);return;}
+        let current;
+        try{current=await api('/api/accounting/workspaces')}
+        catch{
+          if(panel===overlay&&biz===businessId&&owner===supplementarySaveAttempt)close(true);
+          return;
+        }
+        if(panel!==overlay||biz!==businessId||owner!==supplementarySaveAttempt)return;
+        const active=current?.active_business_id;
+        const valid=(typeof active==='number'&&Number.isSafeInteger(active)&&active>0)||
+          (typeof active==='string'&&/^[1-9][0-9]*$/.test(active)&&Number.isSafeInteger(Number(active)));
+        if(current?.role!=='merchant'||!valid||Number(active)!==biz){close(true);return;}
+        message(error.message+' Retry with the same selected file; its request key is preserved.',true);
       }
     }finally{
       if(owner===supplementarySaveAttempt){
@@ -615,6 +637,7 @@
     saveAttempt++;
     saveInProgress=false;
     metadataEditRequest++;metadataSaveAttempt++;metadataSaveInProgress=false;
+    supplementarySaveAttempt++;supplementarySaveInProgress=false;
     overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;
     document.body.style.overflow=previousOverflow;
     return true;

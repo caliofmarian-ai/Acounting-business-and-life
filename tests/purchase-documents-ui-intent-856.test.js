@@ -1031,6 +1031,82 @@ test('metadata editor source exposes revision history and refuses stale or cross
 
 
 
+test('metadata PATCH failure rechecks the active Merchant before exposing an error',async()=>{
+  const start=source.indexOf('  async function saveMetadata(event,id,target){');
+  const end=source.indexOf('\n  async function saveSupplementaryEvidence(',start);
+  assert.ok(start>=0&&end>start,'literal metadata save controller exists');
+  const code=source.slice(start,end);
+  const panel={},button={disabled:false},form={querySelector:()=>button};
+  const target={dataset:{hasAttachment:'false'}};
+  const fields={expected_updated_at:'2026-11-13T12:00:00.000Z',document_kind:'purchase_receipt',
+    issue_date:'2026-11-13',issuer_name:'Market',document_number:'R-22',
+    gross_amount:'12.34',currency_code:'PHP',note:'Receipt'};
+  const messages=[];
+  let workspace=0,patches=0,closed=0;
+  const api=async(path,options={})=>{
+    if(path==='/api/accounting/workspaces'){
+      workspace++;
+      return{role:'merchant',active_business_id:workspace===1?14:15};
+    }
+    assert.equal(path,'/api/procurement/purchase-documents/23');
+    assert.equal(options.method,'PATCH');
+    patches++;
+    throw Object.assign(new Error('Metadata update failed'),{status:500});
+  };
+  const FormDataStub=function(){this.get=name=>fields[name]??null};
+  const run=new Function('api','FormData','message','archive','editDocument','close','panel','biz','target',
+    "const ROOT='/api/procurement/purchase-documents';let overlay=panel,businessId=biz,metadataSaveInProgress=false,metadataSaveAttempt=0;"+
+    code+";return saveMetadata;"
+  )(api,FormDataStub,(text,isError)=>messages.push({text,isError}),async()=>{},async()=>{},
+    ()=>{closed++},panel,14,target);
+  await run({preventDefault(){},currentTarget:form},23,target);
+  assert.equal(patches,1);
+  assert.equal(workspace,2,'failed PATCH is followed by a fresh workspace read');
+  assert.equal(closed,1,'the old private receipt dialog is revoked after A→B');
+  assert.equal(messages.length,0,'A failure is not displayed in B');
+});
+
+test('supplementary POST failure rechecks the active Merchant and preserves the retry intent',async()=>{
+  const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  const end=source.indexOf('\n  function readFile(file){',start);
+  assert.ok(start>=0&&end>start,'literal supplementary upload controller exists');
+  const code=source.slice(start,end);
+  const panel={},input={files:[{name:'support.png',size:68,type:'image/png'}],disabled:false};
+  const button={disabled:false,textContent:'Attach supporting file'};
+  const form={querySelector:selector=>selector.includes('input')?input:button,reset(){}};
+  const pending=new Map(),messages=[];
+  let workspace=0,posts=0,reads=0,closed=0,archives=0,edits=0;
+  const api=async(path,options={})=>{
+    if(path==='/api/accounting/workspaces'){
+      workspace++;
+      return{role:'merchant',active_business_id:workspace<=2?14:15};
+    }
+    assert.equal(path,'/api/procurement/purchase-documents/23/evidence');
+    posts++;
+    throw Object.assign(new Error('Attachment acknowledgement uncertain'),{status:500});
+  };
+  const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
+    'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
+    "const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;"+
+    code+";return saveSupplementaryEvidence;"
+  )(api,()=>('supporting-intent-preserved'),(text,isError)=>messages.push({text,isError}),
+    async()=>{archives++},async()=>{edits++},()=>{closed++},
+    async()=>{reads++;return'data:image/png;base64,AAAA'},pending,6*1024*1024,panel,14);
+  await run({preventDefault(){},currentTarget:form},23,{});
+  assert.equal(workspace,3,'failed POST is followed by a fresh workspace read');
+  assert.equal(posts,1);
+  assert.equal(reads,1);
+  assert.equal(closed,1,'the old private receipt dialog is revoked after A→B');
+  assert.equal(messages.length,0,'A failure is not displayed in B');
+  assert.equal(pending.size,1,'the uncertain same-business intent remains available for safe replay');
+  assert.equal(archives,0);
+  assert.equal(edits,0);
+});
+
+test('forced receipt-dialog close invalidates in-flight supplementary UI ownership',()=>{
+  assert.match(closeSource,/supplementarySaveAttempt\+\+;supplementarySaveInProgress=false/);
+});
+
 test('supplementary evidence upload keeps the same intent key after an uncertain response',async()=>{
   const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
   const end=source.indexOf('\n  function readFile(file){',start);
