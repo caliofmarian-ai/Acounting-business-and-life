@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import {readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {
-  normalizeMerchantPurchaseDocument,philippinesPurchaseDocumentDate,MERCHANT_PURCHASE_FILE_MAX_BYTES,
+  normalizeMerchantPurchaseDocument,normalizeMerchantPurchaseDocumentEvidence,philippinesPurchaseDocumentDate,MERCHANT_PURCHASE_FILE_MAX_BYTES,
   registerMerchantPurchaseDocumentRoutes
 } from '../merchant-purchase-documents.js';
 
@@ -102,6 +103,9 @@ test('exact Merchant authorization, cross-business linked-record checks, and pri
   assert.match(core,/expense_transaction.*transactions/);
   assert.match(core,/type='business_expense'/);
   assert.match(core,/storePrivateEvidence\(pool/);
+  assert.match(core,/p\.owner_account_id=e\.created_by_account_id/);
+  assert.match(core,/p\.source_type='merchant_purchase_document_attachment'/);
+  assert.match(core,/p\.source_id=e\.id::text/);
   assert.match(core,/bindPrivateEvidenceSource\(client/);
   assert.match(core,/readPrivateEvidence\(pool/);
   assert.match(core,/sendPrivateEvidence\(res,file\)/);
@@ -596,7 +600,322 @@ test('private Merchant purchase-document HTTP routes refuse stale conditional 30
     });
     assert.equal(submit.status,401);
     assertPrivate(submit);
+    const patch=await fetch(baseUrl+'/api/procurement/purchase-documents/23',{
+      method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({business_id:14,expected_updated_at:'2026-11-13T12:00:00.000Z',issuer_name:'Denied'})
+    });
+    assert.equal(patch.status,401,'anonymous metadata editing is denied');
+    assertPrivate(patch);
   }finally{
     await new Promise((resolve,reject)=>server.close(err=>err?reject(err):resolve()));
   }
+});
+
+
+test('purchase-document metadata edits are strict, versioned and never accept file or financial links',async()=>{
+  const {normalizeMerchantPurchaseDocumentMetadata}=await import('../merchant-purchase-documents.js');
+  const row={
+    id:23,business_id:14,client_request_key:'purchase-2026-10-30-001',
+    document_kind:'purchase_receipt',issuer_name:'Old shop',document_number:'',
+    issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'145.25',note:'old note',
+    private_evidence_object_id:555,updated_at:new Date('2026-11-13T12:00:00.000Z')
+  };
+  const result=normalizeMerchantPurchaseDocumentMetadata(row,{
+    expected_updated_at:row.updated_at.toISOString(),
+    issuer_name:'Corrected shop',gross_amount:'150.00',note:'corrected note'
+  });
+  assert.equal(result.expectedUpdatedAt,'2026-11-13T12:00:00.000Z');
+  assert.deepEqual(result.metadata,{
+    document_kind:'purchase_receipt',issuer_name:'Corrected shop',document_number:'',
+    issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'150.00',note:'corrected note'
+  });
+  for(const extra of [
+    {business_id:99},{links:[]},{data_url:'data:image/png;base64,AAAA'},
+    {file_name:'other.png'},{private_evidence_object_id:777},{client_request_key:'different'}
+  ])assert.throws(()=>normalizeMerchantPurchaseDocumentMetadata(row,{
+    expected_updated_at:row.updated_at.toISOString(),...extra
+  }),/Only purchase document metadata can be edited/);
+  assert.throws(()=>normalizeMerchantPurchaseDocumentMetadata(row,{issuer_name:'No version'}),/expected_updated_at/);
+  assert.throws(()=>normalizeMerchantPurchaseDocumentMetadata(row,{
+    expected_updated_at:row.updated_at.toISOString(),gross_amount:'100.005'
+  }),/Invalid document amount/);
+  assert.throws(()=>normalizeMerchantPurchaseDocumentMetadata(row,{
+    expected_updated_at:row.updated_at.toISOString(),issue_date:'2026-10-30T00:00:00Z'
+  }),/Invalid issue date/);
+});
+
+test('metadata edit locks Merchant grant and receipt row, audits before/after and leaves file/links/finance untouched',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const original={
+    id:23,business_id:14,created_by_account_id:9,client_request_key:'purchase-2026-10-30-001',
+    document_kind:'purchase_receipt',issuer_name:'Old shop',document_number:'',
+    issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'145.25',note:'old note',
+    private_evidence_object_id:555,created_at:new Date('2026-10-30T00:00:00.000Z'),
+    updated_at:new Date('2026-11-13T12:00:00.000Z')
+  };
+  let current={...original},auditRows=[],released=null;
+  const calls=[];
+  const client={
+    query:async(sql,params=[])=>{
+      calls.push({sql,params});
+      if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+      if(sql.includes('SELECT * FROM merchant_purchase_documents'))return{rowCount:1,rows:[{...current}]};
+      if(sql.includes('UPDATE merchant_purchase_documents')){
+        current={...current,document_kind:params[2],issuer_name:params[3],document_number:params[4],
+          issue_date:params[5],currency_code:params[6],gross_amount:params[7],note:params[8],
+          updated_at:new Date('2026-11-13T12:00:01.000Z')};
+        return{rowCount:1,rows:[{...current}]};
+      }
+      if(sql.includes('INSERT INTO merchant_purchase_document_metadata_audit')){
+        auditRows.push({before:JSON.parse(params[3]),after:JSON.parse(params[4]),fields:params[5]});
+        return{rowCount:1,rows:[{id:1}]};
+      }
+      throw new Error('Unexpected metadata SQL '+sql);
+    },
+    release:error=>{released=error||'healthy'}
+  };
+  const pool={connect:async()=>client};
+  const result=await merchantPurchaseDocumentInternals.updatePurchaseDocumentMetadata(pool,{
+    actorAccountId:9,businessId:14,documentId:23,
+    input:{expected_updated_at:original.updated_at.toISOString(),issuer_name:'Corrected shop',gross_amount:'150.00'}
+  });
+  assert.equal(result.already_applied,false);
+  assert.equal(result.document.id,23);
+  assert.equal(result.document.issuer_name,'Corrected shop');
+  assert.equal(result.document.gross_amount,150);
+  assert.equal(result.document.has_attachment,true);
+  assert.equal(result.document.updated_at,'2026-11-13T12:00:01.000Z');
+  assert.equal(current.private_evidence_object_id,555,'the scanned original object is unchanged');
+  assert.deepEqual(auditRows,[{
+    before:{document_kind:'purchase_receipt',issuer_name:'Old shop',document_number:'',issue_date:'2026-10-30',
+      currency_code:'PHP',gross_amount:'145.25',note:'old note'},
+    after:{document_kind:'purchase_receipt',issuer_name:'Corrected shop',document_number:'',issue_date:'2026-10-30',
+      currency_code:'PHP',gross_amount:'150.00',note:'old note'},
+    fields:['issuer_name','gross_amount']
+  }]);
+  assert.ok(calls.some(x=>x.sql.includes('FOR SHARE OF pb,bm')),'current Merchant grant is locked');
+  assert.ok(calls.some(x=>x.sql.includes('FOR UPDATE')),'the exact receipt row is locked');
+  assert.ok(calls.some(x=>/GREATEST\(clock_timestamp\(\),\s*updated_at\s*\+\s*INTERVAL '1 millisecond'\)/i.test(x.sql)),'metadata version advances monotonically at JavaScript millisecond precision');
+  assert.ok(calls.some(x=>x.sql.includes('merchant_purchase_document_metadata_audit')),'audit is in the same transaction');
+  assert.ok(!calls.some(x=>/inventory_purchases|transactions|supply_lots/i.test(x.sql)),
+    'metadata editing must not write or reread financial/stock sources');
+  assert.equal(calls.at(-1).sql,'COMMIT');
+  assert.equal(released,'healthy');
+});
+
+test('uncertain metadata PATCH acknowledgement is replay-safe and stale competing edits fail closed',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const initial={
+    id:31,business_id:14,client_request_key:'purchase-2026-10-30-002',
+    document_kind:'purchase_receipt',issuer_name:'Old shop',document_number:'',
+    issue_date:'2026-10-30',currency_code:'PHP',gross_amount:'145.25',note:'old note',
+    private_evidence_object_id:null,created_at:new Date('2026-10-30T00:00:00.000Z'),
+    updated_at:new Date('2026-11-13T13:00:00.000Z')
+  };
+  let current={...initial},auditCount=0,loseCommit=true;
+  const makePool=()=>({connect:async()=>({
+    query:async(sql,params=[])=>{
+      if(sql==='BEGIN'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql==='COMMIT'){
+        if(loseCommit){loseCommit=false;throw new Error('COMMIT acknowledgement lost');}
+        return{rowCount:0,rows:[]};
+      }
+      if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+      if(sql.includes('SELECT * FROM merchant_purchase_documents'))return{rowCount:1,rows:[{...current}]};
+      if(sql.includes('UPDATE merchant_purchase_documents')){
+        current={...current,document_kind:params[2],issuer_name:params[3],document_number:params[4],
+          issue_date:params[5],currency_code:params[6],gross_amount:params[7],note:params[8],
+          updated_at:new Date('2026-11-13T13:00:01.000Z')};
+        return{rowCount:1,rows:[{...current}]};
+      }
+      if(sql.includes('INSERT INTO merchant_purchase_document_metadata_audit')){auditCount++;return{rowCount:1,rows:[]};}
+      throw new Error('Unexpected metadata SQL '+sql);
+    },
+    release:error=>{if(error){}}
+  })});
+  const input={expected_updated_at:initial.updated_at.toISOString(),issuer_name:'Corrected shop'};
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.updatePurchaseDocumentMetadata(makePool(),{
+    actorAccountId:9,businessId:14,documentId:31,input
+  }),/COMMIT acknowledgement lost/);
+  assert.equal(auditCount,1,'the uncertain first attempt may have committed once');
+  const replay=await merchantPurchaseDocumentInternals.updatePurchaseDocumentMetadata(makePool(),{
+    actorAccountId:9,businessId:14,documentId:31,input
+  });
+  assert.equal(replay.already_applied,true,'same metadata is recognized after a lost acknowledgement');
+  assert.equal(auditCount,1,'replay does not duplicate the audit revision');
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.updatePurchaseDocumentMetadata(makePool(),{
+    actorAccountId:9,businessId:14,documentId:31,
+    input:{expected_updated_at:initial.updated_at.toISOString(),note:'different concurrent edit'}
+  }),error=>error.status===409);
+  assert.equal(auditCount,1,'stale competing metadata does not append an audit row');
+});
+
+
+
+test('supplementary receipt evidence normalization is strict and bound to one document/business intent',()=>{
+  const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII=';
+  const input={client_request_key:'supporting-20261113-001',file_name:'delivery-note.png',data_url:png};
+  const record=normalizeMerchantPurchaseDocumentEvidence(input,{businessId:14,documentId:23});
+  assert.equal(record.businessId,14);
+  assert.equal(record.documentId,23);
+  assert.equal(record.key,input.client_request_key);
+  assert.equal(record.fileName,input.file_name);
+  assert.match(record.fingerprint,/^[a-f0-9]{64}$/);
+  for(const invalid of [
+    {...input,client_request_key:'short'},
+    {...input,client_request_key:'x'.repeat(101)},
+    {...input,file_name:42},
+    {...input,file_name:' '},
+    {...input,data_url:[]},
+    {...input,data_url:'data:text/html;base64,PHNjcmlwdD4='},
+    {...input,private_evidence_object_id:777},
+    {...input,business_id:99}
+  ])assert.throws(()=>normalizeMerchantPurchaseDocumentEvidence(invalid,{businessId:14,documentId:23}));
+  assert.throws(()=>normalizeMerchantPurchaseDocumentEvidence(input,{businessId:15,documentId:0}),/positive integer/);
+});
+
+test('supplementary evidence appends a distinct private object under Merchant and receipt locks',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const record=normalizeMerchantPurchaseDocumentEvidence({
+    client_request_key:'supporting-20261113-002',file_name:'supplier-slip.png',
+    data_url:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII='
+  },{businessId:14,documentId:23});
+  const calls=[],bound=[],deleted=[];
+  const client={
+    query:async(sql,params=[])=>{
+      calls.push({sql,params});
+      if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+      if(sql.includes('SELECT id FROM merchant_purchase_documents'))return{rowCount:1,rows:[{id:23}]};
+      if(sql.includes('INSERT INTO merchant_purchase_document_evidence')){
+        assert.deepEqual(params.slice(0,5),[23,14,9,record.key,record.fingerprint]);
+        return{rowCount:1,rows:[{id:501,document_id:23,business_id:14,created_at:new Date('2026-11-13T12:00:00.000Z')}]};
+      }
+      throw new Error('Unexpected supplementary evidence SQL '+sql);
+    },
+    release:error=>{if(error)throw error}
+  };
+  const pool={
+    query:async(sql,params)=>{
+      if(sql.includes('SELECT id FROM merchant_purchase_documents')){
+        assert.deepEqual(params,[23,14]);
+        return{rowCount:1,rows:[{id:23}]};
+      }
+      assert.match(sql,/merchant_purchase_document_evidence/);
+      assert.deepEqual(params,[23,14,record.key]);
+      return{rowCount:0,rows:[]};
+    },
+    connect:async()=>client
+  };
+  const result=await merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,{
+    actorAccountId:9,businessId:14,documentId:23,record,
+    storeEvidence:async(db,input)=>{
+      assert.equal(db,pool);
+      assert.equal(input.sourceType,'merchant_purchase_document_attachment_pending');
+      assert.equal(input.sourceId,'23:'+record.key);
+      assert.equal(input.maxBytes,MERCHANT_PURCHASE_FILE_MAX_BYTES);
+      return{id:777,original_file_name:record.fileName,detected_mime:'image/png',byte_size:68};
+    },
+    bindEvidence:async(db,input)=>bound.push({db,input}),
+    deleteEvidence:async(db,input)=>deleted.push(input)
+  });
+  assert.equal(result.already_saved,false);
+  assert.deepEqual(result.evidence,{
+    id:501,document_id:23,business_id:14,file_name:'supplier-slip.png',
+    mime_type:'image/png',byte_size:68,created_at:'2026-11-13T12:00:00.000Z'
+  });
+  assert.equal(bound.length,1);
+  assert.equal(bound[0].db,client);
+  assert.equal(bound[0].input.objectId,777);
+  assert.equal(bound[0].input.sourceType,'merchant_purchase_document_attachment');
+  assert.equal(bound[0].input.sourceId,'501');
+  assert.equal(deleted.length,0);
+  assert.ok(calls.some(x=>x.sql.includes('FOR SHARE OF pb,bm')),'current Merchant grant is locked');
+  assert.ok(calls.some(x=>x.sql.includes('FOR UPDATE')),'exact receipt is locked');
+  assert.ok(calls.at(-1).sql==='COMMIT');
+  assert.ok(!calls.some(x=>/inventory_purchases|transactions|UPDATE merchant_purchase_documents/i.test(x.sql)),
+    'supplementary evidence never changes original receipt, stock or financial records');
+});
+
+test('supplementary evidence replay reauthorizes, returns the same attachment and rejects a changed file',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII=';
+  const input={client_request_key:'supporting-20261113-003',file_name:'supplier-slip.png',data_url:png};
+  const record=normalizeMerchantPurchaseDocumentEvidence(input,{businessId:14,documentId:23});
+  const existing={id:501,document_id:23,business_id:14,request_fingerprint:record.fingerprint,
+    file_name:input.file_name,mime_type:'image/png',byte_size:68,created_at:new Date('2026-11-13T12:00:00.000Z')};
+  let stored=0,commits=0;
+  const pool={
+    query:async()=>({rowCount:1,rows:[{id:501}]}),
+    connect:async()=>({
+      query:async(sql)=>{
+        if(sql==='BEGIN'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+        if(sql==='COMMIT'){commits++;return{rowCount:0,rows:[]};}
+        if(sql.includes('FROM profile_business_bindings'))return{rowCount:1,rows:[{business_id:14}]};
+        if(sql.includes('SELECT id FROM merchant_purchase_documents'))return{rowCount:1,rows:[{id:23}]};
+        if(sql.includes('FROM merchant_purchase_document_evidence e'))return{rowCount:1,rows:[existing]};
+        throw new Error('Unexpected replay SQL '+sql);
+      },
+      release:error=>{if(error)throw error}
+    })
+  };
+  const options={actorAccountId:9,businessId:14,documentId:23,record,
+    storeEvidence:async()=>{stored++;throw new Error('Replay must not upload another file')}};
+  const replay=await merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,options);
+  assert.equal(replay.already_saved,true);
+  assert.equal(replay.evidence.id,501);
+  assert.equal(stored,0);
+  assert.equal(commits,1);
+  const changed=normalizeMerchantPurchaseDocumentEvidence({...input,file_name:'different.png'},{businessId:14,documentId:23});
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,{...options,record:changed}),
+    error=>error.status===409);
+  assert.equal(stored,0,'a conflicting key is rejected before another upload');
+});
+
+test('supplementary evidence is removed when the post-upload Merchant grant or receipt check fails',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const record=normalizeMerchantPurchaseDocumentEvidence({
+    client_request_key:'supporting-20261113-004',file_name:'supplier-slip.png',
+    data_url:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII='
+  },{businessId:14,documentId:23});
+  let deleted=0;
+  const client={
+    query:async(sql)=>{
+      if(sql==='BEGIN'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+      if(sql.includes('FROM profile_business_bindings'))return{rowCount:0,rows:[]};
+      throw new Error('Receipt row must not be read after grant revocation');
+    },
+    release:error=>{if(error)throw error}
+  };
+  const pool={query:async(sql)=>{
+    if(sql.includes('SELECT id FROM merchant_purchase_documents'))return{rowCount:1,rows:[{id:23}]};
+    return{rowCount:0,rows:[]};
+  },connect:async()=>client};
+  await assert.rejects(()=>merchantPurchaseDocumentInternals.appendPurchaseDocumentEvidence(pool,{
+    actorAccountId:9,businessId:14,documentId:23,record,
+    storeEvidence:async()=>({id:777,original_file_name:record.fileName,detected_mime:'image/png',byte_size:68}),
+    bindEvidence:async()=>{throw new Error('Must not bind after revoked grant')},
+    deleteEvidence:async(db,input)=>{assert.equal(input.objectId,777);deleted++}
+  }),error=>error.status===403);
+  assert.equal(deleted,1,'uncommitted private upload is cleaned after the grant check fails');
+});
+
+test('authenticated purchase-document wave covers supplementary evidence and exact private-object cleanup',()=>{
+  const qa=read('qa-purchase-documents-856.js');
+  assert.equal((qa.match(/const otherArchive=/g)||[]).length,1,'one B archive read is declared');
+  execFileSync(process.execPath,['--check',new URL('../qa-purchase-documents-856.js',import.meta.url).pathname]);
+  for(const fragment of [
+    "const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';",
+    "exact(supporting.status,201",
+    "exact(supportingReplay.status,200",
+    "exact(supportingConflict.status,409",
+    "supplementary_evidence_private_download:true",
+    "exact(foreignAppend.status,404",
+    "exact(foreignObjects.rows[0]?.n,0",
+    "exact(restoredDetail.json?.supplementary_evidence?.length,1",
+    "DELETE FROM merchant_purchase_document_evidence WHERE id=$1",
+    "merchant_purchase_document_attachment_pending",
+    "supplementary_evidence_cleanup:true"
+  ])assert.ok(qa.includes(fragment),'authenticated receipt acceptance is missing '+fragment);
 });

@@ -74,7 +74,9 @@ function makeController(){
     'form','button','receiptLabel','panel',
     `const ROOT='/api/procurement/purchase-documents';
       let overlay=panel,businessId=14,pendingKey=null,pendingPayload=null,
-          pendingSubmitted=false,chosenFile=null,saveInProgress=false,openAttempt=0,opening=false,saveAttempt=0;
+          pendingSubmitted=false,chosenFile=null,saveInProgress=false,openAttempt=0,opening=false,saveAttempt=0,
+          metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false,
+           supplementarySaveAttempt=0,supplementarySaveInProgress=false;
       const $=selector=>selector==='#mpdForm'?form:
         selector==='#mpdSave'?button:receiptLabel;
       let previousOverflow='';
@@ -459,9 +461,10 @@ function makeOpeningController(){
     return {role:'merchant',active_business_id:activeBusiness};
   };
   const factory=new Function('api','document','window','queueMicrotask','created',`
-    let overlay=null,businessId=null,openAttempt=0,opening=false,saveAttempt=0;
+    let overlay=null,businessId=null,openAttempt=0,opening=false,saveAttempt=0,
+        supplementarySaveAttempt=0,supplementarySaveInProgress=false;
     let saveInProgress=false,pendingSubmitted=false,pendingKey=null,pendingPayload=null,
-        chosenFile=null,previousOverflow='';
+        chosenFile=null,previousOverflow='',metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
     const message=()=>{},injectCss=()=>{},linkable=async()=>{},archive=async()=>{},ensureButton=()=>{};
     const render=()=>{overlay={remove(){this.removed=true}};created()};
     ${closeSource}
@@ -598,7 +601,8 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
   const oldArchive=controller.archive(),newArchive=controller.archive();
   assert.equal(pending.length,2);
   pending[1].resolve({documents:[{id:71,business_id:14,issuer_name:'Newest receipt',document_kind:'invoice',
-    issue_date:'2026-11-07',gross_amount:27,currency_code:'PHP',has_attachment:false}]});
+    issue_date:'2026-11-07',gross_amount:27,currency_code:'PHP',has_attachment:false,
+    updated_at:'2026-11-07T00:00:00.000Z'}]});
   await newArchive;
   assert.match(boxes['#mpdSaved'].innerHTML,/Newest receipt/);
   const latestArchive=boxes['#mpdSaved'].innerHTML;
@@ -621,7 +625,8 @@ test('same-dialog stale archive and linked-purchase responses cannot overwrite t
 
   const failingOld=controller.archive(),goodNew=controller.archive();
   pending[5].resolve({documents:[{id:72,business_id:14,issuer_name:'Confirmed again',document_kind:'purchase_receipt',
-    issue_date:'2026-11-07',gross_amount:19,currency_code:'PHP',has_attachment:false}]});
+    issue_date:'2026-11-07',gross_amount:19,currency_code:'PHP',has_attachment:false,
+    updated_at:'2026-11-07T00:00:00.000Z'}]});
   await goodNew;
   pending[4].reject(new Error('Obsolete archive GET failed'));
   await failingOld;
@@ -769,7 +774,7 @@ test('private receipt archive rejects foreign-business and malformed HTTP 200 ro
   const archiveSource=source.slice(begin,end);
   const row={id:77,business_id:14,document_kind:'invoice',issuer_name:'My shop',
     document_number:'R-4',issue_date:'2026-11-07',gross_amount:15.50,
-    currency_code:'PHP',has_attachment:true};
+    currency_code:'PHP',has_attachment:true,updated_at:'2026-11-07T00:00:00.000Z'};
   const makeArchive=response=>{
     const box={innerHTML:'Loading Merchant receipts'},panel={};
     const archive=new Function('api','panel','box',`
@@ -879,7 +884,8 @@ test('silent Merchant A to B switch during archive GET clears both private lists
   const pending=ui.archive();
   selected=15; // The workspace switches without another loader/profile event.
   release({documents:[{id:71,business_id:14,document_kind:'invoice',issuer_name:'FOREIGN A RECEIPT',
-    issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true}]});
+    issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true,
+    updated_at:'2026-11-07T00:00:00.000Z'}]});
   await assert.rejects(pending,/workspace changed/);
   assert.equal(workspaceChecks,1);
   assert.doesNotMatch(boxes['#mpdSaved'].innerHTML,/FOREIGN A RECEIPT|OLD A FILE LINK|\/71\/file/);
@@ -932,7 +938,8 @@ test('legitimate selected Merchant can still render archive and linkable purchas
       inventory_name:'My sugar',total_cost:10,created_at:'2026-11-07',
       purchase_quantity:2,purchase_unit:'kg'}]};
     return{documents:[{id:71,business_id:14,document_kind:'invoice',issuer_name:'My receipt',
-      issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true}]};
+      issue_date:'2026-11-07',gross_amount:10,currency_code:'PHP',has_attachment:true,
+      updated_at:'2026-11-07T00:00:00.000Z'}]};
   };
   const ui=new Function('api','panel','boxes',`
     const ROOT='/api/procurement/purchase-documents';
@@ -945,4 +952,277 @@ test('legitimate selected Merchant can still render archive and linkable purchas
   assert.equal(checked,2);
   assert.match(boxes['#mpdSaved'].innerHTML,/My receipt/);
   assert.match(boxes['#mpdLinkable'].innerHTML,/My sugar/);
+});
+
+
+test('metadata editor uses the literal PATCH controller, current Merchant identity and preserves attachment authority',async()=>{
+  const start=source.indexOf('  async function saveMetadata(event,id,target){');
+  const end=source.indexOf('\n  function close(',start);
+  assert.ok(start>=0&&end>start,'literal metadata save controller exists');
+  const code=source.slice(start,end);
+  const fields={
+    expected_updated_at:'2026-11-13T12:00:00.000Z',document_kind:'purchase_receipt',
+    issue_date:'2026-11-13',issuer_name:'Corrected shop',document_number:'R-22',
+    gross_amount:'999999999999.99',currency_code:'PHP',note:'Corrected note'
+  };
+  const button={disabled:false};
+  const form={querySelector:()=>button};
+  const panel={};
+  const target={dataset:{hasAttachment:'true'}};
+  const calls=[],messages=[];
+  let archives=0,edits=0,closed=0;
+  const api=async(path,options)=>{
+    calls.push({path,options});
+    if(path==='/api/accounting/workspaces')return{role:'merchant',active_business_id:14};
+    assert.equal(path,'/api/procurement/purchase-documents/23');
+    assert.equal(options.method,'PATCH');
+    const payload=JSON.parse(options.body);
+    return{already_applied:false,document:{
+      id:23,business_id:14,document_kind:payload.document_kind,issue_date:payload.issue_date,
+      issuer_name:payload.issuer_name,document_number:payload.document_number,
+      gross_amount:999999999999.99,currency_code:'PHP',note:payload.note,has_attachment:true,
+      updated_at:'2026-11-13T12:00:01.000Z'
+    }};
+  };
+  const FormDataStub=function(){this.get=name=>fields[name]??null};
+  const run=new Function('api','FormData','message','archive','editDocument','close','panel','biz','target',
+    'const ROOT=\'/api/procurement/purchase-documents\';let overlay=panel,businessId=biz,metadataSaveInProgress=false,metadataSaveAttempt=0;'+
+    code+';return saveMetadata;'
+  )(api,FormDataStub,(text,isError)=>messages.push({text,isError}),async()=>{archives++},
+    async()=>{edits++},()=>{closed++},panel,14,target);
+  await run({preventDefault(){},currentTarget:form},23,target);
+  const patch=calls.find(item=>item.options?.method==='PATCH');
+  assert.ok(patch);
+  const payload=JSON.parse(patch.options.body);
+  assert.equal(payload.expected_updated_at,fields.expected_updated_at);
+  assert.equal(payload.business_id,14);
+  assert.equal(payload.issuer_name,'Corrected shop');
+  assert.equal(Object.hasOwn(payload,'data_url'),false);
+  assert.equal(Object.hasOwn(payload,'file_name'),false);
+  assert.equal(Object.hasOwn(payload,'private_evidence_object_id'),false);
+  assert.equal(Object.hasOwn(payload,'links'),false);
+  assert.equal(archives,1);
+  assert.equal(edits,1);
+  assert.equal(closed,0);
+  assert.match(messages.at(-1).text,/original, purchase links and financial records are unchanged/);
+  assert.equal(button.disabled,false);
+});
+
+test('metadata editor source exposes revision history and refuses stale or cross-business responses',()=>{
+  const archiveStart=source.indexOf('  async function archive(){');
+  const editStart=source.indexOf('  async function editDocument(id){');
+  const saveStart=source.indexOf('  async function saveMetadata(event,id,target){');
+  const supplementaryStart=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  assert.ok(archiveStart>=0&&editStart>archiveStart&&saveStart>editStart&&supplementaryStart>saveStart);
+  const archive=source.slice(archiveStart,editStart);
+  const edit=source.slice(editStart,saveStart);
+  const save=source.slice(saveStart,supplementaryStart);
+  assert.match(archive,/data-mpd-edit=/);
+  assert.match(edit,/metadata_history/);
+  assert.match(edit,/item\.before_metadata/);
+  assert.match(edit,/item\.after_metadata/);
+  assert.match(edit,/verifiedMerchantRead/);
+  assert.match(edit,/doc\.business_id!==biz/);
+  assert.match(save,/expected_updated_at/);
+  assert.match(save,/method:'PATCH'/);
+  assert.match(save,/doc\.has_attachment!==\(target\.dataset\.hasAttachment==='true'\)/);
+  assert.match(save,/after=await api\('\/api\/accounting\/workspaces'\)/);
+  assert.match(save,/close\(true\)/);
+  assert.doesNotMatch(save,/data_url|file_name|private_evidence_object_id/);
+});
+
+
+
+test('metadata PATCH failure rechecks the active Merchant before exposing an error',async()=>{
+  const start=source.indexOf('  async function saveMetadata(event,id,target){');
+  const end=source.indexOf('\n  async function saveSupplementaryEvidence(',start);
+  assert.ok(start>=0&&end>start,'literal metadata save controller exists');
+  const code=source.slice(start,end);
+  const panel={},button={disabled:false},form={querySelector:()=>button};
+  const target={dataset:{hasAttachment:'false'}};
+  const fields={expected_updated_at:'2026-11-13T12:00:00.000Z',document_kind:'purchase_receipt',
+    issue_date:'2026-11-13',issuer_name:'Market',document_number:'R-22',
+    gross_amount:'12.34',currency_code:'PHP',note:'Receipt'};
+  const messages=[];
+  let workspace=0,patches=0,closed=0;
+  const api=async(path,options={})=>{
+    if(path==='/api/accounting/workspaces'){
+      workspace++;
+      return{role:'merchant',active_business_id:workspace===1?14:15};
+    }
+    assert.equal(path,'/api/procurement/purchase-documents/23');
+    assert.equal(options.method,'PATCH');
+    patches++;
+    throw Object.assign(new Error('Metadata update failed'),{status:500});
+  };
+  const FormDataStub=function(){this.get=name=>fields[name]??null};
+  const run=new Function('api','FormData','message','archive','editDocument','close','panel','biz','target',
+    "const ROOT='/api/procurement/purchase-documents';let overlay=panel,businessId=biz,metadataSaveInProgress=false,metadataSaveAttempt=0;"+
+    code+";return saveMetadata;"
+  )(api,FormDataStub,(text,isError)=>messages.push({text,isError}),async()=>{},async()=>{},
+    ()=>{closed++},panel,14,target);
+  await run({preventDefault(){},currentTarget:form},23,target);
+  assert.equal(patches,1);
+  assert.equal(workspace,2,'failed PATCH is followed by a fresh workspace read');
+  assert.equal(closed,1,'the old private receipt dialog is revoked after A→B');
+  assert.equal(messages.length,0,'A failure is not displayed in B');
+});
+
+test('supplementary POST failure rechecks the active Merchant and preserves the retry intent',async()=>{
+  const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  const end=source.indexOf('\n  function readFile(file){',start);
+  assert.ok(start>=0&&end>start,'literal supplementary upload controller exists');
+  const code=source.slice(start,end);
+  const panel={},input={files:[{name:'support.png',size:68,type:'image/png'}],disabled:false};
+  const button={disabled:false,textContent:'Attach supporting file'};
+  const form={querySelector:selector=>selector.includes('input')?input:button,reset(){}};
+  const pending=new Map(),messages=[];
+  let workspace=0,posts=0,reads=0,closed=0,archives=0,edits=0;
+  const api=async(path,options={})=>{
+    if(path==='/api/accounting/workspaces'){
+      workspace++;
+      return{role:'merchant',active_business_id:workspace<=2?14:15};
+    }
+    assert.equal(path,'/api/procurement/purchase-documents/23/evidence');
+    posts++;
+    throw Object.assign(new Error('Attachment acknowledgement uncertain'),{status:500});
+  };
+  const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
+    'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
+    "const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;"+
+    code+";return saveSupplementaryEvidence;"
+  )(api,()=>('supporting-intent-preserved'),(text,isError)=>messages.push({text,isError}),
+    async()=>{archives++},async()=>{edits++},()=>{closed++},
+    async()=>{reads++;return'data:image/png;base64,AAAA'},pending,6*1024*1024,panel,14);
+  await run({preventDefault(){},currentTarget:form},23,{});
+  assert.equal(workspace,3,'failed POST is followed by a fresh workspace read');
+  assert.equal(posts,1);
+  assert.equal(reads,1);
+  assert.equal(closed,1,'the old private receipt dialog is revoked after A→B');
+  assert.equal(messages.length,0,'A failure is not displayed in B');
+  assert.equal(pending.size,1,'the uncertain same-business intent remains available for safe replay');
+  assert.equal(archives,0);
+  assert.equal(edits,0);
+});
+
+test('forced receipt-dialog close invalidates in-flight supplementary UI ownership',()=>{
+  assert.match(closeSource,/supplementarySaveAttempt\+\+;supplementarySaveInProgress=false/);
+});
+
+test('supplementary evidence upload keeps the same intent key after an uncertain response',async()=>{
+  const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  const end=source.indexOf('\n  function readFile(file){',start);
+  assert.ok(start>=0&&end>start,'literal supplementary upload controller exists');
+  const code=source.slice(start,end);
+  const panel={},input={files:[{name:'support.png',size:68,type:'image/png'}],disabled:false};
+  const button={disabled:false,textContent:'Attach supporting file'};
+  const form={querySelector:selector=>selector.includes('input')?input:button,reset(){input.files=[]}};
+  const pending=new Map(),posts=[],messages=[];
+  let failFirst=true,reads=0,archives=0,edits=0,closed=0,keys=0;
+  const api=async(path,options={})=>{
+    if(path==='/api/accounting/workspaces')return{role:'merchant',active_business_id:14};
+    assert.equal(path,'/api/procurement/purchase-documents/23/evidence');
+    const payload=JSON.parse(options.body);posts.push(payload);
+    if(failFirst){failFirst=false;throw new Error('Connection lost after submit');}
+    return{already_saved:false,evidence:{id:55,document_id:23,business_id:14,
+      file_name:payload.file_name,mime_type:'image/png',byte_size:68,created_at:'2026-11-13T12:00:00.000Z'}};
+  };
+  const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
+    'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
+    `const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;${code};return saveSupplementaryEvidence;`
+  )(api,()=>('supporting-intent-'+(++keys)),(text,isError)=>messages.push({text,isError}),
+    async()=>{archives++},async()=>{edits++},()=>{closed++},
+    async()=>{reads++;return'data:image/png;base64,AAAA'},pending,6*1024*1024,panel,14);
+  const event={preventDefault(){},currentTarget:form};
+  await run(event,23,{});
+  assert.equal(posts.length,1);
+  assert.equal(pending.size,1);
+  assert.equal(input.disabled,true);
+  assert.equal(button.disabled,false,'retry button remains usable');
+  const key=posts[0].client_request_key;
+  await run(event,23,{});
+  assert.equal(posts.length,2);
+  assert.equal(posts[1].client_request_key,key,'retry reuses the original intent key');
+  assert.equal(posts[1].data_url,posts[0].data_url,'retry reuses the same private file bytes');
+  assert.equal(reads,1,'retry does not reread a replacement file');
+  assert.equal(pending.size,0);
+  assert.equal(input.disabled,false);
+  assert.equal(button.disabled,false);
+  assert.equal(archives,1);
+  assert.equal(edits,1);
+  assert.equal(closed,0);
+  assert.match(messages.at(-1).text,/original scan and financial records are unchanged/);
+});
+
+test('supplementary evidence file read rechecks the active Merchant before upload',async()=>{
+  const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  const end=source.indexOf('\n  function readFile(file){',start);
+  const code=source.slice(start,end);
+  const panel={},input={files:[{name:'support.png',size:68,type:'image/png'}],disabled:false};
+  const button={disabled:false,textContent:'Attach supporting file'};
+  const form={querySelector:selector=>selector.includes('input')?input:button,reset(){}};
+  let workspace=0,posts=0,closed=0,reads=0;
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces'){
+      workspace++;
+      return{role:'merchant',active_business_id:workspace===1?14:15};
+    }
+    posts++;throw new Error('A changed Merchant must never receive the file');
+  };
+  const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
+    'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
+    `const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;${code};return saveSupplementaryEvidence;`
+  )(api,()=>('supporting-intent-1'),()=>{},async()=>{},async()=>{},()=>{closed++},
+    async()=>{reads++;return'data:image/png;base64,AAAA'},new Map(),6*1024*1024,panel,14);
+  await run({preventDefault(){},currentTarget:form},23,{});
+  assert.equal(workspace,2);
+  assert.equal(reads,1);
+  assert.equal(posts,0);
+  assert.equal(closed,1);
+});
+
+test('supplementary POST acknowledgement after Merchant A→B switch is ignored',async()=>{
+  const start=source.indexOf('  async function saveSupplementaryEvidence(event,id,target){');
+  const end=source.indexOf('\n  function readFile(file){',start);
+  const code=source.slice(start,end);
+  const panel={},input={files:[{name:'support.png',size:68,type:'image/png'}],disabled:false};
+  let resets=0;
+  const button={disabled:false,textContent:'Attach supporting file'};
+  const form={querySelector:selector=>selector.includes('input')?input:button,reset(){resets++}};
+  const pending=new Map(),posts=[],messages=[];
+  let workspace=0,releasePost,closed=0,archives=0,edits=0,reads=0;
+  let notifyHeld;
+  const postHeld=new Promise(resolve=>{notifyHeld=resolve});
+  const held=new Promise(resolve=>{releasePost=resolve});
+  const api=async(path,options={})=>{
+    if(path==='/api/accounting/workspaces'){
+      workspace++;
+      return{role:'merchant',active_business_id:workspace<=2?14:15};
+    }
+    assert.equal(path,'/api/procurement/purchase-documents/23/evidence');
+    posts.push(JSON.parse(options.body));
+    notifyHeld();
+    return held;
+  };
+  const run=new Function('api','requestKey','message','archive','editDocument','close','readFile',
+    'pendingSupplementaryUploads','MAX_FILE','overlay','businessId',
+    `const ROOT='/api/procurement/purchase-documents';let supplementarySaveInProgress=false,supplementarySaveAttempt=0;${code};return saveSupplementaryEvidence;`
+  )(api,()=>('supporting-intent-1'),(text,isError)=>messages.push({text,isError}),
+    async()=>{archives++},async()=>{edits++},()=>{closed++},
+    async()=>{reads++;return'data:image/png;base64,AAAA'},pending,6*1024*1024,panel,14);
+  const posting=run({preventDefault(){},currentTarget:form},23,{});
+  await postHeld;
+  assert.equal(posts.length,1,'the A attachment intent was sent exactly once');
+  releasePost({already_saved:false,evidence:{id:55,document_id:23,business_id:14,
+    file_name:'support.png',mime_type:'image/png',byte_size:68,created_at:'2026-11-13T12:00:00.000Z'}});
+  await posting;
+  assert.equal(workspace,3,'workspace is rechecked after the durable response');
+  assert.equal(reads,1);
+  assert.equal(closed,1,'the old private receipt dialog is revoked for B');
+  assert.equal(archives,0,'A archive is not rendered into B');
+  assert.equal(edits,0,'A detail is not reopened in B');
+  assert.equal(resets,0,'the stale response cannot reset the replacement draft');
+  assert.equal(messages.some(entry=>/saved securely|already saved/i.test(entry.text)),false,
+    'a stale A acknowledgement is not presented as a B success');
+  assert.equal(posts.length,1,'context change never auto-resubmits the private file');
 });
