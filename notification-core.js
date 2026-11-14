@@ -28,6 +28,8 @@ const templates=[
   ['order.ready','fil-PH','Handa na ang order mo','Handa na ang order {{order_number}} para kunin{{delivery_suffix}}.'],
   ['order.payment_confirmed','en-PH','Payment confirmed','Payment for order {{order_number}} was confirmed.'],
   ['order.payment_confirmed','fil-PH','Kumpirmado ang bayad','Nakumpirma ang bayad para sa order {{order_number}}.'],
+  ['order.billing_document','en-PH','Your purchase document · {{order_number}}','{{document_label}} from {{business_name}}. Order: {{order_number}}. Items: {{item_summary}}. Total: {{currency}} {{total}}. Merchant-recorded payment: {{currency}} {{paid}}. Amount due: {{currency}} {{due}}. {{document_disclaimer}} Open Business & Life to review your private purchase record.'],
+  ['order.billing_document','fil-PH','Dokumento ng binili mo · {{order_number}}','{{document_label}} mula sa {{business_name}}. Order: {{order_number}}. Mga produkto: {{item_summary}}. Kabuuan: {{currency}} {{total}}. Naitalang bayad ng Merchant: {{currency}} {{paid}}. Natitirang bayarin: {{currency}} {{due}}. {{document_disclaimer}} Buksan ang Business & Life para makita ang record.'],
   ['order.completed','en-PH','Order completed','Order {{order_number}} has been completed.'],
   ['order.completed','fil-PH','Tapos na ang order','Nakumpleto na ang order {{order_number}}.'],
   ['order.cancelled','en-PH','Order cancelled','Order {{order_number}} was cancelled.'],
@@ -602,7 +604,8 @@ function profileReviewEmailHtml(data={}){
 }
 
 async function sendQueuedEmail(pool,row){
-  const account=await pool.query(`SELECT email FROM accounts WHERE id=$1`,[row.account_id]);
+  const account=await pool.query(`SELECT email,email_verified_at FROM accounts WHERE id=$1`,[row.account_id]);
+  if(row.event_code==='order.billing_document'&&!account.rows[0]?.email_verified_at)return{ok:false,skip:true,error:'customer_email_unverified'};
   const email=clean(account.rows[0]?.email,180).toLowerCase();
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return{ok:false,skip:true,error:'recipient_email_missing'};
   const template=await loadTemplate(pool,row.event_code,row.locale,'email',row.data_json);
