@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import {registerReceiptIntelligenceRoutes} from '../receipt-intelligence-routes.js';
 
 function fixture({sessionStatus='review',allowedBusiness=5,vaultReady=true}={}){
-  const registered=new Map(),queries=[];
+  const registered=new Map(),queries=[],releases=[];
   const app={
     get:(route,handler)=>registered.set('GET '+route,handler),
     post:(route,_body,handler)=>registered.set('POST '+route,handler)
   };
-  const pool={query:async(sql,args=[])=>{
+  const query=async(connection,sql,args=[])=>{
     const statement=String(sql);
-    queries.push({sql:statement,args});
+    queries.push({connection,sql:statement,args});
+    if(/^(BEGIN|COMMIT|ROLLBACK)\b/.test(statement))return{rows:[],rowCount:0};
     if(statement.includes('FROM profile_business_bindings pb')){
       return {rows:Number(args[2])===allowedBusiness?[{id:allowedBusiness}]:[],rowCount:Number(args[2])===allowedBusiness?1:0};
     }
@@ -31,7 +32,12 @@ function fixture({sessionStatus='review',allowedBusiness=5,vaultReady=true}={}){
       }],rowCount:1};
     }
     throw Error('Unexpected SQL: '+statement.slice(0,150));
-  }};
+  };
+  const client={
+    query:(...args)=>query('client',...args),
+    release:discard=>releases.push(discard)
+  };
+  const pool={query:(...args)=>query('pool',...args),connect:async()=>client};
   const identity=async()=>({account:{id:17},profiles:[{role:'merchant',enabled:true}]});
   registerReceiptIntelligenceRoutes({app,pool,body:(_req,_res,next)=>next(),identity});
   const route=registered.get('GET /api/procurement/receipt-intelligence/count-sessions/:id/variance-evidence');
@@ -39,13 +45,18 @@ function fixture({sessionStatus='review',allowedBusiness=5,vaultReady=true}={}){
   async function call(businessId=5,countId=123){
     return new Promise(resolve=>{
       let code=200;
-      const res={status(next){code=next;return this},json(value){resolve({status:code,body:value})}};
+      const headers={};
+      const res={
+        set(name,value){headers[name]=value;return this},
+        status(next){code=next;return this},
+        json(value){resolve({status:code,headers,body:value})}
+      };
       Promise.resolve(route({params:{id:String(countId)},query:{business_id:String(businessId)}},res,
         error=>resolve({status:error?.status||500,error:error?.message||'unknown'})))
         .catch(error=>resolve({status:error?.status||500,error:error.message}));
     });
   }
-  return{call,queries};
+  return{call,queries,releases};
 }
 
 test('blind count refuses financial evidence before reading expected quantities',async()=>{
@@ -54,6 +65,8 @@ test('blind count refuses financial evidence before reading expected quantities'
   assert.equal(result.status,409);
   assert.match(result.error,/Finish blind counting/);
   assert.equal(f.queries.filter(q=>q.sql.includes('FROM inventory_count_session_items si')).length,0);
+  assert.equal(f.queries.at(-1).sql,'ROLLBACK');
+  assert.deepEqual(f.releases,[false]);
 });
 
 test('reviewed count can access one business-scoped, read-only receipt link',async()=>{
@@ -67,8 +80,16 @@ test('reviewed count can access one business-scoped, read-only receipt link',asy
   assert.equal(result.body.findings[0].receipt.id,81);
   assert.equal(result.body.findings[0].last_purchase.id,41);
   assert.equal(result.body.stock_posted,false);
+  assert.equal(result.headers['Cache-Control'],'private, no-store, max-age=0');
   assert.ok(f.queries.some(q=>q.sql.includes('WHERE si.session_id=$1')&&Number(q.args[1])===5));
   assert.ok(f.queries.every(q=>!/^\s*(INSERT|UPDATE|DELETE)\b/i.test(q.sql)));
+  const transaction=f.queries.filter(q=>q.connection==='client');
+  assert.equal(transaction.length,4);
+  assert.match(transaction[0].sql,/^BEGIN/);
+  assert.match(transaction[1].sql,/FROM inventory_count_sessions.*FOR SHARE/);
+  assert.match(transaction[2].sql,/FROM inventory_count_session_items si/);
+  assert.equal(transaction[3].sql,'COMMIT');
+  assert.deepEqual(f.releases,[false]);
 });
 
 test('requesting another business is denied before fetching its private count evidence',async()=>{
