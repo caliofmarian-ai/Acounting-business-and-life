@@ -461,7 +461,8 @@ function makeOpeningController(){
     return {role:'merchant',active_business_id:activeBusiness};
   };
   const factory=new Function('api','document','window','queueMicrotask','created',`
-    let overlay=null,businessId=null,openAttempt=0,opening=false,saveAttempt=0;
+    let overlay=null,businessId=null,openAttempt=0,opening=false,saveAttempt=0,
+        supplementarySaveAttempt=0,supplementarySaveInProgress=false;
     let saveInProgress=false,pendingSubmitted=false,pendingKey=null,pendingPayload=null,
         chosenFile=null,previousOverflow='',metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
     const message=()=>{},injectCss=()=>{},linkable=async()=>{},archive=async()=>{},ensureButton=()=>{};
