@@ -901,7 +901,7 @@ test('supplementary evidence is removed when the post-upload Merchant grant or r
   assert.equal(deleted,1,'uncommitted private upload is cleaned after the grant check fails');
 });
 
-test('authenticated purchase-document wave covers supplementary evidence and exact private-object cleanup',()=>{
+test('authenticated purchase-document wave covers supplementary evidence and exact private-object cleanup',async()=>{
   const qa=read('qa-purchase-documents-856.js');
   assert.equal((qa.match(/const otherArchive=/g)||[]).length,1,'one B archive read is declared');
   execFileSync(process.execPath,['--check',new URL('../qa-purchase-documents-856.js',import.meta.url).pathname]);
