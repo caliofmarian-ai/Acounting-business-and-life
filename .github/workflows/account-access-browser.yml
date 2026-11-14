@@ -1,0 +1,110 @@
+name: Account Access Browser Gateway
+
+on:
+  pull_request:
+    paths:
+      - 'account-access-core.js'
+      - 'server-account-access.js'
+      - 'server-paymongo.js'
+      - 'session-cookie-core.js'
+      - 'admin-authorization.js'
+      - 'public/account-access/**'
+      - 'public/help/**'
+      - 'scripts/account-access-runtime-browser.mjs'
+      - '.github/workflows/account-access-browser.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'account-access-core.js'
+      - 'server-account-access.js'
+      - 'server-paymongo.js'
+      - 'session-cookie-core.js'
+      - 'admin-authorization.js'
+      - 'public/account-access/**'
+      - 'public/help/**'
+      - 'scripts/account-access-runtime-browser.mjs'
+      - '.github/workflows/account-access-browser.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: account-access-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_account_access_browser_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_account_access_browser_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_account_access_browser_ci
+      TOKEN_SECRET: ci-account-access-browser-session-key-not-production
+      SUPER_ADMIN_MFA_ENCRYPTION_KEY: ci-account-access-browser-mfa-key-not-production
+      APP_PIN: '0000'
+      NODE_ENV: test
+      APP_ENV: test
+      PORT: '3000'
+      PAYMONGO_MODE: test
+      PAYMONGO_LIVE_ENABLED: 'false'
+      RAILWAY_SERVICE_NAME: accounting-account-access-browser-ci
+      RAILWAY_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ACCOUNT_ACCESS_BROWSER_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      ACCOUNT_ACCESS_BROWSER_CHANNEL: chrome
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --global npm@10.8.2
+      - run: npm ci
+      - name: Install isolated browser tooling without changing app dependencies
+        run: |
+          npm install --prefix "$RUNNER_TEMP/account-access-browser" --no-package-lock --ignore-scripts playwright@1.58.2
+          google-chrome --version
+      - name: Start canonical gateway on disposable PostgreSQL
+        run: |
+          npm start > "$RUNNER_TEMP/account-access-browser-gateway.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/account-access-browser-gateway.pid"
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:3000/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/account-access-browser-gateway.log"
+          exit 1
+      - name: Verify public intake and real staff sessions in Chrome
+        env:
+          ACCOUNT_ACCESS_BROWSER_MODULE: ${{ runner.temp }}/account-access-browser/node_modules/playwright/index.mjs
+          ACCOUNT_ACCESS_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/account-access-browser-evidence
+        run: node scripts/account-access-runtime-browser.mjs
+      - name: Preserve only synthetic screenshots and bounded assertions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-access-browser-evidence
+          path: ${{ runner.temp }}/account-access-browser-evidence
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Stop disposable gateway
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/account-access-browser-gateway.pid"; then
+            kill "$(cat "$RUNNER_TEMP/account-access-browser-gateway.pid")" || true
+          fi

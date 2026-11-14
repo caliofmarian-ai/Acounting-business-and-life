@@ -501,7 +501,7 @@
         "Do not share passwords, verification links, reset links or one-time codes with another person.",
         "A reset request uses a generic response for privacy; it is not proof that an account exists or that email delivery completed.",
         "If no reset message arrives, check the email spelling and inbox folders, allow delivery time, then request a fresh message. An expired or already-used link needs a new request.",
-        "Account-access contact outside sign-in is not currently verified as available. The Support guide explains this limitation."
+        "If recovery still fails, open Request account-access help without signing in from the public Help Center. The guest form saves to a private queue only after confirmation; it is not an inbound support inbox or an account-ownership shortcut."
       ],
       "related": [
         "email-verification",
@@ -520,7 +520,7 @@
         "nakalimutan password",
         "hindi makapag sign in"
       ],
-      "version": "3.0.0",
+      "version": "3.0.1",
       "publication": {
         "classification": "PUBLIC",
         "state": "EFFECTIVE",
@@ -528,21 +528,23 @@
       },
       "verification": {
         "owner": "Product documentation",
-        "reviewer": "Help Center source review / issue 808",
-        "reviewedAt": "2026-10-26",
+        "reviewer": "Account-access source review / issue 815",
+        "reviewedAt": "2026-10-27",
         "reviewDue": "2026-11-25",
-        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourceCommit": "5b5ede01fc95478677faad343d1e67ad82cb2112",
         "sourcePaths": [
           "public/shell.js",
           "public/auth-hardening-ui.js",
-          "server-auth.js"
+          "server-auth.js",
+          "server-account-access.js",
+          "public/account-access/index.html"
         ],
-        "basis": "Executable application source; capability and provider availability remain conditional."
+        "basis": "Source-reviewed recovery guidance and separate public guest intake; release and operational acceptance remain independent."
       },
       "translations": {
         "fil-PH": {
-          "sourceVersion": "3.0.0",
-          "reviewedAt": "2026-10-26",
+          "sourceVersion": "3.0.1",
+          "reviewedAt": "2026-10-27",
           "title": "Mag-sign in o mag-reset ng password",
           "summary": "Alamin kung password, expired session o pansamantalang serbisyo ang problema.",
           "shortAnswer": "Gamitin ang email ng iyong account. Kung nakalimutan ang password, piliin ang Forgot password? at Send reset instructions. Kung expired ang session, mag-sign in muli.",
@@ -557,7 +559,7 @@
             "Huwag ibahagi ang password, reset link o one-time code.",
             "Pangkalahatan ang tugon sa reset request para sa privacy; hindi nito pinatutunayang may account o naihatid na ang email.",
             "Kailangan ng bagong request kung expired o nagamit na ang link.",
-            "Wala pang napatunayang pampublikong account-access inbox o guest ticket form. Basahin ang Support guide."
+            "Kung hindi pa rin makapasok, piliin ang Humingi ng tulong sa account nang hindi nag-si-sign in sa Help Center. Sa pribadong staff queue mase-save lang ang request kapag may kumpirmasyon; hindi ito email inbox o patunay ng pagmamay-ari ng account."
           ]
         }
       }
@@ -4263,17 +4265,19 @@
       "section": "Safety & privacy",
       "profiles": [],
       "status": "current",
-      "summary": "Find the correct private support path and understand the current guest limitation.",
-      "shortAnswer": "When signed in, open Account Settings → Help & Support for New issue and My tickets. If you cannot sign in, start with password/email recovery; a public account-access inbox or guest ticket form is not yet verified as available.",
+      "summary": "Find signed-in private tickets and a separate guest account-access form for people who cannot sign in.",
+      "shortAnswer": "If signed in, use Account Settings → Help & Support → New issue or My tickets. If locked out, try password/email recovery first, then open Request account-access help without signing in. A successful save goes to a private authorized staff queue, not a monitored inbound email mailbox; a response time is not guaranteed.",
       "steps": [
-        "When signed in, open Account Settings → Help & Support. You can read Help Center guides there before opening a ticket.",
+        "When signed in, open Account Settings → Help & Support. You can read Help Center guides before opening a ticket.",
         "Choose New issue and the relevant category. Describe what happened, the screen/message and the steps already tried.",
         "Review the message, language/translation and necessary attachments before sending. Never include passwords, one-time codes or reset links.",
         "Use My tickets to read replies and continue the same private conversation. Use the incident/report path for a private operational or safety report.",
-        "If you are locked out, follow Sign in or reset your password and Verify your email address. This Help Center does not accept a guest ticket or promise an unverified contact inbox."
+        "If locked out, first try Sign in or reset your password and Verify your email address. If that does not solve access, choose Request account-access help without signing in in this Help Center. The guest form accepts an email you can access, an access reason and a short explanation; no attachments or secrets.",
+        "Only a Request saved confirmation means the guest form stored the request. If it reports an error or cannot confirm saving, keep the text and retry later. The guest form cannot unlock an account, verify ownership or show private ticket replies."
       ],
       "notes": [
-        "A published outbound sender address is not evidence of a monitored incoming support mailbox.",
+        "The public guest form covers account-access problems only. Normal New issue and My tickets still require signing in, and privacy/incident categories remain inside the authenticated support path.",
+        "A published outbound sender address is not evidence of a monitored incoming support mailbox. The new guest form does not send an email or guarantee an answer by a given time.",
         "Privacy-rights requests use their dedicated category and review route; do not upload identity evidence unless an authorized reviewer explains what is necessary."
       ],
       "related": [
@@ -4292,7 +4296,7 @@
         "tulong sa account",
         "humingi ng tulong"
       ],
-      "version": "3.0.0",
+      "version": "3.1.0",
       "publication": {
         "classification": "PUBLIC",
         "state": "EFFECTIVE",
@@ -4300,34 +4304,39 @@
       },
       "verification": {
         "owner": "Product documentation",
-        "reviewer": "Help Center source review / issue 808",
-        "reviewedAt": "2026-10-26",
+        "reviewer": "Account-access source review / issue 815",
+        "reviewedAt": "2026-10-27",
         "reviewDue": "2026-11-25",
-        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourceCommit": "5b5ede01fc95478677faad343d1e67ad82cb2112",
         "sourcePaths": [
           "public/admin-operations-ui.js",
           "server-admin-operations.js",
           "server-incidents.js",
-          "public/shell.js"
+          "public/shell.js",
+          "account-access-core.js",
+          "server-account-access.js",
+          "public/account-access/index.html"
         ],
-        "basis": "Executable application source; capability and provider availability remain conditional."
+        "basis": "Source-reviewed guest form and separate private queue on PR #834; production, staff operational ownership and retention gate are independently required."
       },
       "translations": {
         "fil-PH": {
-          "sourceVersion": "3.0.0",
-          "reviewedAt": "2026-10-26",
+          "sourceVersion": "3.1.0",
+          "reviewedAt": "2026-10-27",
           "title": "Gamitin ang Help & Support at My tickets",
-          "summary": "Piliin ang tamang pribadong tulong at account recovery.",
-          "shortAnswer": "Kung naka-sign in, buksan ang Account Settings → Help & Support. Kung hindi makapasok, sundin muna ang password/email recovery; wala pang napatunayang pampublikong guest intake.",
+          "summary": "Hanapin ang private tickets kapag naka-sign in at ang hiwalay na form para sa account-access kahit hindi maka-sign in.",
+          "shortAnswer": "Kung naka-sign in, gamitin ang Account Settings → Help & Support → New issue o My tickets. Kung locked out, subukan muna ang password/email recovery, pagkatapos buksan ang Request account-access help. Sa pribadong staff queue mase-save ang request kapag may kumpirmasyong Request saved; hindi ito monitored email inbox at walang garantisadong oras ng pagtugon.",
           "steps": [
-            "Buksan ang Help & Support habang naka-sign in.",
-            "Piliin ang New issue at tamang category. Ilarawan ang problema at nasubukan mo na.",
+            "Buksan ang Help & Support habang naka-sign in para magbasa ng mga gabay.",
+            "Piliin ang New issue at tamang category. Ilarawan ang problema at mga sinubukan mo.",
             "Suriin ang mensahe, salin at mahahalagang attachment bago ipadala. Huwag isama ang password, reset link o one-time code.",
-            "Gamitin ang My tickets para sa sagot at follow-up. Hiwalay ang private incident path.",
-            "Kung locked out, sundin ang sign-in at email-verification guides. Hindi tumatanggap ng guest ticket ang Help Center na ito."
+            "Gamitin ang My tickets para sa mga sagot at follow-up. Hiwalay ang pribadong incident path.",
+            "Kung locked out, subukan muna ang sign-in at email-verification guides. Kung hindi sapat, piliin ang Humingi ng tulong sa account nang hindi nag-si-sign in sa Help Center. Ilagay ang email na maaari mong buksan at ilarawan ang problema; walang attachment o password.",
+            "Kapag lumabas lang ang Request saved ay nakumpirmang na-save. Kung may error, panatilihin ang teksto at subukan muli. Hindi binubuksan ng form ang account at hindi ito My tickets."
           ],
           "notes": [
-            "Ang outbound sender address ay hindi patunay ng monitored inbound mailbox.",
+            "Para lamang sa account-access problems ang guest form. Kailangan pa ring naka-sign in para sa New issue, My tickets at privacy/incident request.",
+            "Ang outbound sender address ay hindi patunay ng monitored inbound mailbox. Hindi nagpapadala ng email ang guest form at walang garantisadong oras ng pagtugon.",
             "Gamitin ang Privacy & data rights category para sa angkop na data-rights request."
           ]
         }
@@ -4647,8 +4656,11 @@
     }
   ],
   "publicAccountAccessContact": {
-    "available": false,
-    "reason": "No monitored inbound account-access destination or guest ticket intake has been verified. See docs/notifications/EMAIL_DELIVERY_ARCHITECTURE_V1.md; inbound Support remains a separate gate."
+    "available": true,
+    "path": "/help/account-access",
+    "scope": "account-access-only",
+    "destination": "private-authorized-staff-queue",
+    "reason": "The same-origin guest form stores account-access requests in a private authorized staff queue after a confirmed successful save. It is not an inbound Support email mailbox, password reset, account ownership verification or a response-time promise. Availability requires the matching gateway release."
   },
   "troubleshooters": [
     {
