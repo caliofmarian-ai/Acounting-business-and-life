@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en-PH">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Account-access queue · Business &amp; Life</title><link rel="stylesheet" href="/account-access-assets/style.css"><script src="/account-access-assets/staff.js" defer></script></head>
+<body>
+<header><a class="brand" href="/">Business &amp; Life <small>Private support workspace</small></a><a href="/">Back to app</a></header>
+<main>
+<p class="eyebrow">AUTHORIZED STAFF ONLY</p><h1>Account-access requests</h1>
+<aside class="notice"><strong>Contact details are unverified</strong><p>Never grant access, reset credentials, change an email or approve a profile based only on a request here. Follow the existing identity-verification and recovery procedures. Triage does not send an email or alter an account.</p></aside>
+<div class="toolbar"><div><label for="filter">Status</label><select id="filter"><option value="new">New</option><option value="reviewing">Reviewing</option><option value="closed">Closed</option><option value="all">All</option></select></div><button id="refresh" type="button">Refresh queue</button></div>
+<p id="feedback" role="status" aria-live="polite" tabindex="-1"></p><ul id="queue" class="queue"></ul><button id="more" type="button" hidden>Load more</button>
+<section id="detail" hidden><h2 id="case-title"></h2><dl><dt>Contact email</dt><dd id="case-email"></dd><dt>Name</dt><dd id="case-name"></dd><dt>Reason</dt><dd id="case-reason"></dd><dt>Received</dt><dd id="case-created"></dd></dl><h3>Request</h3><p id="case-message" class="case-text"></p>
+<form id="triage"><label for="case-status">Triage status</label><select id="case-status"><option value="new">New</option><option value="reviewing">Reviewing</option><option value="closed">Closed</option></select><label for="case-note">Private staff note</label><textarea id="case-note" rows="4" maxlength="1000" aria-describedby="note-hint"></textarea><p id="note-hint" class="hint">Up to 1,000 characters. Never store passwords, one-time codes or identity documents here. This note is not sent to the requester.</p><button id="save" type="submit">Save triage</button></form></section>
+<noscript><p class="notice">Enable JavaScript to use this private queue.</p></noscript>
+<footer><a href="/">Return to app</a><a href="/help/account-access">Public account-access form</a></footer>
+</main></body></html>

@@ -248,3 +248,8 @@ summary{font-weight:700;cursor:pointer;padding:12px 0}
 @media(max-width:320px){.help-preferences label{flex-basis:100%}}
 
 .search-results-head{position:sticky;top:0;background:#fff;z-index:1;padding-bottom:6px}
+
+/* Accessible account-access route surfaced only for public Help and recovery guides. */
+.account-access-action{margin:20px 0 25px;padding:16px 18px;border:1px solid #bdded7;background:#f0faf7;border-radius:16px;display:grid;justify-items:start;gap:9px}
+.account-access-action a{max-width:100%;min-height:44px;overflow-wrap:anywhere}
+.account-access-action p{font-size:13px;color:#235b52;line-height:1.55;margin:0}
