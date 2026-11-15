@@ -15,26 +15,26 @@ function buildEicarPdfFixture(signature){
   // EmbeddedFiles name tree whose value is a direct Filespec dictionary.
   const embeddedFile=Buffer.from(String(signature),'ascii');
   const objects=[
-    Buffer.from('1 0 obj\\n<< /Producer (pypdf) >>\\nendobj\\n','ascii'),
-    Buffer.from('2 0 obj\\n<< /Type /Pages /Count 1 /Kids [4 0 R] >>\\nendobj\\n','ascii'),
-    Buffer.from('3 0 obj\\n<< /Type /Catalog /Pages 2 0 R /Names 6 0 R >>\\nendobj\\n','ascii'),
-    Buffer.from('4 0 obj\\n<< /Type /Page /Resources << >> /MediaBox [0 0 612 792] /Parent 2 0 R >>\\nendobj\\n','ascii'),
+    Buffer.from('1 0 obj\n<< /Producer (pypdf) >>\nendobj\n','ascii'),
+    Buffer.from('2 0 obj\n<< /Type /Pages /Count 1 /Kids [4 0 R] >>\nendobj\n','ascii'),
+    Buffer.from('3 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names 6 0 R >>\nendobj\n','ascii'),
+    Buffer.from('4 0 obj\n<< /Type /Page /Resources << >> /MediaBox [0 0 612 792] /Parent 2 0 R >>\nendobj\n','ascii'),
     Buffer.concat([
-      Buffer.from('5 0 obj\\n<< /Type /EmbeddedFile /Length '+embeddedFile.length+' >>\\nstream\\n','ascii'),
+      Buffer.from('5 0 obj\n<< /Type /EmbeddedFile /Length '+embeddedFile.length+' >>\nstream\n','ascii'),
       embeddedFile,
-      Buffer.from('\\nendstream\\nendobj\\n','ascii')
+      Buffer.from('\nendstream\nendobj\n','ascii')
     ]),
-    Buffer.from('6 0 obj\\n<< /EmbeddedFiles 7 0 R >>\\nendobj\\n','ascii'),
-    Buffer.from('7 0 obj\\n<< /Names [(eicar.com) << /Type /Filespec /F (eicar.com) /EF << /F 5 0 R >> >>] >>\\nendobj\\n','ascii')
+    Buffer.from('6 0 obj\n<< /EmbeddedFiles 7 0 R >>\nendobj\n','ascii'),
+    Buffer.from('7 0 obj\n<< /Names [(eicar.com) << /Type /Filespec /F (eicar.com) /EF << /F 5 0 R >> >>] >>\nendobj\n','ascii')
   ];
-  const header=Buffer.from('%PDF-1.3\\n%\\xE2\\xE3\\xCF\\xD3\\n','latin1');
+  const header=Buffer.from('%PDF-1.3\n%\xE2\xE3\xCF\xD3\n','latin1');
   const parts=[header],offsets=[0];
   let offset=header.length;
   for(const object of objects){offsets.push(offset);parts.push(object);offset+=object.length;}
   const xrefOffset=offset;
-  const xref='xref\\n0 '+(objects.length+1)+'\\n0000000000 65535 f \\n'+
-    offsets.slice(1).map(value=>String(value).padStart(10,'0')+' 00000 n \\n').join('');
-  const trailer='trailer\\n<< /Size '+(objects.length+1)+' /Root 3 0 R /Info 1 0 R >>\\nstartxref\\n'+xrefOffset+'\\n%%EOF\\n';
+  const xref='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n'+
+    offsets.slice(1).map(value=>String(value).padStart(10,'0')+' 00000 n \n').join('');
+  const trailer='trailer\n<< /Size '+(objects.length+1)+' /Root 3 0 R /Info 1 0 R >>\nstartxref\n'+xrefOffset+'\n%%EOF\n';
   return Buffer.concat([...parts,Buffer.from(xref+trailer,'ascii')]);
 }
 const eicarPdf='data:application/pdf;base64,'+buildEicarPdfFixture(eicarSignature).toString('base64');
