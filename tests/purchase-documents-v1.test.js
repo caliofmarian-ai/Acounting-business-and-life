@@ -910,19 +910,34 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     __purchaseDocuments856TestFixtures.eicarPdf.indexOf(',')+1
   ),'base64');
   const eicarSignature=Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*','ascii');
-  const embeddedFileOffset=eicarBytes.indexOf(Buffer.from('/Type /EmbeddedFile','ascii'));
-  const embeddedStreamStart=eicarBytes.indexOf(Buffer.from('stream\n','ascii'),embeddedFileOffset);
-  const embeddedStreamEnd=eicarBytes.indexOf(Buffer.from('\nendstream','ascii'),embeddedStreamStart);
-  const eicarSignatureOffset=eicarBytes.indexOf(eicarSignature);
-  assert.ok(eicarBytes.includes(Buffer.from('/EmbeddedFiles','ascii'))&&eicarBytes.includes(Buffer.from('/AF [6 0 R]','ascii')),
-    'decoded EICAR PDF exposes the test file as a catalog-associated attachment');
-  assert.ok(eicarBytes.includes(Buffer.from('/AFRelationship /Unspecified','ascii')),
-    'PDF attachment declares its standard associated-file relationship');
-  assert.ok(embeddedFileOffset>=0&&embeddedStreamStart>embeddedFileOffset&&embeddedStreamEnd>embeddedStreamStart&&
-    eicarSignatureOffset>embeddedStreamStart&&eicarSignatureOffset+eicarSignature.length<=embeddedStreamEnd,
-    'decoded EICAR PDF contains the complete scanner signature in its EmbeddedFile stream');
-  assert.ok(!eicarBytes.subarray(embeddedFileOffset,embeddedStreamStart).includes(Buffer.from('/Filter','ascii')),
-    'EICAR EmbeddedFile stream is uncompressed for ClamAV extraction');
+  const objectBody=number=>{
+    const marker=Buffer.from(number+' 0 obj\\n','ascii');
+    const start=eicarBytes.indexOf(marker);
+    const end=eicarBytes.indexOf(Buffer.from('endobj','ascii'),start);
+    assert.ok(start>=0&&end>start,'PDF object '+number+' is present');
+    return eicarBytes.subarray(start,end);
+  };
+  const catalog=objectBody(1),page=objectBody(3),fileSpec=objectBody(6),embedded=objectBody(7);
+  const names=objectBody(8),embeddedNames=objectBody(9);
+  assert.ok(catalog.includes(Buffer.from('/Names 8 0 R','ascii'))&&catalog.includes(Buffer.from('/AF [6 0 R]','ascii')),
+    'PDF catalog references the indirect name tree and associated file');
+  assert.ok(page.includes(Buffer.from('/Parent 2 0 R','ascii')),
+    'PDF page references the actual Pages object');
+  assert.ok(names.includes(Buffer.from('/EmbeddedFiles 9 0 R','ascii'))&&
+    embeddedNames.includes(Buffer.from('/Names [(eicar.com) 6 0 R]','ascii')),
+    'PDF EmbeddedFiles name tree uses indirect dictionaries and a file specification');
+  assert.ok(fileSpec.includes(Buffer.from('/AFRelationship /Data','ascii'))&&
+    fileSpec.includes(Buffer.from('/EF << /F 7 0 R /UF 7 0 R >>','ascii')),
+    'PDF file specification links the associated EmbeddedFile stream');
+  const embeddedStreamStart=embedded.indexOf(Buffer.from('stream\\n','ascii'));
+  const embeddedStreamEnd=embedded.indexOf(Buffer.from('\\nendstream','ascii'),embeddedStreamStart);
+  const eicarSignatureOffset=embedded.indexOf(eicarSignature);
+  assert.ok(embedded.includes(Buffer.from('/Type /EmbeddedFile','ascii'))&&
+    !embedded.includes(Buffer.from('/Filter','ascii'))&&
+    embeddedStreamStart>=0&&embeddedStreamEnd>embeddedStreamStart&&
+    eicarSignatureOffset>embeddedStreamStart&&
+    eicarSignatureOffset+eicarSignature.length<=embeddedStreamEnd,
+    'PDF contains the exact EICAR bytes in an uncompressed EmbeddedFile stream');
   assert.ok(qa.includes('scanWithClamAv(Buffer.from(eicarSignature'), 'authenticated wave retains the raw EICAR scanner control');
   assert.ok(qa.includes('scanWithClamAv(eicarPdfBytes'), 'authenticated wave scans the exact complete PDF bytes before upload');
   assert.ok(qa.includes("exact(fullPdfScan.status,'infected'"), 'full-PDF scanner control must pass before exercising the upload route');
