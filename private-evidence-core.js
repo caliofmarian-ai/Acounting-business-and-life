@@ -5,6 +5,21 @@ import {decodeVerifiedDataUrl} from './file-signature-core.js';
 const CLEAN_SCAN='clean';
 const QUARANTINED_SCAN='quarantined';
 const MAX_AUDIT_TEXT=240;
+const PRIVATE_EVIDENCE_PENDING_DELETE_PURPOSES = new Set([
+  'duplicate_upload_cleanup',
+  'failed_purchase_receipt_cleanup',
+  'duplicate_purchase_document_attachment_cleanup',
+  'failed_purchase_document_attachment_cleanup'
+]);
+const PRIVATE_EVIDENCE_QA_DELETE_PURPOSES = new Set([
+  'qa_856_previous_fixture_cleanup',
+  'qa_856_fixture_cleanup',
+  'qa_856_eicar_fixture_cleanup'
+]);
+const PRIVATE_EVIDENCE_DELETE_PURPOSES = new Set([
+  ...PRIVATE_EVIDENCE_PENDING_DELETE_PURPOSES,
+  ...PRIVATE_EVIDENCE_QA_DELETE_PURPOSES
+]);
 const EXTENSIONS=Object.freeze({
   'application/pdf':['pdf'],
   'image/jpeg':['jpg','jpeg'],
@@ -439,18 +454,159 @@ export async function readPrivateEvidence(db,{objectId,actorAccountId=null,purpo
   return{metadata,bytes};
 }
 
-export async function deletePrivateEvidence(db,{objectId,actorAccountId=null,purpose='delete',correlationId='',env=process.env}={}){
-  const q=await db.query('SELECT * FROM private_evidence_objects WHERE id=$1',[Number(objectId)]);
-  if(!q.rowCount)return false;
-  const metadata=q.rows[0],config=privateEvidenceConfig(env);
-  if(config.ready)await deleteObject(config,metadata.object_key).catch(()=>{});
-  await db.query(`
-    UPDATE private_evidence_objects
-       SET retention_state='deleted',scan_status='deleted',deleted_at=NOW(),updated_at=NOW()
-     WHERE id=$1
-  `,[Number(objectId)]);
-  await audit(db,{objectId,actorAccountId,action:'delete',purpose,sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'deleted',correlationId});
-  return true;
+function privateEvidenceDeletionAllowed(metadata,actorAccountId,purpose){
+  const actor=Number(actorAccountId);
+  const sameOwner=Number.isSafeInteger(actor)&&actor>0&&
+    Number(metadata?.owner_account_id)===actor&&
+    Number(metadata?.created_by_account_id)===actor;
+  if(!sameOwner)return false;
+  const sourceType=String(metadata?.source_type||'');
+  const sourceId=String(metadata?.source_id||'');
+  const fileName=String(metadata?.original_file_name||'');
+  const pending=(sourceType==='merchant_purchase_document'&&sourceId==='pending')||
+    sourceType==='merchant_purchase_document_attachment_pending';
+  if(pending){
+    if(PRIVATE_EVIDENCE_QA_DELETE_PURPOSES.has(purpose))return /^qa856-/i.test(fileName);
+    return PRIVATE_EVIDENCE_PENDING_DELETE_PURPOSES.has(purpose);
+  }
+  return PRIVATE_EVIDENCE_QA_DELETE_PURPOSES.has(purpose)&&
+    ['merchant_purchase_document','merchant_purchase_document_attachment'].includes(sourceType)&&
+    /^qa856-[a-z0-9-]+\.(?:png|jpe?g|pdf|webp)$/i.test(fileName);
+}
+
+async function withPrivateEvidenceDeleteTransaction(pool,label,work){
+  const client=await pool.connect();
+  let transactionStarted=false,commitAttempted=false,connectionUnsafe=false;
+  try{
+    try{await client.query('BEGIN');transactionStarted=true}
+    catch(error){connectionUnsafe=true;throw error}
+    const result=await work(client);
+    commitAttempted=true;
+    await client.query('COMMIT');
+    transactionStarted=false;
+    commitAttempted=false;
+    return result;
+  }catch(error){
+    if(commitAttempted)connectionUnsafe=true;
+    if(transactionStarted){
+      try{await client.query('ROLLBACK');transactionStarted=false}
+      catch{connectionUnsafe=true}
+    }
+    throw error;
+  }finally{
+    client.release(connectionUnsafe?new Error(label):undefined);
+  }
+}
+
+export async function deletePrivateEvidence(db,{objectId,actorAccountId=null,purpose='delete',correlationId='',env=process.env,deleteObjectFn=deleteObject}={}){
+  const id=Number(objectId);
+  if(!Number.isSafeInteger(id)||id<1)throw rejected('Private evidence identifier is invalid.','PRIVATE_EVIDENCE_ID_INVALID',400);
+  if(!db||typeof db.connect!=='function'){
+    throw serviceUnavailable('Private evidence deletion requires a pooled database connection.','PRIVATE_EVIDENCE_DELETE_POOL_REQUIRED');
+  }
+  const config=privateEvidenceConfig(env);
+  if(!config.ready){
+    throw serviceUnavailable('Private evidence object storage is not ready for cleanup.','PRIVATE_EVIDENCE_CONFIG_MISSING');
+  }
+  // The request marker is committed before object-store deletion. If S3 is
+  // temporarily unavailable, the object remains explicitly delete_requested
+  // (and unreadable), and a later bounded cleanup can retry the same intent.
+  const decision=await withPrivateEvidenceDeleteTransaction(
+    db,'UNSAFE_PRIVATE_EVIDENCE_DELETE_CHECK_CLIENT',async client=>{
+      const q=await client.query(
+        'SELECT * FROM private_evidence_objects WHERE id=$1 FOR UPDATE',[id]
+      );
+      if(!q.rowCount)return{missing:true};
+      const metadata=q.rows[0];
+      if(metadata.retention_state==='deleted')return{alreadyDeleted:true};
+      const deny=async(message,code,detail)=>{
+        await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+          sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'denied',
+          correlationId,detail});
+        return{error:rejected(message,code,409)};
+      };
+      if(metadata.retention_state==='hold'){
+        return deny('Private evidence is protected by a retention hold.',
+          'PRIVATE_EVIDENCE_RETENTION_HOLD','retention_hold');
+      }
+      if(!privateEvidenceDeletionAllowed(metadata,actorAccountId,purpose)){
+        return deny('Private evidence is not eligible for this cleanup operation.',
+          'PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED','cleanup_scope_denied');
+      }
+      if(metadata.retention_state==='active'){
+        const marked=await client.query(
+          "UPDATE private_evidence_objects SET retention_state='delete_requested',updated_at=clock_timestamp() WHERE id=$1 AND retention_state='active' RETURNING id",
+          [id]
+        );
+        if(!marked.rowCount){
+          return deny('Private evidence deletion state changed; retry after reconciliation.',
+            'PRIVATE_EVIDENCE_DELETE_STATE_CONFLICT','state_changed');
+        }
+        await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+          sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'allowed',
+          correlationId,detail:'delete_requested'});
+      }else if(metadata.retention_state==='delete_requested'){
+        const prior=await client.query(
+          "SELECT purpose FROM private_evidence_access_audit WHERE object_id=$1 AND action='delete' AND outcome='allowed' ORDER BY id DESC LIMIT 1",
+          [id]
+        );
+        if(!prior.rowCount||!PRIVATE_EVIDENCE_DELETE_PURPOSES.has(prior.rows[0].purpose)){
+          return deny('Private evidence deletion requires a recorded cleanup intent.',
+            'PRIVATE_EVIDENCE_DELETE_RECONCILIATION_REQUIRED','missing_delete_intent');
+        }
+      }else{
+        return deny('Private evidence is not in a deletable state.',
+          'PRIVATE_EVIDENCE_DELETE_STATE_CONFLICT','invalid_retention_state');
+      }
+      return{metadata};
+    }
+  );
+  if(decision.missing||decision.alreadyDeleted)return false;
+  if(decision.error)throw decision.error;
+  try{
+    await deleteObjectFn(config,decision.metadata.object_key);
+  }catch(error){
+    await audit(db,{objectId:id,actorAccountId,action:'delete',purpose,
+      sourceType:decision.metadata.source_type,sourceId:decision.metadata.source_id,
+      outcome:'failed',correlationId,detail:error?.code||'storage_failed'}).catch(()=>{});
+    throw error;
+  }
+  const finalized=await withPrivateEvidenceDeleteTransaction(
+    db,'UNSAFE_PRIVATE_EVIDENCE_DELETE_FINALIZE_CLIENT',async client=>{
+      const q=await client.query(
+        'SELECT * FROM private_evidence_objects WHERE id=$1 FOR UPDATE',[id]
+      );
+      if(!q.rowCount)return false;
+      const metadata=q.rows[0];
+      if(metadata.retention_state==='deleted')return false;
+      if(metadata.retention_state==='hold'){
+        await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+          sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'denied',
+          correlationId,detail:'retention_hold_during_finalize'});
+        return{error:rejected('Private evidence is protected by a retention hold.',
+          'PRIVATE_EVIDENCE_RETENTION_HOLD',409)};
+      }
+      if(metadata.retention_state!=='delete_requested'){
+        await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+          sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'denied',
+          correlationId,detail:'delete_state_changed_during_finalize'});
+        return{error:rejected('Private evidence deletion state changed; retry after reconciliation.',
+          'PRIVATE_EVIDENCE_DELETE_STATE_CONFLICT',409)};
+      }
+      const updated=await client.query(
+        "UPDATE private_evidence_objects SET retention_state='deleted',scan_status='deleted',deleted_at=COALESCE(deleted_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=$1 AND retention_state='delete_requested' RETURNING id",
+        [id]
+      );
+      if(!updated.rowCount)throw rejected('Private evidence deletion could not be finalized.',
+        'PRIVATE_EVIDENCE_DELETE_STATE_CONFLICT',409);
+      await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+        sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'deleted',
+        correlationId,detail:'storage_deleted'});
+      return true;
+    }
+  );
+  if(finalized?.error)throw finalized.error;
+  return finalized===true;
 }
 
 export function sendPrivateEvidence(res,{metadata,bytes}){

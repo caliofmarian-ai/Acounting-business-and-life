@@ -197,6 +197,46 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     const fileId=Number(uploaded.json?.document?.id);
     const originalObject=await pool.query('SELECT private_evidence_object_id FROM merchant_purchase_documents WHERE id=$1 AND business_id=$2',[fileId,a]);
     truth(Number(originalObject.rows[0]?.private_evidence_object_id)>0,'original private object is linked');
+    const originalObjectId=Number(originalObject.rows[0]?.private_evidence_object_id);
+    const originalEvidenceState=await pool.query(
+      'SELECT id,owner_account_id,created_by_account_id,source_type,source_id,original_file_name,retention_state FROM private_evidence_objects WHERE id=$1',
+      [originalObjectId]
+    );
+    exact(originalEvidenceState.rowCount,1,'original evidence metadata is present');
+    exact(originalEvidenceState.rows[0]?.source_type,'merchant_purchase_document','original is bound to the receipt');
+    exact(originalEvidenceState.rows[0]?.source_id,String(fileId),'original source is the exact receipt ID');
+    exact(Number(originalEvidenceState.rows[0]?.owner_account_id),merchant.accountId,'original object belongs to the authenticated Merchant');
+    await assert.rejects(
+      ()=>deletePrivateEvidence(pool,{objectId:originalObjectId,actorAccountId:merchant.accountId,purpose:'failed_purchase_receipt_cleanup'}),
+      error=>error?.status===409&&error?.code==='PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED'
+    );
+    checks++;
+    exact((await pool.query('SELECT retention_state FROM private_evidence_objects WHERE id=$1',[originalObjectId])).rows[0]?.retention_state,
+      'active','bound original survives failed-upload cleanup');
+    const holdApplied=await pool.query(
+      "UPDATE private_evidence_objects SET retention_state='hold',updated_at=NOW() WHERE id=$1 AND owner_account_id=$2 AND source_type='merchant_purchase_document' AND source_id=$3 AND retention_state='active' RETURNING id",
+      [originalObjectId,merchant.accountId,String(fileId)]
+    );
+    exact(holdApplied.rowCount,1,'isolated QA hold fixture is applied');
+    try{
+      await assert.rejects(
+        ()=>deletePrivateEvidence(pool,{objectId:originalObjectId,actorAccountId:merchant.accountId,purpose:'qa_856_fixture_cleanup'}),
+        error=>error?.status===409&&error?.code==='PRIVATE_EVIDENCE_RETENTION_HOLD'
+      );
+      checks++;
+    }finally{
+      const holdRestored=await pool.query(
+        "UPDATE private_evidence_objects SET retention_state='active',updated_at=NOW() WHERE id=$1 AND owner_account_id=$2 AND retention_state='hold' RETURNING id",
+        [originalObjectId,merchant.accountId]
+      );
+      exact(holdRestored.rowCount,1,'isolated QA hold fixture is restored');
+    }
+    const deletionDenials=await pool.query(
+      "SELECT COUNT(*)::int n FROM private_evidence_access_audit WHERE object_id=$1 AND actor_account_id=$2 AND action='delete' AND outcome='denied'",
+      [originalObjectId,merchant.accountId]
+    );
+    exact(deletionDenials.rows[0]?.n,2,'bound and held deletion denials are audited');
+
     const file=await requestBinary(base,'/api/procurement/purchase-documents/'+fileId+'/file?business_id='+a,{token:merchant.token});
     exact(file.status,200,'authorized original download');
     exact(file.headers.get('cache-control'),'private, no-store, max-age=0','no-store original');
@@ -556,5 +596,6 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     supplementary_evidence_cleanup:true,economic_records_unchanged:true,
     exact_amount_date_denials:true,jpeg_upload_download:true,pdf_upload_download:true,
     extension_mismatch_denied:true,unsupported_mime_denied:true,oversized_file_denied:true,
-    malware_quarantine_cleanup:true,wrong_profile_denied:true,fixtures_removed:cleaned};
+    malware_quarantine_cleanup:true,wrong_profile_denied:true,retention_hold_respected:true,
+    bound_purchase_evidence_preserved:true,fixtures_removed:cleaned};
 }
