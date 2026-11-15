@@ -203,6 +203,23 @@ async function scopedDocument(pool,id,businessId){
   return q.rows[0];
 }
 
+// A scoped receipt row is not sufficient by itself: its original object must
+// still belong to the creator and carry this exact receipt's immutable source
+// binding before any private bytes are read.
+async function originalPurchaseDocumentEvidenceObjectId(pool,doc){
+  const objectId=positiveId(doc?.private_evidence_object_id,'Private evidence identifier');
+  const ownerAccountId=positiveId(doc?.created_by_account_id,'Receipt owner');
+  const documentId=positiveId(doc?.id,'Document identifier');
+  const bound=await pool.query(`
+    SELECT id FROM private_evidence_objects
+     WHERE id=$1 AND owner_account_id=$2
+       AND source_type='merchant_purchase_document'
+       AND source_id=$3
+  `,[objectId,ownerAccountId,String(documentId)]);
+  if(!bound.rowCount)throw error(404,'Scanned original not found');
+  return bound.rows[0].id;
+}
+
 // Lock the *current* Merchant grant after scanning and before the final write.
 // FOR SHARE serializes a simultaneous binding/membership revocation with receipt commit.
 // The initial request authorization alone is not sufficient across a slow private upload.
@@ -785,8 +802,9 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
       const {me,businessId}=await requireMerchantDocumentBusiness(pool,identity,req);
       const doc=await scopedDocument(pool,req.params.id,businessId);
       if(!doc.private_evidence_object_id)throw error(404,'No scanned original is attached');
+      const objectId=await originalPurchaseDocumentEvidenceObjectId(pool,doc);
       const file=await readPrivateEvidence(pool,{
-        objectId:doc.private_evidence_object_id,actorAccountId:me.account.id,
+        objectId,actorAccountId:me.account.id,
         purpose:'merchant_purchase_document_download'
       });
       sendPrivateEvidence(res,file);
@@ -797,5 +815,6 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
 export const merchantPurchaseDocumentInternals={
   validatePurchaseLinks,savePurchaseDocument,lockMerchantDocumentWriteAuthority,
   updatePurchaseDocumentMetadata,metadataSnapshot,
-  normalizeMerchantPurchaseDocumentEvidence,appendPurchaseDocumentEvidence
+  normalizeMerchantPurchaseDocumentEvidence,appendPurchaseDocumentEvidence,
+  originalPurchaseDocumentEvidenceObjectId
 };

@@ -241,6 +241,58 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(file.status,200,'authorized original download');
     exact(file.headers.get('cache-control'),'private, no-store, max-age=0','no-store original');
     truth(file.bytes.length>8&&file.bytes.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')),'genuine PNG signature');
+
+    // Synthetic database-pointer corruption: even an authorized Merchant A
+    // must not download a valid private original that is bound to receipt B.
+    const foreignOriginalName='qa856-foreign-original-'+marker+'.jpg';
+    documentFileNames.add(foreignOriginalName);cleanupFileNames.add(foreignOriginalName);
+    await select(b);
+    const foreignOriginal=await post('/api/procurement/purchase-documents',
+      payload(b,newKey(),{file_name:foreignOriginalName,data_url:jpeg}));
+    exact(foreignOriginal.status,201,'B synthetic original receipt is created');
+    const foreignOriginalId=Number(foreignOriginal.json?.document?.id);
+    truth(Number.isSafeInteger(foreignOriginalId)&&foreignOriginalId>0,'B synthetic original receipt ID');
+    const foreignOriginalObject=await pool.query(`
+      SELECT d.private_evidence_object_id,p.owner_account_id,p.source_type,p.source_id
+        FROM merchant_purchase_documents d
+        JOIN private_evidence_objects p ON p.id=d.private_evidence_object_id
+       WHERE d.id=$1 AND d.business_id=$2 AND p.owner_account_id=$3
+         AND p.source_type='merchant_purchase_document'
+    `,[foreignOriginalId,b,merchant.accountId]);
+    exact(foreignOriginalObject.rowCount,1,'B original is a valid Merchant-owned private object');
+    exact(foreignOriginalObject.rows[0]?.source_id,String(foreignOriginalId),'B object is bound to B receipt');
+    const foreignObjectId=Number(foreignOriginalObject.rows[0]?.private_evidence_object_id);
+    truth(Number.isSafeInteger(foreignObjectId)&&foreignObjectId>0&&foreignObjectId!==originalObjectId,
+      'B original is a different private object');
+    const foreignFile=await requestBinary(base,'/api/procurement/purchase-documents/'+foreignOriginalId+'/file?business_id='+b,{token:merchant.token});
+    exact(foreignFile.status,200,'B can download its own original');
+    truth(foreignFile.bytes.subarray(0,3).equals(Buffer.from([0xff,0xd8,0xff])),'B original is a valid JPEG');
+
+    await select(a);
+    let pointerSwapped=false;
+    try{
+      const swapped=await pool.query(
+        'UPDATE merchant_purchase_documents SET private_evidence_object_id=$1 WHERE id=$2 AND business_id=$3 AND private_evidence_object_id=$4 RETURNING id',
+        [foreignObjectId,fileId,a,originalObjectId]
+      );
+      exact(swapped.rowCount,1,'synthetic foreign original pointer is installed');
+      pointerSwapped=true;
+      const foreignPointerDownload=await requestBinary(base,'/api/procurement/purchase-documents/'+fileId+'/file?business_id='+a,{token:merchant.token});
+      exact(foreignPointerDownload.status,404,'A original download rejects an object bound to B receipt');
+    }finally{
+      if(pointerSwapped){
+        const restoredPointer=await pool.query(
+          'UPDATE merchant_purchase_documents SET private_evidence_object_id=$1 WHERE id=$2 AND business_id=$3 AND private_evidence_object_id=$4 RETURNING id',
+          [originalObjectId,fileId,a,foreignObjectId]
+        );
+        exact(restoredPointer.rowCount,1,'original pointer is restored after synthetic IDOR probe');
+      }
+    }
+    const originalAfterPointerProbe=await requestBinary(base,'/api/procurement/purchase-documents/'+fileId+'/file?business_id='+a,{token:merchant.token});
+    exact(originalAfterPointerProbe.status,200,'A original remains downloadable after pointer restoration');
+    truth(originalAfterPointerProbe.bytes.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')),
+      'A original bytes are restored after the synthetic IDOR probe');
+
     const uploadReplay=await post('/api/procurement/purchase-documents',fileInput);
     exact(uploadReplay.status,200,'scanned original idempotent retry');
     exact(uploadReplay.json?.already_saved,true,'replay must not upload a second original');
@@ -597,5 +649,5 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact_amount_date_denials:true,jpeg_upload_download:true,pdf_upload_download:true,
     extension_mismatch_denied:true,unsupported_mime_denied:true,oversized_file_denied:true,
     malware_quarantine_cleanup:true,wrong_profile_denied:true,retention_hold_respected:true,
-    bound_purchase_evidence_preserved:true,fixtures_removed:cleaned};
+    bound_purchase_evidence_preserved:true,original_evidence_exact_binding:true,fixtures_removed:cleaned};
 }
