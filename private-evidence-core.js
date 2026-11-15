@@ -5,6 +5,43 @@ import {decodeVerifiedDataUrl} from './file-signature-core.js';
 const CLEAN_SCAN='clean';
 const QUARANTINED_SCAN='quarantined';
 const MAX_AUDIT_TEXT=240;
+const PRIVATE_EVIDENCE_PURCHASE_DELETE_PURPOSES = new Map([
+  ['merchant_purchase_document',new Set([
+    'duplicate_upload_cleanup',
+    'failed_purchase_receipt_cleanup'
+  ])],
+  ['merchant_purchase_document_attachment_pending',new Set([
+    'duplicate_purchase_document_attachment_cleanup',
+    'failed_purchase_document_attachment_cleanup'
+  ])]
+]);
+const PRIVATE_EVIDENCE_QA_DELETE_PURPOSES = new Set([
+  'qa_856_previous_fixture_cleanup',
+  'qa_856_fixture_cleanup',
+  'qa_856_eicar_fixture_cleanup'
+]);
+const PRIVATE_EVIDENCE_MIGRATION_SOURCE_TYPES = new Set([
+  'incident_attachment','support_attachment','courier_document',
+  'profile_application_document','service_credential','service_provider_cv'
+]);
+const PRIVATE_EVIDENCE_NON_PURCHASE_DELETE_POLICIES = new Map([
+  ['service_provider_cv_replaced',{sourceType:'service_provider_cv',storedPurpose:'service_provider_cv_upload',identity:'owner_creator',sourceIdActor:true}],
+  ['service_provider_cv_rollback',{sourceType:'service_provider_cv',storedPurpose:'service_provider_cv_upload',identity:'owner_creator',sourceIdActor:true}],
+  ['service_credential_rollback',{sourceType:'service_credential',storedPurpose:'service_credential_upload',identity:'owner_creator'}],
+  ['incident_source_rollback',{sourceType:'incident_attachment',storedPurpose:'incident_evidence_upload',identity:'owner_creator'}],
+  ['courier_document_rollback',{sourceType:'courier_document',storedPurpose:'courier_document_upload',identity:'owner_creator'}],
+  ['delivery_proof_rollback',{sourceType:'delivery_proof',storedPurpose:['delivery_pickup_proof_upload','delivery_delivery_proof_upload'],identity:'owner_creator'}],
+  ['support_ticket_rollback',{sourceType:'support_attachment',storedPurpose:'support_attachment_upload',identity:'owner_creator'}],
+  ['profile_application_document_rollback',{sourceType:'profile_application_document',storedPurpose:'profile_application_document_upload',identity:'owner_creator_or_null'}],
+  ['controlled_courier_fixture_rollback',{sourceType:'courier_document',storedPurpose:'controlled_courier_fixture_evidence',identity:'creator',fileName:'controlled-courier-vehicle-attestation.pdf'}],
+  ['legacy_private_evidence_migration_race_cleanup',{sourceTypes:PRIVATE_EVIDENCE_MIGRATION_SOURCE_TYPES,storedPurpose:'legacy_private_evidence_migration',identity:'migration'}],
+  ['legacy_private_evidence_migration_rollback',{sourceTypes:PRIVATE_EVIDENCE_MIGRATION_SOURCE_TYPES,storedPurpose:'legacy_private_evidence_migration',identity:'migration'}]
+]);
+const PRIVATE_EVIDENCE_DELETE_PURPOSES = new Set([
+  ...[...PRIVATE_EVIDENCE_PURCHASE_DELETE_PURPOSES.values()].flatMap(purposes=>[...purposes]),
+  ...PRIVATE_EVIDENCE_QA_DELETE_PURPOSES,
+  ...PRIVATE_EVIDENCE_NON_PURCHASE_DELETE_POLICIES.keys()
+]);
 const EXTENSIONS=Object.freeze({
   'application/pdf':['pdf'],
   'image/jpeg':['jpg','jpeg'],
@@ -439,18 +476,200 @@ export async function readPrivateEvidence(db,{objectId,actorAccountId=null,purpo
   return{metadata,bytes};
 }
 
-export async function deletePrivateEvidence(db,{objectId,actorAccountId=null,purpose='delete',correlationId='',env=process.env}={}){
-  const q=await db.query('SELECT * FROM private_evidence_objects WHERE id=$1',[Number(objectId)]);
-  if(!q.rowCount)return false;
-  const metadata=q.rows[0],config=privateEvidenceConfig(env);
-  if(config.ready)await deleteObject(config,metadata.object_key).catch(()=>{});
-  await db.query(`
-    UPDATE private_evidence_objects
-       SET retention_state='deleted',scan_status='deleted',deleted_at=NOW(),updated_at=NOW()
-     WHERE id=$1
-  `,[Number(objectId)]);
-  await audit(db,{objectId,actorAccountId,action:'delete',purpose,sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'deleted',correlationId});
-  return true;
+function privateEvidenceDeletionAllowed(metadata,actorAccountId,purpose){
+  const sourceType=String(metadata?.source_type||'');
+  const sourceId=String(metadata?.source_id||'');
+  const fileName=String(metadata?.original_file_name||'');
+  const actorProvided=actorAccountId!==null&&actorAccountId!==undefined&&String(actorAccountId).trim()!=='';
+  const actor=Number(actorAccountId);
+  const owner=Number(metadata?.owner_account_id);
+  const creator=Number(metadata?.created_by_account_id);
+  const sameOwner=actorProvided&&Number.isSafeInteger(actor)&&actor>0&&owner===actor&&creator===actor;
+  const qaPurpose=PRIVATE_EVIDENCE_QA_DELETE_PURPOSES.has(purpose);
+  const qaPendingName=/^qa856-/i.test(fileName);
+  const qaBoundName=/^qa856-[a-z0-9-]+\.(?:png|jpe?g|pdf|webp)$/i.test(fileName);
+
+  if(sourceType==='merchant_purchase_document'){
+    if(!sameOwner)return false;
+    if(sourceId==='pending'){
+      return qaPurpose?qaPendingName:(PRIVATE_EVIDENCE_PURCHASE_DELETE_PURPOSES.get(sourceType)?.has(purpose)===true);
+    }
+    return qaPurpose&&qaBoundName;
+  }
+  if(sourceType==='merchant_purchase_document_attachment_pending'){
+    if(!sameOwner)return false;
+    return qaPurpose?qaPendingName:(PRIVATE_EVIDENCE_PURCHASE_DELETE_PURPOSES.get(sourceType)?.has(purpose)===true);
+  }
+  if(sourceType==='merchant_purchase_document_attachment'){
+    return sameOwner&&qaPurpose&&qaBoundName;
+  }
+
+  const policy=PRIVATE_EVIDENCE_NON_PURCHASE_DELETE_POLICIES.get(purpose);
+  if(!policy)return false;
+  const sourceAllowed=policy.sourceTypes
+    ?policy.sourceTypes.has(sourceType)
+    :policy.sourceType===sourceType;
+  if(!sourceAllowed)return false;
+  const storedPurposeAllowed=Array.isArray(policy.storedPurpose)
+    ?policy.storedPurpose.includes(metadata?.purpose)
+    :metadata?.purpose===policy.storedPurpose;
+  if(!storedPurposeAllowed)return false;
+  const validSourceId=/^(?:pending:[0-9]+|[1-9][0-9]*)$/.test(sourceId);
+  if(!validSourceId)return false;
+
+  if(policy.identity==='owner_creator'){
+    if(!actorProvided||!Number.isSafeInteger(actor)||actor<1||owner!==actor||creator!==actor)return false;
+    if(policy.sourceIdActor&&sourceId!==String(actor))return false;
+    return true;
+  }
+  if(policy.identity==='owner_creator_or_null'){
+    if(!Number.isSafeInteger(owner)||owner<1||creator!==owner)return false;
+    return !actorProvided||(Number.isSafeInteger(actor)&&actor===owner);
+  }
+  if(policy.identity==='creator'){
+    if(!actorProvided||!Number.isSafeInteger(actor)||actor<1||creator!==actor||!Number.isSafeInteger(owner)||owner<1)return false;
+    return fileName===policy.fileName&&(sourceId===`pending:${owner}`||/^[1-9][0-9]*$/.test(sourceId));
+  }
+  if(policy.identity==='migration'){
+    return !actorProvided&&metadata?.created_by_account_id==null&&
+      metadata?.purpose==='legacy_private_evidence_migration';
+  }
+  return false;
+}
+
+async function withPrivateEvidenceDeleteTransaction(pool,label,work){
+  const client=await pool.connect();
+  let transactionStarted=false,commitAttempted=false,connectionUnsafe=false;
+  try{
+    try{await client.query('BEGIN');transactionStarted=true}
+    catch(error){connectionUnsafe=true;throw error}
+    const result=await work(client);
+    commitAttempted=true;
+    await client.query('COMMIT');
+    transactionStarted=false;
+    commitAttempted=false;
+    return result;
+  }catch(error){
+    if(commitAttempted)connectionUnsafe=true;
+    if(transactionStarted){
+      try{await client.query('ROLLBACK');transactionStarted=false}
+      catch{connectionUnsafe=true}
+    }
+    throw error;
+  }finally{
+    client.release(connectionUnsafe?new Error(label):undefined);
+  }
+}
+
+export async function deletePrivateEvidence(db,{objectId,actorAccountId=null,purpose='delete',correlationId='',env=process.env,deleteObjectFn=deleteObject}={}){
+  const id=Number(objectId);
+  if(!Number.isSafeInteger(id)||id<1)throw rejected('Private evidence identifier is invalid.','PRIVATE_EVIDENCE_ID_INVALID',400);
+  if(!db||typeof db.connect!=='function'){
+    throw serviceUnavailable('Private evidence deletion requires a pooled database connection.','PRIVATE_EVIDENCE_DELETE_POOL_REQUIRED');
+  }
+  const config=privateEvidenceConfig(env);
+  if(!config.ready){
+    throw serviceUnavailable('Private evidence object storage is not ready for cleanup.','PRIVATE_EVIDENCE_CONFIG_MISSING');
+  }
+  // The request marker is committed before object-store deletion. If S3 is
+  // temporarily unavailable, the object remains explicitly delete_requested
+  // (and unreadable), and a later bounded cleanup can retry the same intent.
+  const decision=await withPrivateEvidenceDeleteTransaction(
+    db,'UNSAFE_PRIVATE_EVIDENCE_DELETE_CHECK_CLIENT',async client=>{
+      const q=await client.query(
+        'SELECT * FROM private_evidence_objects WHERE id=$1 FOR UPDATE',[id]
+      );
+      if(!q.rowCount)return{missing:true};
+      const metadata=q.rows[0];
+      if(metadata.retention_state==='deleted')return{alreadyDeleted:true};
+      const deny=async(message,code,detail)=>{
+        await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+          sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'denied',
+          correlationId,detail});
+        return{error:rejected(message,code,409)};
+      };
+      if(metadata.retention_state==='hold'){
+        return deny('Private evidence is protected by a retention hold.',
+          'PRIVATE_EVIDENCE_RETENTION_HOLD','retention_hold');
+      }
+      if(!privateEvidenceDeletionAllowed(metadata,actorAccountId,purpose)){
+        return deny('Private evidence is not eligible for this cleanup operation.',
+          'PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED','cleanup_scope_denied');
+      }
+      if(metadata.retention_state==='active'){
+        const marked=await client.query(
+          "UPDATE private_evidence_objects SET retention_state='delete_requested',updated_at=clock_timestamp() WHERE id=$1 AND retention_state='active' RETURNING id",
+          [id]
+        );
+        if(!marked.rowCount){
+          return deny('Private evidence deletion state changed; retry after reconciliation.',
+            'PRIVATE_EVIDENCE_DELETE_STATE_CONFLICT','state_changed');
+        }
+        await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+          sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'allowed',
+          correlationId,detail:'delete_requested'});
+      }else if(metadata.retention_state==='delete_requested'){
+        const prior=await client.query(
+          "SELECT purpose FROM private_evidence_access_audit WHERE object_id=$1 AND action='delete' AND outcome='allowed' ORDER BY id DESC LIMIT 1",
+          [id]
+        );
+        if(!prior.rowCount||prior.rows[0].purpose!==purpose||!PRIVATE_EVIDENCE_DELETE_PURPOSES.has(prior.rows[0].purpose)){
+          return deny('Private evidence deletion requires a recorded cleanup intent.',
+            'PRIVATE_EVIDENCE_DELETE_RECONCILIATION_REQUIRED','missing_delete_intent');
+        }
+      }else{
+        return deny('Private evidence is not in a deletable state.',
+          'PRIVATE_EVIDENCE_DELETE_STATE_CONFLICT','invalid_retention_state');
+      }
+      return{metadata};
+    }
+  );
+  if(decision.missing||decision.alreadyDeleted)return false;
+  if(decision.error)throw decision.error;
+  try{
+    await deleteObjectFn(config,decision.metadata.object_key);
+  }catch(error){
+    await audit(db,{objectId:id,actorAccountId,action:'delete',purpose,
+      sourceType:decision.metadata.source_type,sourceId:decision.metadata.source_id,
+      outcome:'failed',correlationId,detail:error?.code||'storage_failed'}).catch(()=>{});
+    throw error;
+  }
+  const finalized=await withPrivateEvidenceDeleteTransaction(
+    db,'UNSAFE_PRIVATE_EVIDENCE_DELETE_FINALIZE_CLIENT',async client=>{
+      const q=await client.query(
+        'SELECT * FROM private_evidence_objects WHERE id=$1 FOR UPDATE',[id]
+      );
+      if(!q.rowCount)return false;
+      const metadata=q.rows[0];
+      if(metadata.retention_state==='deleted')return false;
+      if(metadata.retention_state==='hold'){
+        await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+          sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'denied',
+          correlationId,detail:'retention_hold_during_finalize'});
+        return{error:rejected('Private evidence is protected by a retention hold.',
+          'PRIVATE_EVIDENCE_RETENTION_HOLD',409)};
+      }
+      if(metadata.retention_state!=='delete_requested'){
+        await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+          sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'denied',
+          correlationId,detail:'delete_state_changed_during_finalize'});
+        return{error:rejected('Private evidence deletion state changed; retry after reconciliation.',
+          'PRIVATE_EVIDENCE_DELETE_STATE_CONFLICT',409)};
+      }
+      const updated=await client.query(
+        "UPDATE private_evidence_objects SET retention_state='deleted',scan_status='deleted',deleted_at=COALESCE(deleted_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=$1 AND retention_state='delete_requested' RETURNING id",
+        [id]
+      );
+      if(!updated.rowCount)throw rejected('Private evidence deletion could not be finalized.',
+        'PRIVATE_EVIDENCE_DELETE_STATE_CONFLICT',409);
+      await audit(client,{objectId:id,actorAccountId,action:'delete',purpose,
+        sourceType:metadata.source_type,sourceId:metadata.source_id,outcome:'deleted',
+        correlationId,detail:'storage_deleted'});
+      return true;
+    }
+  );
+  if(finalized?.error)throw finalized.error;
+  return finalized===true;
 }
 
 export function sendPrivateEvidence(res,{metadata,bytes}){

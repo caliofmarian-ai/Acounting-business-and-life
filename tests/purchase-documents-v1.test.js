@@ -960,6 +960,10 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     "exact(wrongProfileArchive.status,403",
     "exact(wrongProfileWrite.status,403",
     "scan_status,'quarantined'",
-    "malware_quarantine_cleanup:true"
+    "malware_quarantine_cleanup:true",
+    "PRIVATE_EVIDENCE_RETENTION_HOLD",
+    "PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED",
+    "retention_hold_respected:true",
+    "bound_purchase_evidence_preserved:true"
   ])assert.ok(qa.includes(fragment),'authenticated receipt acceptance is missing '+fragment);
 });
