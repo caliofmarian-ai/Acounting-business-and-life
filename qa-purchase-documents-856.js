@@ -132,7 +132,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     truth(Number.isSafeInteger(id)&&id>0,'synthetic purchase order '+suffix);
     return id;
   };
-  const makeInvoice=async(poId,suffix)=>{
+  const makeInvoice=async(poId,businessId,suffix)=>{
     const result=await post('/api/procurement/orders/'+poId+'/invoices',{
       document_number:'QA856-INV-'+marker.slice(0,8)+'-'+suffix,
       document_kind:'invoice',issue_date:'2026-11-15',gross_amount:12.34,currency_code:'PHP',
@@ -140,6 +140,8 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
       note:'No real purchase or payment'
     });
     exact(result.status,201,'synthetic Supplier invoice '+suffix);
+    exact(Number(result.json?.business_id),businessId,'invoice belongs to the selected QA business');
+    exact(Number(result.json?.purchase_order_id),poId,'invoice remains bound to the exact QA PO');
     const id=Number(result.json?.id);
     truth(Number.isSafeInteger(id)&&id>0,'synthetic Supplier invoice ID '+suffix);
     return id;
@@ -218,10 +220,10 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     // original-file receipt linked to the exact invoice and PO, without creating
     // another purchase, stock movement or expense.
     const poA=await makePurchaseOrder(a,'A');
-    const invoiceA=await makeInvoice(poA,'A');
+    const invoiceA=await makeInvoice(poA,a,'A');
     await select(b);
     const poB=await makePurchaseOrder(b,'B');
-    const invoiceB=await makeInvoice(poB,'B');
+    const invoiceB=await makeInvoice(poB,b,'B');
     await select(a);
     const invoiceFileName='qa856-invoice-'+marker+'.png';
     documentFileNames.add(invoiceFileName);cleanupFileNames.add(invoiceFileName);
@@ -632,7 +634,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(restoredDetail.status,200,'A receipt detail is available after switching back');
     exact(restoredDetail.json?.supplementary_evidence?.length,1,'A supporting file remains attached after context switch');
     const persisted=await pool.query('SELECT COUNT(*)::int n FROM merchant_purchase_documents WHERE business_id=$1',[a]);
-    exact(persisted.rows[0]?.n,4,'metadata, PNG, JPEG and PDF receipt documents persisted');
+    exact(persisted.rows[0]?.n,5,'metadata, invoice PNG, receipt PNG, JPEG and PDF receipt documents persisted');
   }catch(error){problem=error;console.error('QA 856 assertion failure:',safeMessage(error))}
   finally{
     try{
@@ -692,6 +694,8 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
         await pool.query('DELETE FROM merchant_purchase_document_metadata_audit WHERE business_id=$1',[id]);
         await pool.query('DELETE FROM merchant_purchase_document_links WHERE document_id IN (SELECT id FROM merchant_purchase_documents WHERE business_id=$1)',[id]);
         await pool.query('DELETE FROM merchant_purchase_documents WHERE business_id=$1',[id]);
+        await pool.query('DELETE FROM purchase_invoice_evidence WHERE business_id=$1',[id]);
+        await pool.query('DELETE FROM purchase_orders WHERE business_id=$1',[id]);
         for(const row of docs.rows){
           if(!row.private_evidence_object_id)continue;
           const objectId=Number(row.private_evidence_object_id);
