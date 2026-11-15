@@ -13,35 +13,35 @@ const eicarSignature='X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST
 function buildEicarPdfFixture(signature){
   // ClamAV extracts PDF attachments through the catalog's indirect EmbeddedFiles
   // name tree. Keep every reference valid and the EmbeddedFile stream uncompressed.
-  const page=Buffer.from('BT /F1 12 Tf 72 720 Td (Controlled QA receipt PDF) Tj ET\\n','ascii');
+  const page=Buffer.from('BT /F1 12 Tf 72 720 Td (Controlled QA receipt PDF) Tj ET\n','ascii');
   const embeddedFile=Buffer.from(String(signature),'ascii');
   const objects=[
-    Buffer.from('1 0 obj\\n<< /Type /Catalog /Pages 2 0 R /Names 8 0 R /AF [6 0 R] /PageMode /UseAttachments >>\\nendobj\\n','ascii'),
-    Buffer.from('2 0 obj\\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\\nendobj\\n','ascii'),
-    Buffer.from('3 0 obj\\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\\nendobj\\n','ascii'),
+    Buffer.from('1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names 8 0 R /AF [6 0 R] /PageMode /UseAttachments >>\nendobj\n','ascii'),
+    Buffer.from('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n','ascii'),
+    Buffer.from('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n','ascii'),
     Buffer.concat([
-      Buffer.from('4 0 obj\\n<< /Length '+page.length+' >>\\nstream\\n','ascii'),
+      Buffer.from('4 0 obj\n<< /Length '+page.length+' >>\nstream\n','ascii'),
       page,
-      Buffer.from('endstream\\nendobj\\n','ascii')
+      Buffer.from('endstream\nendobj\n','ascii')
     ]),
-    Buffer.from('5 0 obj\\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\\nendobj\\n','ascii'),
-    Buffer.from('6 0 obj\\n<< /Type /Filespec /F (eicar.com) /UF (eicar.com) /Desc (Harmless EICAR test file) /AFRelationship /Data /EF << /F 7 0 R /UF 7 0 R >> >>\\nendobj\\n','ascii'),
+    Buffer.from('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n','ascii'),
+    Buffer.from('6 0 obj\n<< /Type /Filespec /F (eicar.com) /UF (eicar.com) /Desc (Harmless EICAR test file) /AFRelationship /Data /EF << /F 7 0 R /UF 7 0 R >> >>\nendobj\n','ascii'),
     Buffer.concat([
-      Buffer.from('7 0 obj\\n<< /Type /EmbeddedFile /Subtype /application#2Foctet-stream /Params << /Size '+embeddedFile.length+' >> /Length '+embeddedFile.length+' >>\\nstream\\n','ascii'),
+      Buffer.from('7 0 obj\n<< /Type /EmbeddedFile /Subtype /application#2Foctet-stream /Params << /Size '+embeddedFile.length+' >> /Length '+embeddedFile.length+' >>\nstream\n','ascii'),
       embeddedFile,
-      Buffer.from('\\nendstream\\nendobj\\n','ascii')
+      Buffer.from('\nendstream\nendobj\n','ascii')
     ]),
-    Buffer.from('8 0 obj\\n<< /EmbeddedFiles 9 0 R >>\\nendobj\\n','ascii'),
-    Buffer.from('9 0 obj\\n<< /Names [(eicar.com) 6 0 R] /Limits [(eicar.com) (eicar.com)] >>\\nendobj\\n','ascii')
+    Buffer.from('8 0 obj\n<< /EmbeddedFiles 9 0 R >>\nendobj\n','ascii'),
+    Buffer.from('9 0 obj\n<< /Names [(eicar.com) 6 0 R] /Limits [(eicar.com) (eicar.com)] >>\nendobj\n','ascii')
   ];
-  const header=Buffer.from('%PDF-1.7\\n','ascii');
+  const header=Buffer.from('%PDF-1.7\n','ascii');
   const parts=[header],offsets=[0];
   let offset=header.length;
   for(const object of objects){offsets.push(offset);parts.push(object);offset+=object.length;}
   const xrefOffset=offset;
-  const xref='xref\\n0 '+(objects.length+1)+'\\n0000000000 65535 f \\n'+
-    offsets.slice(1).map(value=>String(value).padStart(10,'0')+' 00000 n \\n').join('');
-  const trailer='trailer\\n<< /Size '+(objects.length+1)+' /Root 1 0 R >>\\nstartxref\\n'+xrefOffset+'\\n%%EOF\\n';
+  const xref='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n'+
+    offsets.slice(1).map(value=>String(value).padStart(10,'0')+' 00000 n \n').join('');
+  const trailer='trailer\n<< /Size '+(objects.length+1)+' /Root 1 0 R >>\nstartxref\n'+xrefOffset+'\n%%EOF\n';
   return Buffer.concat([...parts,Buffer.from(xref+trailer,'ascii')]);
 }
 const eicarPdf='data:application/pdf;base64,'+buildEicarPdfFixture(eicarSignature).toString('base64');

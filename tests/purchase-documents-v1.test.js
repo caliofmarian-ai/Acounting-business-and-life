@@ -911,7 +911,7 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   ),'base64');
   const eicarSignature=Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*','ascii');
   const objectBody=number=>{
-    const marker=Buffer.from(number+' 0 obj\\n','ascii');
+    const marker=Buffer.from(number+' 0 obj\n','ascii');
     const start=eicarBytes.indexOf(marker);
     const end=eicarBytes.indexOf(Buffer.from('endobj','ascii'),start);
     assert.ok(start>=0&&end>start,'PDF object '+number+' is present');
@@ -929,8 +929,8 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   assert.ok(fileSpec.includes(Buffer.from('/AFRelationship /Data','ascii'))&&
     fileSpec.includes(Buffer.from('/EF << /F 7 0 R /UF 7 0 R >>','ascii')),
     'PDF file specification links the associated EmbeddedFile stream');
-  const embeddedStreamStart=embedded.indexOf(Buffer.from('stream\\n','ascii'));
-  const embeddedStreamEnd=embedded.indexOf(Buffer.from('\\nendstream','ascii'),embeddedStreamStart);
+  const embeddedStreamStart=embedded.indexOf(Buffer.from('stream\n','ascii'));
+  const embeddedStreamEnd=embedded.indexOf(Buffer.from('\nendstream','ascii'),embeddedStreamStart);
   const eicarSignatureOffset=embedded.indexOf(eicarSignature);
   assert.ok(embedded.includes(Buffer.from('/Type /EmbeddedFile','ascii'))&&
     !embedded.includes(Buffer.from('/Filter','ascii'))&&
