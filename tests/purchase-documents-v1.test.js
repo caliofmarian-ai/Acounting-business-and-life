@@ -915,6 +915,8 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   const embeddedStreamEnd=eicarBytes.indexOf(Buffer.from('\nendstream','ascii'),embeddedStreamStart);
   const eicarSignatureOffset=eicarBytes.indexOf(eicarSignature);
   assert.ok(eicarBytes.includes(Buffer.from('/EmbeddedFiles','ascii'))&&eicarBytes.includes(Buffer.from('/AF [6 0 R]','ascii')),
+  assert.ok(eicarBytes.includes(Buffer.from('/AFRelationship /Unspecified','ascii')),
+    'PDF attachment declares its standard associated-file relationship');
     'decoded EICAR PDF exposes the test file as a catalog-associated attachment');
   assert.ok(embeddedFileOffset>=0&&embeddedStreamStart>embeddedFileOffset&&embeddedStreamEnd>embeddedStreamStart&&
     eicarSignatureOffset>embeddedStreamStart&&eicarSignatureOffset+eicarSignature.length<=embeddedStreamEnd,

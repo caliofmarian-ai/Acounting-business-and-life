@@ -16,7 +16,7 @@ function buildEicarPdfFixture(signature){
   const page=Buffer.from('BT /F1 12 Tf 72 720 Td (Controlled QA receipt PDF) Tj ET\n','ascii');
   const embeddedFile=Buffer.from(String(signature),'ascii');
   const objects=[
-    Buffer.from('1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(eicar.com) 6 0 R] >> >> /AF [6 0 R] >>\nendobj\n','ascii'),
+    Buffer.from('1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(eicar.com) 6 0 R] >> >> /AF [6 0 R] /PageMode /UseAttachments >>\nendobj\n','ascii'),
     Buffer.from('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n','ascii'),
     Buffer.from('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n','ascii'),
     Buffer.concat([
@@ -25,7 +25,7 @@ function buildEicarPdfFixture(signature){
       Buffer.from('endstream\nendobj\n','ascii')
     ]),
     Buffer.from('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n','ascii'),
-    Buffer.from('6 0 obj\n<< /Type /Filespec /F (eicar.com) /UF (eicar.com) /Desc (Harmless EICAR test file) /EF << /F 7 0 R /UF 7 0 R >> >>\nendobj\n','ascii'),
+    Buffer.from('6 0 obj\n<< /Type /Filespec /F (eicar.com) /UF (eicar.com) /Desc (Harmless EICAR test file) /AFRelationship /Unspecified /EF << /F 7 0 R /UF 7 0 R >> >>\nendobj\n','ascii'),
     Buffer.concat([
       Buffer.from('7 0 obj\n<< /Type /EmbeddedFile /Subtype /application#2Foctet-stream /Params << /Size '+embeddedFile.length+' >> /Length '+embeddedFile.length+' >>\nstream\n','ascii'),
       embeddedFile,
