@@ -514,7 +514,7 @@ function privateEvidenceDeletionAllowed(metadata,actorAccountId,purpose){
     ?policy.storedPurpose.includes(metadata?.purpose)
     :metadata?.purpose===policy.storedPurpose;
   if(!storedPurposeAllowed)return false;
-  const validSourceId=/^(?:pending:\\d+|[1-9]\\d*)$/.test(sourceId);
+  const validSourceId=/^(?:pending:[0-9]+|[1-9][0-9]*)$/.test(sourceId);
   if(!validSourceId)return false;
 
   if(policy.identity==='owner_creator'){
@@ -528,7 +528,7 @@ function privateEvidenceDeletionAllowed(metadata,actorAccountId,purpose){
   }
   if(policy.identity==='creator'){
     if(!actorProvided||!Number.isSafeInteger(actor)||actor<1||creator!==actor||!Number.isSafeInteger(owner)||owner<1)return false;
-    return fileName===policy.fileName&&(sourceId===`pending:${owner}`||/^[1-9]\\d*$/.test(sourceId));
+    return fileName===policy.fileName&&(sourceId===`pending:${owner}`||/^[1-9][0-9]*$/.test(sourceId));
   }
   if(policy.identity==='migration'){
     return !actorProvided&&metadata?.created_by_account_id==null&&
