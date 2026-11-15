@@ -5,6 +5,8 @@ on:
     paths:
       - merchant-purchase-documents.js
       - public/purchase-documents-ui.js
+      - public/suppliers-ui.js
+      - qa-purchase-documents-856.js
       - tests/purchase-documents-ui-intent-856.test.js
       - tests/purchase-documents-v1.test.js
       - scripts/purchase-documents-postgres-856.mjs
@@ -52,6 +54,6 @@ jobs:
           node-version: '20'
       - run: npm ci
       - name: Syntax check
-        run: node --check merchant-purchase-documents.js && node --check public/purchase-documents-ui.js && node --check scripts/purchase-documents-postgres-856.mjs && node --check tests/purchase-documents-v1.test.js && node --check tests/purchase-documents-ui-intent-856.test.js
+        run: node --check merchant-purchase-documents.js && node --check public/purchase-documents-ui.js && node --check public/suppliers-ui.js && node --check qa-purchase-documents-856.js && node --check scripts/purchase-documents-postgres-856.mjs && node --check tests/purchase-documents-v1.test.js && node --check tests/purchase-documents-ui-intent-856.test.js
       - name: Unit and real isolated PostgreSQL round-trip
         run: node --test tests/purchase-documents-v1.test.js tests/purchase-documents-ui-intent-856.test.js scripts/purchase-documents-postgres-856.mjs
