@@ -413,15 +413,20 @@ test('linked receipt sources receive transaction-held share locks on the final r
     sql.push({query,params});
     return{rowCount:1,rows:[{id:101}]};
   }};
-  const linked=[{kind:'inventory_purchase',id:101},{kind:'expense_transaction',id:202}];
+  const linked=[{kind:'inventory_purchase',id:101},{kind:'expense_transaction',id:202},
+    {kind:'purchase_order',id:303},{kind:'supplier_invoice',id:404}];
   await merchantPurchaseDocumentInternals.validatePurchaseLinks(db,14,linked);
-  assert.equal(sql.length,2);
+  assert.equal(sql.length,4);
   assert.ok(sql.every(x=>!x.query.includes('FOR SHARE')),'initial preflight must not hold locks');
   sql.length=0;
   await merchantPurchaseDocumentInternals.validatePurchaseLinks(db,14,linked,{lockRows:true});
   assert.ok(sql.every(x=>x.query.endsWith('FOR SHARE')),'commit-time association check must lock source rows');
   assert.match(sql[1].query,/type='business_expense' FOR SHARE/);
+  assert.match(sql[2].query,/FROM purchase_orders/);
+  assert.match(sql[3].query,/FROM purchase_invoice_evidence/);
   assert.deepEqual(sql[0].params,[101,14]);
+  assert.deepEqual(sql[2].params,[303,14]);
+  assert.deepEqual(sql[3].params,[404,14]);
 });
 
 test('uncertain purchase-receipt COMMIT preserves the original evidence; definite precommit failure cleans it',async()=>{
@@ -998,6 +1003,12 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     "exact(foreignOriginal.status,201",
     "exact(foreignPointerDownload.status,404",
     "exact(restoredPointer.rowCount,1",
-    "original_evidence_exact_binding:true"
+    "original_evidence_exact_binding:true",
+    "const makePurchaseOrder=async(businessId,suffix)=>",
+    "const makeInvoice=async(poId,suffix)=>",
+    "exact(invoiceDocument.status,201",
+    "exact(foreignOrderDenied.status,404",
+    "exact(foreignInvoiceDenied.status,404",
+    "supplier_invoice_purchase_order_links:true"
   ])assert.ok(qa.includes(fragment),'authenticated receipt acceptance is missing '+fragment);
 });

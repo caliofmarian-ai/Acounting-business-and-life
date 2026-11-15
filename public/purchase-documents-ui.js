@@ -3,7 +3,7 @@
   const ROOT='/api/procurement/purchase-documents';
   const MAX_FILE=6*1024*1024;
   let overlay=null,businessId=null,saveInProgress=false,pendingKey=null,pendingPayload=null,pendingSubmitted=false,chosenFile=null,previousOverflow='';
-  let openAttempt=0,opening=false,saveAttempt=0;
+  let openAttempt=0,opening=false,saveAttempt=0,currentOpenOptions=null;
   let archiveRequest=0,linkableRequest=0,metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
   let supplementarySaveAttempt=0,supplementarySaveInProgress=false;
   const pendingSupplementaryUploads=new Map();
@@ -82,10 +82,28 @@
       '<label>Or attach existing photo / PDF<input id="mpdFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"></label>'+
       '<small id="mpdChosenFile" class="mpdHelp">No file selected. JPEG, PNG, WEBP or PDF, maximum 6 MB.</small></div>'+
       '<div><strong>Link Inventory purchases (optional)</strong><div id="mpdLinkable" class="mpdRecords"><p class="mpdHelp">Loading recent purchases…</p></div></div>'+
+      '<div id="mpdLinkedSources" class="mpdRecords" hidden></div>'+
       '<label>Private note<textarea name="note" maxlength="1000" placeholder="Optional accounting note"></textarea></label>'+
       '<div class="mpdNote">Saving this file does not charge money or create a second expense. An order slip or receipt is not automatically a BIR-valid Invoice.</div>'+
       '<button class="mpdBtn" type="submit" id="mpdSave">Save purchase document</button><div id="mpdMessage" class="mpdMessage" role="status"></div>'+
       '</form></section><section class="mpdCard"><h3>Saved documents</h3><div id="mpdSaved"><p class="mpdHelp">Loading archive…</p></div></section></main></div>';
+
+    const prefill=currentOpenOptions?.prefill||{};
+    const form=$('#mpdForm',overlay);
+    for(const field of ['document_kind','issue_date','issuer_name','document_number','gross_amount','note']){
+      if(Object.prototype.hasOwnProperty.call(prefill,field)&&form?.elements?.[field]){
+        form.elements[field].value=prefill[field];
+      }
+    }
+    const linkedSources=$('#mpdLinkedSources',overlay);
+    const linkedRecords=currentOpenOptions?.links||[];
+    if(linkedSources&&linkedRecords.length){
+      linkedSources.hidden=false;
+      const summary=currentOpenOptions.linkSummary||
+        linkedRecords.map(link=>link.kind.replaceAll('_',' ')+' #'+link.id).join(' and ');
+      linkedSources.innerHTML='<p class="mpdHelp">This original will be linked to '+escape(summary)+'.</p>'+
+        linkedRecords.map(link=>'<input type="checkbox" name="mpdLink" data-kind="'+escape(link.kind)+'" value="'+link.id+'" checked hidden>').join('');
+    }
     $('.mpdClose',overlay).onclick=close;
     $('#mpdFile',overlay).onchange=event=>selectFile(event.target.files?.[0]);
     $('#mpdCamera',overlay).onchange=event=>selectFile(event.target.files?.[0]);
@@ -162,7 +180,7 @@
       throw new Error('Linked purchases business or row identity could not be verified.');
     }
     if(!data.purchases.length){box.innerHTML='<p class="mpdHelp">No recorded Inventory purchases yet. Save this receipt now and link it later.</p>';return}
-    box.innerHTML=data.purchases.map(p=>'<label><input type="checkbox" name="mpdLink" value="'+Number(p.id)+'">'+
+    box.innerHTML=data.purchases.map(p=>'<label><input type="checkbox" name="mpdLink" data-kind="inventory_purchase" value="'+Number(p.id)+'">'+
       '<span><strong>'+escape(p.inventory_name)+'</strong> · '+escape(currency(p.total_cost))+
       '<br><small>'+escape(String(p.created_at).slice(0,10))+' · '+escape(p.purchase_quantity)+' '+escape(p.purchase_unit)+'</small></span></label>').join('');
   }
@@ -522,7 +540,7 @@
         document_number:String(data.get('document_number')||''),
         gross_amount:String(data.get('gross_amount')||''),
         currency_code:'PHP',note:String(data.get('note')||''),
-        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
+        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:n.dataset?.kind||'inventory_purchase',id:Number(n.value)}))
       };
       const fileAtStart=chosenFile;
       if(fileAtStart){payload.file_name=fileAtStart.name;payload.data_url=await readFile(fileAtStart)}
@@ -540,7 +558,7 @@
         document_number:String(latest.get('document_number')||''),
         gross_amount:String(latest.get('gross_amount')||''),
         note:String(latest.get('note')||''),
-        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
+        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:n.dataset?.kind||'inventory_purchase',id:Number(n.value)}))
       };
       if(fileAtStart!==chosenFile||Object.entries(currentDraft).some(([name,value])=>
         JSON.stringify(value)!==JSON.stringify(payload[name]))){
@@ -586,7 +604,7 @@
         document_number:String(afterPost.get('document_number')||''),
         gross_amount:String(afterPost.get('gross_amount')||''),
         note:String(afterPost.get('note')||''),
-        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
+        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:n.dataset?.kind||'inventory_purchase',id:Number(n.value)}))
       };
       const newerEdits=fileAtStart!==chosenFile||Object.entries(currentDraft).some(([name,value])=>
         JSON.stringify(value)!==JSON.stringify(newerDraft[name]));
@@ -638,31 +656,90 @@
     saveInProgress=false;
     metadataEditRequest++;metadataSaveAttempt++;metadataSaveInProgress=false;
     supplementarySaveAttempt++;supplementarySaveInProgress=false;
-    overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;
+    overlay.remove();overlay=null;businessId=null;chosenFile=null;pendingKey=null;pendingPayload=null;pendingSubmitted=false;currentOpenOptions=null;
     document.body.style.overflow=previousOverflow;
     return true;
   }
-  async function open(){
+  async function open(options={}){
+    if(overlay||opening)return false;
+    let normalizedOptions;
+    try{
+      if(options==null)options={};
+      if(typeof options!=='object'||Array.isArray(options))throw new Error('Invalid purchase-document launch context.');
+      const allowedOptionKeys=new Set(['expectedBusinessId','prefill','links','linkSummary']);
+      if(Object.keys(options).some(key=>!allowedOptionKeys.has(key)))throw new Error('Invalid purchase-document launch context.');
+      const expectedBusinessId=options.expectedBusinessId??null;
+      if(expectedBusinessId!==null&&(!Number.isSafeInteger(expectedBusinessId)||expectedBusinessId<1)){
+        throw new Error('Invalid Merchant business for this invoice attachment.');
+      }
+      const rawPrefill=options.prefill??{};
+      if(!rawPrefill||typeof rawPrefill!=='object'||Array.isArray(rawPrefill))throw new Error('Invalid invoice attachment details.');
+      const allowedPrefill=new Set(['document_kind','issue_date','issuer_name','document_number','gross_amount','note']);
+      const prefill={};
+      for(const [field,value] of Object.entries(rawPrefill)){
+        if(!allowedPrefill.has(field)||(typeof value!=='string'&&typeof value!=='number')){
+          throw new Error('Invalid invoice attachment details.');
+        }
+        const text=String(value);
+        const max=field==='issuer_name'?180:field==='document_number'?120:field==='note'?1000:field==='gross_amount'?32:field==='issue_date'?10:40;
+        if(text.length>max)throw new Error('Invoice attachment details exceed the supported length.');
+        prefill[field]=text;
+      }
+      if(prefill.document_kind&&!['purchase_receipt','invoice','order_slip','other'].includes(prefill.document_kind)){
+        throw new Error('Unsupported purchase document type.');
+      }
+      if(prefill.issue_date&&!/^\d{4}-\d{2}-\d{2}$/.test(prefill.issue_date)){
+        throw new Error('Invoice issue date must use YYYY-MM-DD.');
+      }
+      if(prefill.gross_amount&&!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(prefill.gross_amount)){
+        throw new Error('Invoice amount must use no more than two decimal places.');
+      }
+      const rawLinks=options.links??[];
+      if(!Array.isArray(rawLinks)||rawLinks.length>10)throw new Error('Invalid invoice source links.');
+      const allowedLinkKinds=new Set(['inventory_purchase','purchase_order','supplier_invoice','expense_transaction']);
+      const seenLinks=new Set();
+      const links=rawLinks.map(link=>{
+        if(!link||typeof link!=='object'||Array.isArray(link)||
+          !allowedLinkKinds.has(link.kind)||!Number.isSafeInteger(link.id)||link.id<1){
+          throw new Error('Invalid purchase-document source link.');
+        }
+        const key=link.kind+':'+link.id;
+        if(seenLinks.has(key))throw new Error('Duplicate purchase-document source link.');
+        seenLinks.add(key);
+        return{kind:link.kind,id:link.id};
+      });
+      const linkSummary=options.linkSummary??'';
+      if(typeof linkSummary!=='string'||linkSummary.length>200)throw new Error('Invalid invoice link description.');
+      normalizedOptions={expectedBusinessId,prefill,links,linkSummary};
+    }catch(error){
+      window.alert(error.message);
+      return false;
+    }
     // The workspace GET can resolve after a profile switch; coalesce fast clicks
     // until the first response has been checked against the current identity epoch.
-    if(overlay||opening)return;
     opening=true;
     const attempt=++openAttempt;
     try{
       const current=await api('/api/accounting/workspaces');
-      if(attempt!==openAttempt)return;
+      if(attempt!==openAttempt)return false;
       const active=current?.active_business_id;
       const validActive=(typeof active==='number'&&Number.isSafeInteger(active)&&active>0)||
         (typeof active==='string'&&/^[1-9][0-9]*$/.test(active)&&Number.isSafeInteger(Number(active)));
       if(current?.role!=='merchant'||!validActive)throw new Error('Switch to your Merchant business to save purchase receipts.');
+      if(normalizedOptions.expectedBusinessId!==null&&Number(active)!==normalizedOptions.expectedBusinessId){
+        throw new Error('The selected Merchant business changed. Reopen the invoice before attaching its original.');
+      }
       businessId=Number(active);
+      currentOpenOptions=normalizedOptions;
       injectCss();render();previousOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
       opening=false;
       await Promise.all([linkable(),archive()]);
+      return true;
     }catch(error){
-      if(attempt!==openAttempt)return;
+      if(attempt!==openAttempt)return false;
       if(overlay)message(error.message,true);
-      else window.alert(error.message);
+      else{currentOpenOptions=null;window.alert(error.message)}
+      return false;
     }finally{
       if(attempt===openAttempt)opening=false;
     }
@@ -683,7 +760,7 @@
     const btn=document.createElement('button');
     btn.id='merchantPurchaseDocumentsButton';btn.type='button';
     btn.textContent='Purchase receipts · Save / View';
-    btn.addEventListener('click',open);
+    btn.addEventListener('click',()=>open());
     heading.insertAdjacentElement('afterend',btn);
   }
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&overlay)close()});

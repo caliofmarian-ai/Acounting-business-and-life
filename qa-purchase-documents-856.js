@@ -54,6 +54,8 @@ async function cleanupPreviousPurchaseDocuments856Fixtures(pool,accountId){
     const owned=await pool.query('SELECT name FROM businesses WHERE id=$1',[id]);
     if(!owned.rows[0]?.name?.startsWith('QA 856 '))throw new Error('QA 856 prior business ownership mismatch');
     await pool.query('DELETE FROM merchant_purchase_document_evidence WHERE business_id=$1',[id]);
+    await pool.query('DELETE FROM purchase_invoice_evidence WHERE business_id=$1',[id]);
+    await pool.query('DELETE FROM purchase_orders WHERE business_id=$1',[id]);
     await pool.query('DELETE FROM merchant_purchase_document_metadata_audit WHERE business_id=$1',[id]);
     await pool.query('DELETE FROM merchant_purchase_document_links WHERE document_id IN (SELECT id FROM merchant_purchase_documents WHERE business_id=$1)',[id]);
     await pool.query('DELETE FROM merchant_purchase_documents WHERE business_id=$1',[id]);
@@ -113,6 +115,34 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     exact(r.status,201,'synthetic inventory purchase '+suffix);
     truth(Number(r.json?.purchase?.id)>0,'synthetic purchase ID');
     return Number(r.json.purchase.id);
+  };
+  const makePurchaseOrder=async(businessId,suffix)=>{
+    const result=await pool.query(`
+      INSERT INTO purchase_orders(
+        po_number,public_token,business_id,supplier_account_id,status,fulfilment_mode,
+        subtotal,delivery_fee,expected_total,merchant_note
+      ) VALUES($1,$2,$3,$4,'sent','pickup',12.34,0,12.34,$5)
+      RETURNING id
+    `,[
+      'QA856-PO-'+marker.slice(0,8)+'-'+suffix,
+      'qa856-'+marker+'-'+suffix,
+      businessId,merchant.accountId,'Synthetic company_test fixture only; no real purchase or payment'
+    ]);
+    const id=Number(result.rows[0]?.id);
+    truth(Number.isSafeInteger(id)&&id>0,'synthetic purchase order '+suffix);
+    return id;
+  };
+  const makeInvoice=async(poId,suffix)=>{
+    const result=await post('/api/procurement/orders/'+poId+'/invoices',{
+      document_number:'QA856-INV-'+marker.slice(0,8)+'-'+suffix,
+      document_kind:'invoice',issue_date:'2026-11-15',gross_amount:12.34,currency_code:'PHP',
+      evidence_reference:'Synthetic company_test invoice only',
+      note:'No real purchase or payment'
+    });
+    exact(result.status,201,'synthetic Supplier invoice '+suffix);
+    const id=Number(result.json?.id);
+    truth(Number.isSafeInteger(id)&&id>0,'synthetic Supplier invoice ID '+suffix);
+    return id;
   };
   try{
     const me=await call('/api/me');
@@ -183,6 +213,69 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     const archive=await call('/api/procurement/purchase-documents?business_id='+a);
     exact(archive.status,200,'private receipt archive');
     truth(archive.json?.documents?.some(x=>Number(x.id)===docId),'new receipt visible in correct archive');
+
+    // The Merchant PO invoice record must be able to launch a separate private
+    // original-file receipt linked to the exact invoice and PO, without creating
+    // another purchase, stock movement or expense.
+    const poA=await makePurchaseOrder(a,'A');
+    const invoiceA=await makeInvoice(poA,'A');
+    await select(b);
+    const poB=await makePurchaseOrder(b,'B');
+    const invoiceB=await makeInvoice(poB,'B');
+    await select(a);
+    const invoiceFileName='qa856-invoice-'+marker+'.png';
+    documentFileNames.add(invoiceFileName);cleanupFileNames.add(invoiceFileName);
+    const economicBeforeInvoiceLink=await pool.query(`
+      SELECT (SELECT COUNT(*)::int FROM inventory_purchases WHERE business_id=$1) purchase_count,
+             (SELECT COUNT(*)::int FROM transactions WHERE business_id=$1) transaction_count
+    `,[a]);
+    const invoiceInput=payload(a,newKey(),{
+      document_kind:'invoice',issuer_name:'Synthetic QA Supplier',
+      document_number:'QA856-INV-'+marker.slice(0,8)+'-A',
+      issue_date:'2026-11-15',gross_amount:'12.34',
+      file_name:invoiceFileName,data_url:png,
+      links:[{kind:'purchase_order',id:poA},{kind:'supplier_invoice',id:invoiceA}]
+    });
+    const invoiceDocument=await post('/api/procurement/purchase-documents',invoiceInput);
+    exact(invoiceDocument.status,201,'scanned original attached to a same-business Supplier invoice and PO');
+    exact(invoiceDocument.json?.already_saved,false,'invoice original creates one evidence document');
+    const invoiceDocumentId=Number(invoiceDocument.json?.document?.id);
+    truth(Number.isSafeInteger(invoiceDocumentId)&&invoiceDocumentId>0,'invoice original document ID');
+    exact(invoiceDocument.json?.document?.has_attachment,true,'invoice original remains private evidence');
+    const invoiceDetail=await call('/api/procurement/purchase-documents/'+invoiceDocumentId+'?business_id='+a);
+    exact(invoiceDetail.status,200,'invoice original detail');
+    exact(invoiceDetail.json?.links?.length,2,'invoice original has exact invoice and PO links');
+    truth(invoiceDetail.json.links.some(link=>link.kind==='supplier_invoice'&&Number(link.id)===invoiceA),
+      'invoice original links to the exact Supplier invoice');
+    truth(invoiceDetail.json.links.some(link=>link.kind==='purchase_order'&&Number(link.id)===poA),
+      'invoice original links to the exact purchase order');
+    const invoiceDownload=await requestBinary(base,'/api/procurement/purchase-documents/'+invoiceDocumentId+'/file?business_id='+a,{token:merchant.token});
+    exact(invoiceDownload.status,200,'invoice original private download');
+    truth(invoiceDownload.bytes.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')),
+      'invoice original is the exact scanned PNG');
+    const economicAfterInvoiceLink=await pool.query(`
+      SELECT (SELECT COUNT(*)::int FROM inventory_purchases WHERE business_id=$1) purchase_count,
+             (SELECT COUNT(*)::int FROM transactions WHERE business_id=$1) transaction_count
+    `,[a]);
+    exact(economicAfterInvoiceLink.rows[0]?.purchase_count,economicBeforeInvoiceLink.rows[0]?.purchase_count,
+      'invoice original does not create another Inventory purchase');
+    exact(economicAfterInvoiceLink.rows[0]?.transaction_count,economicBeforeInvoiceLink.rows[0]?.transaction_count,
+      'invoice original does not create another expense or payment');
+
+    const foreignOrderKey=newKey();
+    const foreignOrderDenied=await post('/api/procurement/purchase-documents',
+      payload(a,foreignOrderKey,{links:[{kind:'purchase_order',id:poB}]}));
+    exact(foreignOrderDenied.status,404,'foreign-business PO link denied');
+    const foreignOrderCount=await pool.query(
+      'SELECT COUNT(*)::int n FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',[a,foreignOrderKey]);
+    exact(foreignOrderCount.rows[0]?.n,0,'foreign PO denial creates no receipt');
+    const foreignInvoiceKey=newKey();
+    const foreignInvoiceDenied=await post('/api/procurement/purchase-documents',
+      payload(a,foreignInvoiceKey,{links:[{kind:'supplier_invoice',id:invoiceB}]}));
+    exact(foreignInvoiceDenied.status,404,'foreign-business Supplier invoice link denied');
+    const foreignInvoiceCount=await pool.query(
+      'SELECT COUNT(*)::int n FROM merchant_purchase_documents WHERE business_id=$1 AND client_request_key=$2',[a,foreignInvoiceKey]);
+    exact(foreignInvoiceCount.rows[0]?.n,0,'foreign invoice denial creates no receipt');
     exact((await post('/api/procurement/purchase-documents',payload(a,newKey(),{issue_date:'2026-11-08junk'}))).status,400,'date suffix denied');
     exact((await post('/api/procurement/purchase-documents',payload(a,newKey(),{gross_amount:'12.345'}))).status,400,'centavo precision denied');
     exact((await post('/api/procurement/purchase-documents',payload(a,newKey(),{gross_amount:'1000000000000.00'}))).status,400,'NUMERIC overflow denied');
@@ -647,6 +740,7 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     supplementary_evidence_foreign_denial:true,merchant_context_switch:true,
     supplementary_evidence_cleanup:true,economic_records_unchanged:true,
     exact_amount_date_denials:true,jpeg_upload_download:true,pdf_upload_download:true,
+    supplier_invoice_purchase_order_links:true,invoice_original_private_download:true,foreign_invoice_link_denied:true,
     extension_mismatch_denied:true,unsupported_mime_denied:true,oversized_file_denied:true,
     malware_quarantine_cleanup:true,wrong_profile_denied:true,retention_hold_respected:true,
     bound_purchase_evidence_preserved:true,original_evidence_exact_binding:true,fixtures_removed:cleaned};

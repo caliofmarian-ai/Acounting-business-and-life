@@ -354,15 +354,19 @@ async function recordExternalRecall(partyId){
     }catch(err){document.getElementById('externalRecallMsg').textContent=err.message}
   };
 }
-async function recordPoInvoice(id,side){
-  openSupModal(`<h2>Record Supplier invoice evidence</h2><p class="supModalIntro">This records the supplier document. It does not record payment and does not automatically make the document BIR-validated.</p><form id="poInvoiceForm" class="supForm"><label>Document number<input id="poInvoiceNumber"></label><label>Document type<select id="poInvoiceKind"><option value="invoice">Invoice</option><option value="sales_invoice">Sales Invoice</option><option value="charge_invoice">Charge Invoice</option><option value="billing_invoice">Billing Invoice</option><option value="other_supplier_document">Other supplier document</option></select></label><div class="supTwo"><label>Issue date<input id="poInvoiceIssue" type="date" required></label><label>Due date (optional)<input id="poInvoiceDue" type="date"></label></div><label>Gross amount ₱<input id="poInvoiceGross" type="number" min="0.01" step="0.01" required></label><label>Reference / file note<input id="poInvoiceRef"></label><div id="poInvoiceMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="poInvoiceCancel">Cancel</button><button>Save invoice evidence</button></div></form>`);
+async function recordPoInvoice(id,side,businessId){
+  const attachAction=side==='merchant'
+    ?'<button type="submit" class="supBtn secondary" name="action" value="save-and-attach">Save &amp; attach original photo / PDF</button>'
+    :'';
+  openSupModal(`<h2>Record Supplier invoice evidence</h2><p class="supModalIntro">This records the supplier document. It does not record payment and does not automatically make the document BIR-validated. The original scan is stored separately as private purchase evidence.</p><form id="poInvoiceForm" class="supForm"><label>Document number<input id="poInvoiceNumber"></label><label>Document type<select id="poInvoiceKind"><option value="invoice">Invoice</option><option value="sales_invoice">Sales Invoice</option><option value="charge_invoice">Charge Invoice</option><option value="billing_invoice">Billing Invoice</option><option value="other_supplier_document">Other supplier document</option></select></label><div class="supTwo"><label>Issue date<input id="poInvoiceIssue" type="date" required></label><label>Due date (optional)<input id="poInvoiceDue" type="date"></label></div><label>Gross amount ₱<input id="poInvoiceGross" type="number" min="0.01" step="0.01" required></label><label>Reference / file note<input id="poInvoiceRef"></label><div id="poInvoiceMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="poInvoiceCancel">Cancel</button><button type="submit" name="action" value="save">Save invoice evidence</button></div>${attachAction}</form>`);
   document.getElementById('poInvoiceIssue').value=new Date().toISOString().slice(0,10);
   document.getElementById('poInvoiceCancel').onclick=closeSupModal;
   document.getElementById('poInvoiceForm').onsubmit=async e=>{
     e.preventDefault();
+    const attachOriginal=side==='merchant'&&e.submitter?.value==='save-and-attach';
     try{
       const path=side==='supplier'? `/api/supplier/orders/${id}/invoices`:`/api/procurement/orders/${id}/invoices`;
-      await papi(path,{method:'POST',body:JSON.stringify({
+      const invoice=await papi(path,{method:'POST',body:JSON.stringify({
         document_number:document.getElementById('poInvoiceNumber').value,
         document_kind:document.getElementById('poInvoiceKind').value,
         issue_date:document.getElementById('poInvoiceIssue').value,
@@ -371,8 +375,41 @@ async function recordPoInvoice(id,side){
         evidence_reference:document.getElementById('poInvoiceRef').value
       })});
       closeSupModal();ptoast('Supplier invoice evidence recorded.');
-      if(side==='merchant')await renderMerchantProcurement();else await renderSupplierWorkspace(supSupplierSection);
-    }catch(err){document.getElementById('poInvoiceMsg').textContent=err.message}
+      if(side==='merchant'){
+        await renderMerchantProcurement().catch(()=>{});
+        if(attachOriginal){
+          const invoiceId=Number(invoice?.id),expectedBusinessId=Number(businessId);
+          const open=window.BusinessLifePurchaseDocuments?.open;
+          if(!Number.isSafeInteger(invoiceId)||invoiceId<1||!Number.isSafeInteger(expectedBusinessId)||
+            expectedBusinessId<1||Number(invoice?.business_id)!==expectedBusinessId||typeof open!=='function'){
+            ptoast('Invoice saved. The original file could not be attached automatically; open Purchase receipts from Stock and link it later.');
+            return;
+          }
+          const opened=await open({
+            expectedBusinessId,
+            prefill:{
+              document_kind:'invoice',
+              issue_date:String(invoice.issue_date||'').slice(0,10),
+              issuer_name:'',
+              document_number:String(invoice.document_number||''),
+              gross_amount:String(invoice.gross_amount??''),
+              note:''
+            },
+            links:[
+              {kind:'purchase_order',id:Number(id)},
+              {kind:'supplier_invoice',id:invoiceId}
+            ],
+            linkSummary:'Supplier invoice #'+invoiceId+' and PO #'+Number(id)
+          });
+          if(!opened)ptoast('Invoice saved, but the original attachment dialog did not open. Open Purchase receipts from Stock to attach it later.');
+        }
+      }else{
+        await renderSupplierWorkspace(supSupplierSection);
+      }
+    }catch(err){
+      const msg=document.getElementById('poInvoiceMsg');
+      if(msg)msg.textContent=err.message;
+    }
   };
 }
 function supplierPriceLine(item){
@@ -389,7 +426,7 @@ async function viewPo(id,side){
   openSupModal(`<h2>${ph(p.po_number)} • ${ph(pnice(p.status))}</h2><div class="supList">${p.items.map(i=>`<div class="supRow"><div><strong>${ph(i.name_snapshot)}</strong><small>${Number(i.ordered_packs)} ${ph(i.unit_name_snapshot)} ordered • ${pphp(i.price_per_pack_snapshot)} each</small><div class="supMeta"><span>Confirmed ${Number(i.confirmed_packs??i.ordered_packs)}</span><span>Received ${Number(i.received_packs)}</span><span>${ph(pnice(i.handling_mode_snapshot||'sealed_resale'))}</span>${i.legacy_inventory_name?`<span class="ok">→ ${ph(i.legacy_inventory_name)}</span>`:''}</div></div></div>`).join('')}</div>
   ${s?`<details class="supNestedDetails" open><summary>Commercial position</summary><div class="supMeta" style="margin-top:10px"><span>PO ${pphp(s.expected_total)}</span><span>Received ${pphp(s.received_total)}</span><span>Invoiced ${pphp(s.invoice_total)}</span><span>Paid ${pphp(s.paid_amount)}</span><span>Credits ${pphp(s.confirmed_credits)}</span><span class="${s.outstanding>0?'pending':'ok'}">Outstanding ${pphp(s.outstanding)}</span>${s.overdue?'<span class="pending">Overdue</span>':''}</div>${s.invoice_vs_received_variance!=null&&Math.abs(Number(s.invoice_vs_received_variance))>0.009?`<p class="supCodeHelp">Invoice vs received variance: ${pphp(s.invoice_vs_received_variance)}. Review before paying.</p>`:''}</details>`:''}
   <div class="supInlineActions" style="margin-top:12px"><button class="supBtn" id="poRecordInvoice">Record invoice</button><button class="supBtn secondary" id="poClose">Close</button></div>`);
-  document.getElementById('poRecordInvoice').onclick=()=>recordPoInvoice(id,side);
+  document.getElementById('poRecordInvoice').onclick=()=>recordPoInvoice(id,side,p.business_id);
   document.getElementById('poClose').onclick=closeSupModal;
 }
 async function receivePo(id){

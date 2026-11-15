@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
 const source=readFileSync(new URL('../public/purchase-documents-ui.js',import.meta.url),'utf8');
+const supplierSource=readFileSync(new URL('../public/suppliers-ui.js',import.meta.url),'utf8');
 const start=source.indexOf('  async function save(event){');
 const end=source.indexOf('\n  function close(',start);
 assert.ok(start>=0&&end>start,'literal shipped save controller must be present');
@@ -24,7 +25,7 @@ function makeController(){
   const form={elements:{issue_date:{value:''}},reset(){resetCount++}};
   const receiptLabel={textContent:''};
   let selectedLinks=[];
-  const panel={removed:false,remove(){this.removed=true},querySelectorAll:()=>selectedLinks.map(value=>({value}))};
+  const panel={removed:false,remove(){this.removed=true},querySelectorAll:()=>selectedLinks.map(link=>typeof link==='string'?{value:link,dataset:{kind:'inventory_purchase'}}:{value:String(link.id),dataset:{kind:link.kind}})};
   const messages=[],posts=[];
   let keys=0,workspaceIsMerchant=true,activeBusinessId=14,failPostOnce=false,failFileOnce=false;
   let nextPostResponse; const persisted=new Map();
@@ -234,6 +235,29 @@ test('in-flight linked purchase checkbox edit cannot post a stale receipt-to-pur
   assert.deepEqual(c.posts[0].links,[{kind:'inventory_purchase',id:102}]);
 });
 
+test('invoice and PO source links are preserved in the exact private receipt intent',async()=>{
+  const c=makeController();
+  c.setLinks([{kind:'supplier_invoice',id:55},{kind:'purchase_order',id:88}]);
+  await c.submit();
+  assert.deepEqual(c.posts[0].links,[
+    {kind:'supplier_invoice',id:55},{kind:'purchase_order',id:88}
+  ]);
+});
+
+test('changing a preselected invoice source during confirmation blocks the stale receipt intent',async()=>{
+  const c=makeController();
+  c.setLinks([{kind:'supplier_invoice',id:55},{kind:'purchase_order',id:88}]);
+  c.changeDuringConfirmation(()=>c.setLinks([{kind:'supplier_invoice',id:56},{kind:'purchase_order',id:88}]));
+  await c.submit();
+  assert.equal(c.posts.length,0);
+  assert.equal(c.keyCount(),0);
+  assert.match(c.messages.at(-1).text,/changed while preparing/);
+  await c.submit();
+  assert.deepEqual(c.posts[0].links,[
+    {kind:'supplier_invoice',id:56},{kind:'purchase_order',id:88}
+  ]);
+});
+
 test('camera file replacement while file read is pending never posts the old scan',async()=>{
   const c=makeController();
   c.setFile({name:'old.pdf'});
@@ -436,7 +460,7 @@ test('confirmed POST can close while auxiliary archive GET is slow; no second re
 
 // #856 — execute the literal asynchronous open and profile-change handlers.
 // A changed account may not inherit a previously pending Merchant receipt panel.
-const openStart=source.indexOf('  async function open(){');
+const openStart=source.indexOf('  async function open(options={}){');
 const openEnd=source.indexOf('\n  function ensureButton(){',openStart);
 assert.ok(openStart>=0&&openEnd>openStart,'literal shipped open controller must be present');
 const openSource=source.slice(openStart,openEnd);
@@ -447,7 +471,7 @@ assert.match(source,/document\.addEventListener\('abl:profile-state',invalidateP
 const invalidateSource=source.slice(invalidateStart,invalidateEnd);
 
 function makeOpeningController(){
-  let calls=0,createCount=0,hold=false,release=null,notify=null,fail=false;
+  let calls=0,createCount=0,hold=false,release=null,notify=null,fail=false,renderedOptions=null;
   let activeBusiness=14;
   const alerts=[];
   const api=async path=>{
@@ -460,22 +484,22 @@ function makeOpeningController(){
     if(fail){fail=false;throw new Error('Old workspace error')}
     return {role:'merchant',active_business_id:activeBusiness};
   };
-  const factory=new Function('api','document','window','queueMicrotask','created',`
-    let overlay=null,businessId=null,openAttempt=0,opening=false,saveAttempt=0,
+  const factory=new Function('api','document','window','queueMicrotask','created','captureOptions',`
+    let overlay=null,businessId=null,openAttempt=0,opening=false,currentOpenOptions=null,saveAttempt=0,
         supplementarySaveAttempt=0,supplementarySaveInProgress=false;
     let saveInProgress=false,pendingSubmitted=false,pendingKey=null,pendingPayload=null,
         chosenFile=null,previousOverflow='',metadataEditRequest=0,metadataSaveAttempt=0,metadataSaveInProgress=false;
     const message=()=>{},injectCss=()=>{},linkable=async()=>{},archive=async()=>{},ensureButton=()=>{};
-    const render=()=>{overlay={remove(){this.removed=true}};created()};
+    const render=()=>{overlay={remove(){this.removed=true}};captureOptions(currentOpenOptions);created()};
     ${closeSource}
     ${openSource}
     ${invalidateSource}
     return {open,close,invalidatePurchaseDocumentContext,
-      state:()=>({overlay:!!overlay,businessId,openAttempt,opening})};
+      state:()=>({overlay:!!overlay,businessId,openAttempt,opening,currentOpenOptions})};
   `);
   const controller=factory(api,{body:{style:{overflow:''}}},{alert:v=>alerts.push(v)},
-    callback=>callback(),()=>{createCount++});
-  return {...controller,alerts,calls:()=>calls,created:()=>createCount,
+    callback=>callback(),()=>{createCount++},value=>{renderedOptions=value?structuredClone(value):null});
+  return {...controller,alerts,calls:()=>calls,created:()=>createCount,renderedOptions:()=>renderedOptions,
     setActiveBusiness:value=>{activeBusiness=value},
     failNext:()=>{fail=true},
     holdNext:()=>{
@@ -546,6 +570,48 @@ test('late failed workspace request after profile revocation does not alert repl
   assert.equal(c.created(),0);
   assert.deepEqual(c.alerts,[]);
   assert.equal(c.state().opening,false);
+});
+
+test('invoice-origin open preselects the exact Supplier invoice and PO for the expected Merchant business',async()=>{
+  const c=makeOpeningController();
+  const options={
+    expectedBusinessId:14,
+    prefill:{document_kind:'invoice',issue_date:'2026-11-15',document_number:'INV-55',gross_amount:'12.34'},
+    links:[{kind:'purchase_order',id:88},{kind:'supplier_invoice',id:55}],
+    linkSummary:'Supplier invoice #55 and PO #88'
+  };
+  assert.equal(await c.open(options),true);
+  assert.deepEqual(c.renderedOptions(),options);
+  assert.equal(c.state().businessId,14);
+  assert.equal(c.close(),true);
+  assert.equal(c.state().currentOpenOptions,null,'closing the dialog releases private source links');
+});
+
+test('invoice-origin open rejects a changed Merchant business and invalid source identifiers',async()=>{
+  const changed=makeOpeningController();
+  changed.setActiveBusiness(15);
+  assert.equal(await changed.open({expectedBusinessId:14,links:[{kind:'supplier_invoice',id:55}]}),false);
+  assert.equal(changed.created(),0);
+  assert.match(changed.alerts.at(-1),/selected Merchant business changed/);
+
+  const invalid=makeOpeningController();
+  assert.equal(await invalid.open({links:[{kind:'supplier_invoice',id:'55'}]}),false);
+  assert.equal(invalid.calls(),0,'invalid source links are rejected before workspace reads');
+  assert.match(invalid.alerts.at(-1),/source link/);
+});
+
+test('Merchant PO invoice UI offers the original attachment action and binds exact invoice and PO context',()=>{
+  const start=supplierSource.indexOf('async function recordPoInvoice(');
+  const end=supplierSource.indexOf('\nfunction supplierPriceLine',start);
+  assert.ok(start>=0&&end>start,'literal Merchant/Supplier invoice form exists');
+  const invoiceUi=supplierSource.slice(start,end);
+  assert.match(invoiceUi,/Save &amp; attach original photo \/ PDF/);
+  assert.match(invoiceUi,/side==='merchant'/);
+  assert.match(invoiceUi,/expectedBusinessId/);
+  assert.match(invoiceUi,/kind:'purchase_order'/);
+  assert.match(invoiceUi,/kind:'supplier_invoice'/);
+  assert.match(invoiceUi,/Number\(invoice\?\.business_id\)/);
+  assert.match(supplierSource,/recordPoInvoice\(id,side,p\.business_id\)/);
 });
 
 // A previous Merchant dialog may finish an auxiliary archive request after a
