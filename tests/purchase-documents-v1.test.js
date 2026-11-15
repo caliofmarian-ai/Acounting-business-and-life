@@ -910,13 +910,21 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     __purchaseDocuments856TestFixtures.eicarPdf.indexOf(',')+1
   ),'base64');
   const eicarSignature=Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*','ascii');
+  const embeddedFileOffset=eicarBytes.indexOf(Buffer.from('/Type /EmbeddedFile','ascii'));
+  const embeddedStreamStart=eicarBytes.indexOf(Buffer.from('stream\n','ascii'),embeddedFileOffset);
+  const embeddedStreamEnd=eicarBytes.indexOf(Buffer.from('\nendstream','ascii'),embeddedStreamStart);
   const eicarSignatureOffset=eicarBytes.indexOf(eicarSignature);
-  const eicarStreamStart=eicarBytes.indexOf(Buffer.from('stream\n','ascii'));
-  const eicarStreamEnd=eicarBytes.indexOf(Buffer.from('\nendstream','ascii'),eicarStreamStart);
-  assert.ok(eicarStreamStart>=0 && eicarStreamEnd>eicarStreamStart &&
-    eicarSignatureOffset>eicarStreamStart && eicarSignatureOffset<eicarStreamEnd,
-    'decoded EICAR PDF contains the complete scanner signature inside its uncompressed content stream');
-  assert.ok(qa.includes('scanWithClamAv(Buffer.from(eicarSignature'), 'authenticated wave probes the existing ClamAV service directly');
+  assert.ok(eicarBytes.includes(Buffer.from('/EmbeddedFiles','ascii'))&&eicarBytes.includes(Buffer.from('/AF [6 0 R]','ascii')),
+    'decoded EICAR PDF exposes the test file as a catalog-associated attachment');
+  assert.ok(embeddedFileOffset>=0&&embeddedStreamStart>embeddedFileOffset&&embeddedStreamEnd>embeddedStreamStart&&
+    eicarSignatureOffset>embeddedStreamStart&&eicarSignatureOffset+eicarSignature.length<=embeddedStreamEnd,
+    'decoded EICAR PDF contains the complete scanner signature in its EmbeddedFile stream');
+  assert.ok(!eicarBytes.subarray(embeddedFileOffset,embeddedStreamStart).includes(Buffer.from('/Filter','ascii')),
+    'EICAR EmbeddedFile stream is uncompressed for ClamAV extraction');
+  assert.ok(qa.includes('scanWithClamAv(Buffer.from(eicarSignature'), 'authenticated wave retains the raw EICAR scanner control');
+  assert.ok(qa.includes('scanWithClamAv(eicarPdfBytes'), 'authenticated wave scans the exact complete PDF bytes before upload');
+  assert.ok(qa.includes("exact(fullPdfScan.status,'infected'"), 'full-PDF scanner control must pass before exercising the upload route');
+  assert.ok(qa.includes("exact(infected.status,422"), 'the same PDF bytes must be rejected by the actual upload route');
   assert.ok(qa.includes('documentFileNames.add(eicarName)'), 'unexpected clean EICAR uploads remain eligible for scoped private-object cleanup');
   assert.ok(qa.includes("original_file_name LIKE 'qa856-%'"), 'prior fixture cleanup is restricted to this wave file prefix');
   for(const fragment of [

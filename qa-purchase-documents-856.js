@@ -8,23 +8,31 @@ export const PURCHASE_DOCUMENTS_856_WAVE='purchase_documents_856';
 const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII=';
 const jpeg='data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AD//Z';
 const pdf='data:application/pdf;base64,JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0NvbnRlbnRzIDcgMCBSIC9NZWRpYUJveCBbIDAgMCA3MiA3MiBdIC9QYXJlbnQgNiAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKNCAwIG9iago8PAovUGFnZU1vZGUgL1VzZU5vbmUgL1BhZ2VzIDYgMCBSIC9UeXBlIC9DYXRhbG9nCj4+CmVuZG9iago1IDAgb2JqCjw8Ci9BdXRob3IgKGFub255bW91cykgL0NyZWF0aW9uRGF0ZSAoRDoyMDI2MTExNDE2NTc1NiswMCcwMCcpIC9DcmVhdG9yIChhbm9ueW1vdXMpIC9LZXl3b3JkcyAoKSAvTW9kRGF0ZSAoRDoyMDI2MTExNDE2NTc1NiswMCcwMCcpIC9Qcm9kdWNlciAoUmVwb3J0TGFiIFBERiBMaWJyYXJ5IC0gXChvcGVuc291cmNlXCkpIAogIC9TdWJqZWN0ICh1bnNwZWNpZmllZCkgL1RpdGxlICh1bnRpdGxlZCkgL1RyYXBwZWQgL0ZhbHNlCj4+CmVuZG9iago2IDAgb2JqCjw8Ci9Db3VudCAxIC9LaWRzIFsgMyAwIFIgXSAvVHlwZSAvUGFnZXMKPj4KZW5kb2JqCjcgMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0ZURlY29kZSBdIC9MZW5ndGggMTA3Cj4+CnN0cmVhbQpHYXBRaDBFPUYsMFVcSDNUXHBOWVReUUtrP3RjPklQLDtXI1UxXjIzaWhQRU1fP0NaNSFzdElfKSdNQldUYSRsNChddSgqJ2Y1dDQnb0duUTtfbmVSMV9pP18nTEsvbCQ1TCZOTFM+Ukx+PmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDgKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDYxIDAwMDAwIG4gCjAwMDAwMDAwOTIgMDAwMDAgbiAKMDAwMDAwMDE5OSAwMDAwMCBuIAowMDAwMDAwMzkwIDAwMDAwIG4gCjAwMDAwMDA0NTggMDAwMDAgbiAKMDAwMDAwMDcxOSAwMDAwMCBuIAowMDAwMDAwNzc4IDAwMDAwIG4gCnRyYWlsZXIKPDwKL0lEIApbPDcyN2FiNjM2ZjhjYTAwMTdmMTI1MTJiODY3ZDdmNDI4Pjw3MjdhYjYzNmY4Y2EwMDE3ZjEyNTEyYjg2N2Q3ZjQyOD5dCiUgUmVwb3J0TGFiIGdlbmVyYXRlZCBQREYgZG9jdW1lbnQgLS0gZGlnZXN0IChvcGVuc291cmNlKQoKL0luZm8gNSAwIFIKL1Jvb3QgNCAwIFIKL1NpemUgOAo+PgpzdGFydHhyZWYKOTc1CiUlRU9GCg==';
- // Harmless EICAR test signature embedded in a synthetic PDF content stream; never executed.
+ // Harmless EICAR test signature embedded as an uncompressed PDF attachment; never executed.
 const eicarSignature='X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
 function buildEicarPdfFixture(signature){
-  const escaped=String(signature).replace(/([\\()])/g,'\\$1');
-  const stream=Buffer.from('% '+signature+'\nBT /F1 12 Tf 72 720 Td ('+escaped+') Tj ET\n','ascii');
+  // ClamAV's PDF parser scans uncompressed EmbeddedFile attachments. Keep the
+  // attachment stream unfiltered so the scanner sees the exact 68-byte test file.
+  const page=Buffer.from('BT /F1 12 Tf 72 720 Td (Controlled QA receipt PDF) Tj ET\n','ascii');
+  const embeddedFile=Buffer.from(String(signature),'ascii');
   const objects=[
-    Buffer.from('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n','ascii'),
+    Buffer.from('1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(eicar.com) 6 0 R] >> >> /AF [6 0 R] >>\nendobj\n','ascii'),
     Buffer.from('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n','ascii'),
     Buffer.from('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n','ascii'),
     Buffer.concat([
-      Buffer.from('4 0 obj\n<< /Length '+stream.length+' >>\nstream\n','ascii'),
-      stream,
-      Buffer.from('\nendstream\nendobj\n','ascii')
+      Buffer.from('4 0 obj\n<< /Length '+page.length+' >>\nstream\n','ascii'),
+      page,
+      Buffer.from('endstream\nendobj\n','ascii')
     ]),
-    Buffer.from('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n','ascii')
+    Buffer.from('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n','ascii'),
+    Buffer.from('6 0 obj\n<< /Type /Filespec /F (eicar.com) /UF (eicar.com) /Desc (Harmless EICAR test file) /EF << /F 7 0 R /UF 7 0 R >> >>\nendobj\n','ascii'),
+    Buffer.concat([
+      Buffer.from('7 0 obj\n<< /Type /EmbeddedFile /Subtype /application#2Foctet-stream /Params << /Size '+embeddedFile.length+' >> /Length '+embeddedFile.length+' >>\nstream\n','ascii'),
+      embeddedFile,
+      Buffer.from('\nendstream\nendobj\n','ascii')
+    ])
   ];
-  const header=Buffer.from('%PDF-1.4\n','ascii');
+  const header=Buffer.from('%PDF-1.7\n','ascii');
   const parts=[header],offsets=[0];
   let offset=header.length;
   for(const object of objects){offsets.push(offset);parts.push(object);offset+=object.length;}
@@ -35,6 +43,8 @@ function buildEicarPdfFixture(signature){
   return Buffer.concat([...parts,Buffer.from(xref+trailer,'ascii')]);
 }
 const eicarPdf='data:application/pdf;base64,'+buildEicarPdfFixture(eicarSignature).toString('base64');
+
+
 export const __purchaseDocuments856TestFixtures=Object.freeze({eicarPdf});
 
 
@@ -358,6 +368,17 @@ export async function runPurchaseDocuments856Acceptance({pool,base,secret,aliase
     console.info('QA 856 raw ClamAV EICAR probe',JSON.stringify({status:rawEicarScan.status,result:rawEicarScan.result}));
     exact(rawEicarScan.status,'infected','ClamAV detects the raw harmless EICAR test signature');
     truth(/eicar/i.test(rawEicarScan.result),'ClamAV identifies the raw EICAR test signature');
+    const eicarPdfBytes=Buffer.from(eicarPdf.slice(eicarPdf.indexOf(',')+1),'base64');
+    const fullPdfScan=await scanWithClamAv(eicarPdfBytes,{
+      host:process.env.PRIVATE_EVIDENCE_CLAMAV_HOST,
+      port:Number(process.env.PRIVATE_EVIDENCE_CLAMAV_PORT||3310)
+    });
+    console.info('QA 856 full PDF ClamAV EICAR probe',JSON.stringify({
+      status:fullPdfScan.status,result:fullPdfScan.result,bytes:eicarPdfBytes.length,
+      sha256:crypto.createHash('sha256').update(eicarPdfBytes).digest('hex')
+    }));
+    exact(fullPdfScan.status,'infected','ClamAV detects the EICAR attachment in the exact PDF bytes uploaded below');
+    truth(/eicar/i.test(fullPdfScan.result),'ClamAV identifies the embedded EICAR test attachment');
     const infected=await post('/api/procurement/purchase-documents',payload(a,eicarKey,{file_name:eicarName,data_url:eicarPdf}));
     exact(infected.status,422,'ClamAV rejects the harmless EICAR PDF test signature');
     const quarantine=await pool.query(`
