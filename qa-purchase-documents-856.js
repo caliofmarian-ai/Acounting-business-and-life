@@ -27,7 +27,7 @@ function buildEicarPdfFixture(signature){
     Buffer.from('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n','ascii'),
     Buffer.from('6 0 obj\n<< /Type /Filespec /F (eicar.com) /UF (eicar.com) /Desc (Harmless EICAR test file) /AFRelationship /Data /EF << /F 7 0 R /UF 7 0 R >> >>\nendobj\n','ascii'),
     Buffer.concat([
-      Buffer.from('7 0 obj\n<< /Type /EmbeddedFile /Subtype /application#2Foctet-stream /Params << /Size '+embeddedFile.length+' >> /Length '+embeddedFile.length+' >>\nstream\n','ascii'),
+      Buffer.from('7 0 obj\n<< /Type /EmbeddedFile /Subtype /application#2Foctet-stream /Length '+embeddedFile.length+' >>\nstream\n','ascii'),
       embeddedFile,
       Buffer.from('\nendstream\nendobj\n','ascii')
     ]),

@@ -933,11 +933,13 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
   const embeddedStreamEnd=embedded.indexOf(Buffer.from('\nendstream','ascii'),embeddedStreamStart);
   const eicarSignatureOffset=embedded.indexOf(eicarSignature);
   assert.ok(embedded.includes(Buffer.from('/Type /EmbeddedFile','ascii'))&&
+    embedded.includes(Buffer.from('/Length 68','ascii'))&&
+    !embedded.includes(Buffer.from('/Params','ascii'))&&
     !embedded.includes(Buffer.from('/Filter','ascii'))&&
     embeddedStreamStart>=0&&embeddedStreamEnd>embeddedStreamStart&&
     eicarSignatureOffset>embeddedStreamStart&&
     eicarSignatureOffset+eicarSignature.length<=embeddedStreamEnd,
-    'PDF contains the exact EICAR bytes in an uncompressed EmbeddedFile stream');
+    'PDF contains the exact EICAR bytes in a flat, uncompressed EmbeddedFile stream');
   assert.ok(qa.includes('scanWithClamAv(Buffer.from(eicarSignature'), 'authenticated wave retains the raw EICAR scanner control');
   assert.ok(qa.includes('scanWithClamAv(eicarPdfBytes'), 'authenticated wave scans the exact complete PDF bytes before upload');
   assert.ok(qa.includes("exact(fullPdfScan.status,'infected'"), 'full-PDF scanner control must pass before exercising the upload route');
