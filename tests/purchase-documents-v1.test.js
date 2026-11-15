@@ -612,6 +612,36 @@ test('private Merchant purchase-document HTTP routes refuse stale conditional 30
 });
 
 
+test('original private evidence is bound to the exact receipt creator and source before download',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const doc={id:23,created_by_account_id:9,private_evidence_object_id:555};
+  const calls=[];
+  const deniedPool={query:async(sql,params)=>{
+    calls.push({sql,params});
+    return{rowCount:0,rows:[]};
+  }};
+  await assert.rejects(
+    ()=>merchantPurchaseDocumentInternals.originalPurchaseDocumentEvidenceObjectId(deniedPool,doc),
+    error=>error?.status===404
+  );
+  assert.equal(calls.length,1);
+  assert.deepEqual(calls[0].params,[555,9,'23']);
+  assert.match(calls[0].sql,/owner_account_id=\$2/);
+  assert.match(calls[0].sql,/source_type='merchant_purchase_document'/);
+  assert.match(calls[0].sql,/source_id=\$3/);
+
+  const acceptedPool={query:async(sql,params)=>{
+    assert.equal(params[0],555);
+    assert.equal(params[1],9);
+    assert.equal(params[2],'23');
+    return{rowCount:1,rows:[{id:555}]};
+  }};
+  assert.equal(
+    await merchantPurchaseDocumentInternals.originalPurchaseDocumentEvidenceObjectId(acceptedPool,doc),
+    555
+  );
+});
+
 test('purchase-document metadata edits are strict, versioned and never accept file or financial links',async()=>{
   const {normalizeMerchantPurchaseDocumentMetadata}=await import('../merchant-purchase-documents.js');
   const row={
@@ -964,6 +994,10 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     "PRIVATE_EVIDENCE_RETENTION_HOLD",
     "PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED",
     "retention_hold_respected:true",
-    "bound_purchase_evidence_preserved:true"
+    "bound_purchase_evidence_preserved:true",
+    "exact(foreignOriginal.status,201",
+    "exact(foreignPointerDownload.status,404",
+    "exact(restoredPointer.rowCount,1",
+    "original_evidence_exact_binding:true"
   ])assert.ok(qa.includes(fragment),'authenticated receipt acceptance is missing '+fragment);
 });
