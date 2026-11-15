@@ -559,6 +559,13 @@ test('double-click before workspace GET resolves is single-flight, not two dialo
   assert.equal(c.state().overlay,true);
 });
 
+test('stock toolbar click event remains a valid no-options open invocation',async()=>{
+  const c=makeOpeningController();
+  assert.equal(await c.open({type:'click',target:{}}),true);
+  assert.equal(c.created(),1);
+  assert.deepEqual(c.renderedOptions(),{expectedBusinessId:null,prefill:{},links:[],linkSummary:''});
+});
+
 test('late failed workspace request after profile revocation does not alert replacement user',async()=>{
   const c=makeOpeningController(),gate=c.holdNext();
   c.failNext();

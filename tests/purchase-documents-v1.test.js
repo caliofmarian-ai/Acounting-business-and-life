@@ -1007,7 +1007,7 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     "exact(restoredPointer.rowCount,1",
     "original_evidence_exact_binding:true",
     "const makePurchaseOrder=async(businessId,suffix)=>",
-    "const makeInvoice=async(poId,suffix)=>",
+    "const makeInvoice=async(poId,businessId,suffix)=>",
     "exact(invoiceDocument.status,201",
     "exact(foreignOrderDenied.status,404",
     "exact(foreignInvoiceDenied.status,404",

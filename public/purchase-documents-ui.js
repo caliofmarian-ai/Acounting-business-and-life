@@ -662,6 +662,8 @@
   }
   async function open(options={}){
     if(overlay||opening)return false;
+    // The stock toolbar still binds this function directly; ignore its click event.
+    if(options&&typeof options==='object'&&typeof options.type==='string'&&'target' in options)options={};
     let normalizedOptions;
     try{
       if(options==null)options={};
@@ -760,7 +762,7 @@
     const btn=document.createElement('button');
     btn.id='merchantPurchaseDocumentsButton';btn.type='button';
     btn.textContent='Purchase receipts · Save / View';
-    btn.addEventListener('click',()=>open());
+    btn.addEventListener('click',open);
     heading.insertAdjacentElement('afterend',btn);
   }
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&overlay)close()});
