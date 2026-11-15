@@ -338,7 +338,7 @@ export async function runReceiptIntelligence860Acceptance({pool,base,secret,env=
         await pool.query('DELETE FROM merchant_purchase_document_metadata_audit WHERE business_id=$1',[business.id]);
         await pool.query('DELETE FROM merchant_purchase_document_links WHERE document_id IN (SELECT id FROM merchant_purchase_documents WHERE business_id=$1)',[business.id]);
         await pool.query('DELETE FROM merchant_purchase_documents WHERE business_id=$1',[business.id]);
-        for(const table of ['inventory_count_session_items','inventory_count_sessions','inventory_lot_location_balances',
+        for(const table of ['inventory_count_sessions','inventory_lot_location_balances',
           'inventory_location_balances','inventory_purchases','supply_lots','transactions','inventory',
           'inventory_storage_locations','budgets']){
           await pool.query('DELETE FROM '+table+' WHERE business_id=$1',[business.id]);

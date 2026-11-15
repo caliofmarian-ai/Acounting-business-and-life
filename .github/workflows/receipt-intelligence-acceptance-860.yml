@@ -29,11 +29,11 @@ jobs:
         env:
           POSTGRES_USER: receipt860
           POSTGRES_PASSWORD: ci_receipt860_only
-          POSTGRES_DB: abl_receipt_intelligence_860_test
+          POSTGRES_DB: abl_receipt_variance_860_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U receipt860 -d abl_receipt_intelligence_860_test"
+          --health-cmd "pg_isready -U receipt860 -d abl_receipt_variance_860_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -52,7 +52,7 @@ jobs:
       - run: npm ci
       - name: Exercise receipt intelligence and blind-count regressions
         env:
-          RECEIPT_860_PG_URL: postgresql://receipt860:ci_receipt860_only@127.0.0.1:5432/abl_receipt_intelligence_860_test
+          RECEIPT_860_PG_URL: postgresql://receipt860:ci_receipt860_only@127.0.0.1:5432/abl_receipt_variance_860_test
         run: |
           node --check qa-acceptance.js
           node --check qa-receipt-intelligence-860.js
