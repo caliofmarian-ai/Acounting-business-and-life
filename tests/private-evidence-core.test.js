@@ -214,6 +214,15 @@ test('failed object-store deletion stays delete_requested and can be retried wit
   assert.equal(harness.audits.some(item=>item.outcome==='failed'),true,'storage failure is audited');
   assert.equal(harness.audits.some(item=>item.outcome==='deleted'),false,'storage failure never claims deletion');
 
+  await assert.rejects(
+    ()=>deletePrivateEvidence(harness.pool,{
+      objectId:23,actorAccountId:9,purpose:'duplicate_upload_cleanup',env:configured,
+      deleteObjectFn:async()=>{calls++}
+    }),
+    error=>error?.status===409&&error?.code==='PRIVATE_EVIDENCE_DELETE_RECONCILIATION_REQUIRED'
+  );
+  assert.equal(harness.row.retention_state,'delete_requested','a different cleanup purpose cannot take over a pending deletion');
+  assert.equal(calls,1,'mismatched-purpose retry does not call object storage');
   const retried=await deletePrivateEvidence(harness.pool,{
     objectId:23,actorAccountId:9,purpose:'failed_purchase_receipt_cleanup',env:configured,
     deleteObjectFn:async()=>{calls++}
@@ -236,6 +245,67 @@ test('only exact QA fixture cleanup may remove a bound synthetic receipt object'
   assert.equal(result,true);
   assert.equal(harness.row.retention_state,'deleted');
   assert.equal(harness.audits.at(-1)?.outcome,'deleted');
+});
+
+test('private evidence cleanup preserves explicit non-purchase rollback and migration callers',async()=>{
+  const cases=[
+    {purpose:'service_provider_cv_replaced',actor:9,metadata:{source_type:'service_provider_cv',source_id:'9',purpose:'service_provider_cv_upload'}},
+    {purpose:'service_provider_cv_rollback',actor:9,metadata:{source_type:'service_provider_cv',source_id:'9',purpose:'service_provider_cv_upload'}},
+    {purpose:'service_credential_rollback',actor:9,metadata:{source_type:'service_credential',source_id:'pending:9',purpose:'service_credential_upload'}},
+    {purpose:'incident_source_rollback',actor:9,metadata:{source_type:'incident_attachment',source_id:'pending:123',purpose:'incident_evidence_upload'}},
+    {purpose:'courier_document_rollback',actor:9,metadata:{source_type:'courier_document',source_id:'pending:9',purpose:'courier_document_upload'}},
+    {purpose:'delivery_proof_rollback',actor:9,metadata:{source_type:'delivery_proof',source_id:'pending:123',purpose:'delivery_pickup_proof_upload'}},
+    {purpose:'support_ticket_rollback',actor:9,metadata:{source_type:'support_attachment',source_id:'pending:123',purpose:'support_attachment_upload'}},
+    {purpose:'profile_application_document_rollback',actor:null,metadata:{source_type:'profile_application_document',source_id:'pending:123',purpose:'profile_application_document_upload'}},
+    {purpose:'controlled_courier_fixture_rollback',actor:9,metadata:{source_type:'courier_document',source_id:'pending:55',owner_account_id:55,created_by_account_id:9,original_file_name:'controlled-courier-vehicle-attestation.pdf',purpose:'controlled_courier_fixture_evidence'}},
+    {purpose:'legacy_private_evidence_migration_race_cleanup',actor:null,metadata:{source_type:'incident_attachment',source_id:'123',owner_account_id:null,created_by_account_id:null,purpose:'legacy_private_evidence_migration'}},
+    {purpose:'legacy_private_evidence_migration_rollback',actor:null,metadata:{source_type:'service_credential',source_id:'44',owner_account_id:55,created_by_account_id:null,purpose:'legacy_private_evidence_migration'}}
+  ];
+  for(const item of cases){
+    const harness=makePrivateEvidenceDeleteHarness(pendingEvidence(item.metadata));
+    const deleted=await deletePrivateEvidence(harness.pool,{
+      objectId:23,actorAccountId:item.actor,purpose:item.purpose,env:configured,
+      deleteObjectFn:async()=>{}
+    });
+    assert.equal(deleted,true,item.purpose+' remains an eligible internal cleanup');
+    assert.equal(harness.row.retention_state,'deleted',item.purpose+' finalizes only after storage success');
+  }
+});
+
+test('purchase cleanup purposes cannot cross receipt and supplementary-attachment source types',async()=>{
+  const attachment=makePrivateEvidenceDeleteHarness(pendingEvidence({
+    source_type:'merchant_purchase_document_attachment_pending',
+    source_id:'57:request-key',purpose:'purchase_accounting_supplement'
+  }));
+  await assert.rejects(
+    ()=>deletePrivateEvidence(attachment.pool,{objectId:23,actorAccountId:9,purpose:'failed_purchase_receipt_cleanup',env:configured,deleteObjectFn:async()=>{}}),
+    error=>error?.status===409&&error?.code==='PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED'
+  );
+  const receipt=makePrivateEvidenceDeleteHarness(pendingEvidence({
+    source_type:'merchant_purchase_document',source_id:'pending',purpose:'purchase_accounting_original'
+  }));
+  await assert.rejects(
+    ()=>deletePrivateEvidence(receipt.pool,{objectId:23,actorAccountId:9,purpose:'failed_purchase_document_attachment_cleanup',env:configured,deleteObjectFn:async()=>{}}),
+    error=>error?.status===409&&error?.code==='PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED'
+  );
+});
+
+test('non-purchase rollback purposes remain bound to their source owner and upload purpose',async()=>{
+  const wrongOwner=makePrivateEvidenceDeleteHarness(pendingEvidence({
+    owner_account_id:8,created_by_account_id:9,source_type:'service_provider_cv',
+    source_id:'9',purpose:'service_provider_cv_upload'
+  }));
+  await assert.rejects(
+    ()=>deletePrivateEvidence(wrongOwner.pool,{objectId:23,actorAccountId:9,purpose:'service_provider_cv_replaced',env:configured,deleteObjectFn:async()=>{}}),
+    error=>error?.status===409&&error?.code==='PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED'
+  );
+  const wrongUploadPurpose=makePrivateEvidenceDeleteHarness(pendingEvidence({
+    source_type:'courier_document',source_id:'pending:9',purpose:'courier_document_upload'
+  }));
+  await assert.rejects(
+    ()=>deletePrivateEvidence(wrongUploadPurpose.pool,{objectId:23,actorAccountId:9,purpose:'controlled_courier_fixture_rollback',env:configured,deleteObjectFn:async()=>{}}),
+    error=>error?.status===409&&error?.code==='PRIVATE_EVIDENCE_DELETE_NOT_ALLOWED'
+  );
 });
 
 test('private evidence cleanup fails closed when storage configuration is missing',async()=>{
