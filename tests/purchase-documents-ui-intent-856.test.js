@@ -13,7 +13,7 @@ const helperStart=source.indexOf('  function acknowledgedDocumentMatches(result,
 assert.ok(helperStart>=0&&helperStart<start,'literal shipped acknowledgement checker exists');
 const saveSource=source.slice(helperStart,end);
 const closeStart=source.indexOf('  function close(',end);
-const closeEnd=source.indexOf('\n  async function open(){',closeStart);
+const closeEnd=source.indexOf('\n  async function open(options={}){',closeStart);
 assert.ok(closeStart>=0&&closeEnd>closeStart,'literal shipped close controller must be present');
 const closeSource=source.slice(closeStart,closeEnd);
 

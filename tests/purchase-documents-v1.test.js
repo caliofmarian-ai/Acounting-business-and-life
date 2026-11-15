@@ -939,8 +939,8 @@ test('supplementary evidence is removed when the post-upload Merchant grant or r
 test('authenticated purchase-document wave covers supplementary evidence and exact private-object cleanup',async()=>{
   const qa=read('qa-purchase-documents-856.js');
   assert.equal((qa.match(/const otherArchive=/g)||[]).length,1,'one B archive read is declared');
-  assert.equal((qa.match(/DELETE FROM purchase_invoice_evidence WHERE business_id=\\$1/g)||[]).length,2,'both prior and final QA cleanup remove synthetic invoice rows');
-  assert.equal((qa.match(/DELETE FROM purchase_orders WHERE business_id=\\$1/g)||[]).length,2,'both prior and final QA cleanup remove synthetic PO rows');
+  assert.equal((qa.match(/DELETE FROM purchase_invoice_evidence WHERE business_id=\$1/g)||[]).length,2,'both prior and final QA cleanup remove synthetic invoice rows');
+  assert.equal((qa.match(/DELETE FROM purchase_orders WHERE business_id=\$1/g)||[]).length,2,'both prior and final QA cleanup remove synthetic PO rows');
   execFileSync(process.execPath,['--check',new URL('../qa-purchase-documents-856.js',import.meta.url).pathname]);
   const {__purchaseDocuments856TestFixtures}=await import('../qa-purchase-documents-856.js');
   const eicarBytes=Buffer.from(__purchaseDocuments856TestFixtures.eicarPdf.slice(
