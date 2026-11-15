@@ -1,0 +1,77 @@
+name: QA Bacoor Restaurant Exact Head 853
+on:
+  pull_request:
+    paths:
+      - 'qa/**'
+      - 'tests/qa-*853.test.js'
+      - '.github/workflows/qa-bacoor-exact-head-853.yml'
+      - 'scripts/qa-restaurant-db-postgres-853.mjs'
+permissions:
+  contents: read
+concurrency:
+  group: qa-bacoor-exact-head-853-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Assert literal head and run all six source-only fixture suites
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          for script in qa/restaurant-bacoor-*-853.js; do
+            node --check "$script"
+          done
+          mapfile -t suites < <(find tests -maxdepth 1 -type f -name 'qa-*853.test.js' | sort)
+          test "${#suites[@]}" -eq 6
+          printf 'Running six QA-only suites on %s:\n' "$EXPECTED_HEAD"
+          printf '%s\n' "${suites[@]}"
+          node --test "${suites[@]}"
+
+  postgres-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: abl_bacoor_853_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_bacoor_853_ci"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Literal-head disposable PostgreSQL 16 contract
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          GITHUB_ACTIONS: 'true'
+          QA_BACOOR_DISPOSABLE_PG: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: abl_bacoor_853_ci
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --test scripts/qa-restaurant-db-postgres-853.mjs

@@ -1,0 +1,306 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {computeRecipeBatch} from '../merchant-catalog-core.js';
+import {buildRestaurantBacoorDryRunPlan} from '../qa/restaurant-bacoor-dry-run-853.js';
+import {auditRestaurantBacoorRecipeBatchSnapshots as audit} from '../qa/restaurant-bacoor-recipe-audit-853.js';
+
+// Synthetic read projections, never a QA/Production DB connection or seed.
+const fixture=JSON.parse(readFileSync(
+  new URL('../qa/fixtures/ph-restaurant-bacoor-v1.json',import.meta.url),'utf8'));
+const plan=buildRestaurantBacoorDryRunPlan(fixture),B='987654321';
+const family={g:'mass',ml:'volume',unit:'count'};
+function snapshot(){
+  const inventoryRows=plan.inventory.map((entry,i)=>{
+    const x=entry.bodyTemplate;
+    return {id:String(1001+i),business_id:B,item:x.item,unit:x.unit,base_unit:x.unit,
+      measurement_family:family[x.unit],inventory_type:'ingredient',
+      quantity:String(x.quantity),reorder_level:String(x.reorder_level),
+      target_level:String(x.target_level),unit_cost:String(x.unit_cost)};
+  });
+  const stock=new Map(inventoryRows.map(row=>[row.item,row]));
+  const recipeProducts=fixture.recipes.map((recipe,i)=>{
+    const components=recipe.ingredients.map(part=>{
+      const ingredient=fixture.inventory.find(x=>x.code===part.ingredientCode);
+      return {inventory_id:Number(stock.get(ingredient.name).id),quantity:part.quantity,unit:part.unit};
+    });
+    const computed=computeRecipeBatch({
+      yield_quantity:recipe.yieldServings,yield_unit:'unit',
+      selling_quantity:1,selling_unit:'unit',components,inventory:inventoryRows
+    });
+    const byId=new Map(inventoryRows.map(row=>[Number(row.id),row]));
+    return {id:String(2001+i),business_id:B,...plan.recipeProducts[i].bodyTemplate,
+      recipe_batch:{
+        yield_quantity:String(computed.yield_quantity),yield_unit:computed.yield_unit,
+        yield_base_quantity:String(computed.yield_base_quantity),
+        yield_base_unit:computed.yield_base_unit,
+        selling_quantity:String(computed.selling_quantity),selling_unit:computed.selling_unit,
+        selling_base_quantity:String(computed.selling_base_quantity),
+        sale_units_per_batch:String(computed.sale_units_per_batch)
+      },
+      recipe_batch_components:computed.components.map(c=>{
+        const inv=byId.get(c.inventory_id);
+        return {inventory_id:String(c.inventory_id),item:inv.item,unit:inv.unit,
+          batch_quantity:String(c.batch_quantity),batch_unit:c.batch_unit,
+          base_quantity:String(c.base_quantity),base_unit:c.base_unit,
+          per_sale_quantity:String(c.per_sale_quantity),
+          percentage:c.percentage===null?null:String(c.percentage),
+          unit_cost:String(inv.unit_cost),
+          batch_cost:c.base_quantity*Number(inv.unit_cost)};
+      }),
+      recipe:computed.components.map(c=>{
+        const inv=byId.get(c.inventory_id);
+        return {inventory_id:String(c.inventory_id),item:inv.item,unit:inv.unit,
+          quantity:String(c.per_sale_quantity)};
+      })
+    };
+  });
+  return {targetBusinessId:B,inventoryRows,recipeProducts};
+}
+const run=x=>audit(fixture,x);
+function rejected(change){
+  const data=snapshot();change(data);
+  assert.throws(()=>run(data),/QA (recipe batch|inventory) audit refused/);
+}
+test('10 canonical batches, real per-sale bridge and all ingredient links are read-only',()=>{
+  const a=snapshot(),before=structuredClone(a),result=run(a);
+  assert.equal(result.status,'EXACT_PRIVATE_RECIPE_BATCH_SNAPSHOTS_ONLY');
+  assert.equal(result.executable,false);
+  assert.equal(result.recipeBatches,10);
+  assert.equal(result.componentLinks,fixture.recipes.reduce((n,x)=>n+x.ingredients.length,0));
+  assert.match(result.gate,/NO WRITES/);
+  assert.doesNotMatch(JSON.stringify(result),/"inventory_id"|"business_id"|"product_id"/);
+  assert.deepEqual(a,before);
+  assert.deepEqual(run({...a,inventoryRows:[...a.inventoryRows].reverse(),
+    recipeProducts:[...a.recipeProducts].reverse()}),result);
+});
+test('empty product projection remains blocked, not permission to create or replace batches',()=>{
+  const x=snapshot();x.recipeProducts=[];
+  const result=run(x);
+  assert.equal(result.status,'EMPTY_UNAPPROVED');
+  assert.equal(result.executable,false);
+  assert.match(result.gate,/NO WRITES/);
+});
+test('partial products, tenant swaps and product identity drift fail closed',()=>{
+  rejected(x=>{x.recipeProducts.pop();});
+  rejected(x=>{x.recipeProducts.push(structuredClone(x.recipeProducts[0]));});
+  rejected(x=>{x.recipeProducts[0].business_id='2';});
+  rejected(x=>{x.recipeProducts[0].id=x.recipeProducts[1].id;});
+  rejected(x=>{x.recipeProducts[0].name='Unrelated business dish';});
+  rejected(x=>{x.recipeProducts[0].active=true;});
+  rejected(x=>{x.recipeProducts[0].selling_price='0';});
+  rejected(x=>{x.recipeProducts[0].product_kind='fresh_direct';});
+  rejected(x=>{delete x.targetBusinessId;});
+});
+test('persisted batch yield, sales conversion and units must match canonical recipe',()=>{
+  rejected(x=>{x.recipeProducts[0].recipe_batch=null;});
+  rejected(x=>{x.recipeProducts[0].recipe_batch.yield_quantity='3';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch.selling_unit='g';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch.sale_units_per_batch='5';});
+  rejected(x=>{delete x.recipeProducts[0].recipe_batch.selling_base_quantity;});
+});
+test('persisted component quantities, costs and links cannot silently drift',()=>{
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components.pop();});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].inventory_id='999999';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].inventory_id=
+    x.recipeProducts[0].recipe_batch_components[1].inventory_id;});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].batch_quantity='1.9';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].unit_cost='0';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].batch_cost='0';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].item='Other item';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].base_unit='mlzzz';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].percentage='1.5';});
+});
+test('the legacy per-sale recipe stock bridge must match every batch component',()=>{
+  rejected(x=>{x.recipeProducts[0].recipe=[];});
+  rejected(x=>{x.recipeProducts[0].recipe[0].quantity='0.000001';});
+  rejected(x=>{x.recipeProducts[0].recipe[0].inventory_id='99999';});
+  rejected(x=>{x.recipeProducts[0].recipe[0].inventory_id=
+    x.recipeProducts[0].recipe[1].inventory_id;});
+  rejected(x=>{x.recipeProducts[0].recipe[0].item='Wrong ingredient';});
+});
+test('Inventory cost/stock drift, missing scoped IDs and malformed DB decimals are rejected',()=>{
+  rejected(x=>{x.inventoryRows[0].unit_cost='999.0';});
+  rejected(x=>{x.inventoryRows[0].quantity='0';});
+  rejected(x=>{x.inventoryRows[0].business_id='1';});
+  rejected(x=>{x.inventoryRows[0].id=x.inventoryRows[1].id;});
+  rejected(x=>{x.recipeProducts[0].recipe[0].quantity='NaN';});
+  rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].base_quantity='1e6';});
+});
+
+import {auditRestaurantBacoorCompleteSnapshots as auditAll}
+  from '../qa/restaurant-bacoor-composite-audit-853.js';
+
+function completeSnapshot(){
+  const data=snapshot();
+  data.catalogProducts=plan.privateCatalog.map((entry,i)=>({
+    id:String(3001+i),...entry.bodyTemplate,business_id:B,
+    active:true,inventory_id:null,stock_tracked:false,stock_quantity:null
+  }));
+  return data;
+}
+test('cross-store diagnostic accepts only complete private 37+10+10 and 10 linked batches',()=>{
+  const data=completeSnapshot(),original=structuredClone(data);
+  const got=auditAll(fixture,data);
+  assert.equal(got.status,'EXACT_PRIVATE_CROSS_STORE_SNAPSHOTS_ONLY');
+  assert.equal(got.executable,false);
+  assert.deepEqual([got.inventory,got.recipeProducts,got.catalogProducts,
+    got.recipeBatches,got.componentLinks],[37,10,10,10,97]);
+  assert.match(got.gate,/NO WRITES/);
+  assert.doesNotMatch(JSON.stringify(got),/"business_id"|"inventory_id"|"product_id"|"accountId"/);
+  assert.deepEqual(data,original);
+  assert.deepEqual(auditAll(fixture,{...data,
+    inventoryRows:[...data.inventoryRows].reverse(),
+    recipeProducts:[...data.recipeProducts].reverse(),
+    catalogProducts:[...data.catalogProducts].reverse()}),got);
+});
+test('all three stores empty means unapproved, not permission to provision',()=>{
+  const data=completeSnapshot();
+  data.inventoryRows=[];data.recipeProducts=[];data.catalogProducts=[];
+  const got=auditAll(fixture,data);
+  assert.equal(got.status,'ALL_STORES_EMPTY_UNAPPROVED');
+  assert.equal(got.executable,false);
+  assert.match(got.gate,/NO WRITES/);
+});
+test('partial or drifted stores cannot masquerade as an empty QA restaurant',()=>{
+  const cases=[
+    x=>{x.inventoryRows=[];},
+    x=>{x.recipeProducts=[];x.catalogProducts=[];},
+    x=>{x.recipeProducts=[];},
+    x=>{x.catalogProducts=[];},
+    x=>{x.catalogProducts.pop();},
+    x=>{x.inventoryRows[0].quantity='0';},
+    x=>{x.catalogProducts[0].published=true;},
+    x=>{x.catalogProducts[0].business_id='99';},
+    x=>{x.recipeProducts[0].recipe_batch_components[0].batch_quantity='999';},
+    x=>{delete x.targetBusinessId;},
+    x=>{delete x.catalogProducts;}
+  ];
+  for(const change of cases){
+    const data=completeSnapshot();change(data);
+    assert.throws(()=>auditAll(fixture,data),/QA (cross-store|inventory|product|recipe batch) audit refused/);
+  }
+});
+
+
+import {readRestaurantBacoorDatabaseSnapshot as readDbSnapshot}
+  from '../qa/restaurant-bacoor-db-snapshot-853.js';
+
+// These are synthetic SQL-result fixtures. No PostgreSQL session is opened by
+// this test: real isolated QA authorization and the seeder remain separate.
+function dbSnapshotHarness(change={}){
+  const calls=[],authority=change.authority===undefined?
+    [{id:'987654321',name:fixture.business.name,country_code:'PH',currency_code:'PHP',
+      account_mode:'company_test',test_role:'merchant',auth_status:'active',profile_status:'active'}]:
+    change.authority;
+  const fixtureRows={
+    authority,storefront:change.storefront||[],inventory:change.inventory||[],
+    products:change.products||[],catalog:change.catalog||[],batches:change.batches||[],
+    components:change.components||[],legacy:change.legacy||[]
+  };
+  let released=false,connected=0;
+  const client={
+    async query(sql,params){
+      calls.push({sql,params});
+      if(change.failOn&&sql.includes(change.failOn))throw new Error('synthetic read interruption');
+      if(/^BEGIN |^SET LOCAL |^ROLLBACK$/.test(sql))return {rows:[],rowCount:0};
+      let kind=null;
+      if(sql.includes('FROM businesses b'))kind='authority';
+      else if(sql.includes('FROM merchant_storefronts'))kind='storefront';
+      else if(sql.includes('FROM inventory WHERE'))kind='inventory';
+      else if(sql.includes('FROM products WHERE'))kind='products';
+      else if(sql.includes('FROM marketplace_products'))kind='catalog';
+      else if(sql.includes('FROM product_recipe_batches'))kind='batches';
+      else if(sql.includes('FROM recipe_batch_components'))kind='components';
+      else if(sql.includes('FROM recipes r'))kind='legacy';
+      assert.ok(kind,'unexpected read-only SQL contract');
+      assert.deepEqual(params,kind==='authority'?['987654321','123456789']:
+        ['987654321']);
+      return {rows:fixtureRows[kind],rowCount:fixtureRows[kind].length};
+    },
+    release(){released=true}
+  };
+  return {
+    connect:async()=>{connected++;return client},
+    calls,wasReleased:()=>released,connections:()=>connected
+  };
+}
+const qaDbOptions=h=>({
+  connect:h.connect,accountId:'123456789',businessId:'987654321',fixture
+});
+test('one READ ONLY repeatable-read snapshot classifies a truly empty isolated Merchant fixture but permits no write',async()=>{
+  const h=dbSnapshotHarness();
+  const outcome=await readDbSnapshot(qaDbOptions(h));
+  assert.equal(outcome.status,'ALL_STORES_EMPTY_UNAPPROVED');
+  assert.equal(outcome.readOnly,true);
+  assert.equal(outcome.consistentSnapshot,true);
+  assert.equal(outcome.executable,false);
+  assert.match(outcome.gate,/NO WRITES/);
+  assert.doesNotMatch(JSON.stringify(outcome),/"accountId"|"businessId"|"987654321"/);
+  assert.equal(h.connections(),1);
+  assert.equal(h.wasReleased(),true);
+  assert.equal(h.calls[0].sql,'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+  assert.equal(h.calls.filter(x=>x.sql.startsWith('SELECT ')).length,8);
+  assert.ok(h.calls.every(x=>/^(BEGIN|SET LOCAL|SELECT|ROLLBACK)/.test(x.sql)));
+});
+test('real Merchant binding is mandatory: missing/wrong business scope aborts and rolls back',async()=>{
+  for(const authority of [[],[{id:'987654321',name:'QA Fish Kitchen',
+      country_code:'PH',currency_code:'PHP'}],[
+      {id:'987654321',name:fixture.business.name,country_code:'IE',currency_code:'EUR'}
+    ]]){
+    const h=dbSnapshotHarness({authority});
+    await assert.rejects(readDbSnapshot(qaDbOptions(h)),/exact active QA Merchant\/business binding unavailable/);
+    assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+    assert.equal(h.wasReleased(),true);
+  }
+});
+
+test('only an active, correctly designated company-test Merchant may read the QA fixture',async()=>{
+  const valid={id:'987654321',name:fixture.business.name,country_code:'PH',currency_code:'PHP',
+    account_mode:'company_test',test_role:'merchant',auth_status:'active',profile_status:'active'};
+  for(const change of [
+    {account_mode:'personal'},{account_mode:null},{test_role:'supplier'},
+    {test_role:null},{auth_status:'suspended'},{auth_status:'closed'},
+    {profile_status:'pending'},{profile_status:'revoked'}
+  ]){
+    const h=dbSnapshotHarness({authority:[{...valid,...change}]});
+    await assert.rejects(readDbSnapshot(qaDbOptions(h)),
+      /exact active QA Merchant\/business binding unavailable/);
+    const authoritySql=h.calls.find(q=>q.sql.includes('FROM businesses b'))?.sql||'';
+    for(const condition of [
+      "a.account_mode='company_test'","a.test_role='merchant'",
+      "a.auth_status='active'","p.status='active'"
+    ])assert.ok(authoritySql.includes(condition),'SQL must enforce '+condition);
+    assert.equal(h.calls.some(q=>q.sql.includes('FROM inventory WHERE')),false);
+    assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+    assert.equal(h.wasReleased(),true);
+  }
+});
+
+test('published or payment-enabled storefront cannot masquerade as a safe QA restaurant',async()=>{
+  const legal={business_id:'987654321',publication_status:'draft',merchant_domain:'food',
+    pickup_enabled:false,delivery_enabled:false,cash_enabled:false,online_enabled:false,
+    public_location_enabled:false,public_reputation_enabled:false,
+    price_comparison_enabled:false};
+  for(const storefront of [[{...legal,published:true,publication_status:'published'}],
+    [{...legal,cash_enabled:true}],[{...legal,business_id:'999999'}]]){
+    const h=dbSnapshotHarness({storefront});
+    await assert.rejects(readDbSnapshot(qaDbOptions(h)),/storefront is not a private/);
+    assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+  }
+});
+test('partial inventory is never treated as an empty restaurant and read failures release the client',async()=>{
+  for(const h of [dbSnapshotHarness({inventory:[{id:'1',business_id:'987654321',item:'Chicken meat'}]}),
+    dbSnapshotHarness({failOn:'FROM marketplace_products'})]){
+    await assert.rejects(readDbSnapshot(qaDbOptions(h)),/(QA (inventory|cross-store)|synthetic read interruption)/);
+    assert.equal(h.calls.at(-1).sql,'ROLLBACK');
+    assert.equal(h.wasReleased(),true);
+  }
+});
+test('invalid selected identities are rejected before acquiring any client',async()=>{
+  const h=dbSnapshotHarness();
+  await assert.rejects(readDbSnapshot({...qaDbOptions(h),accountId:'000123'}),/invalid account ID/);
+  await assert.rejects(readDbSnapshot({...qaDbOptions(h),businessId:'1 OR 1=1'}),/invalid business ID/);
+  assert.equal(h.connections(),0);
+});
