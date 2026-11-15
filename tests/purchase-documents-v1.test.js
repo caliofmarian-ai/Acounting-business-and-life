@@ -901,10 +901,43 @@ test('supplementary evidence is removed when the post-upload Merchant grant or r
   assert.equal(deleted,1,'uncommitted private upload is cleaned after the grant check fails');
 });
 
-test('authenticated purchase-document wave covers supplementary evidence and exact private-object cleanup',()=>{
+test('authenticated purchase-document wave covers supplementary evidence and exact private-object cleanup',async()=>{
   const qa=read('qa-purchase-documents-856.js');
   assert.equal((qa.match(/const otherArchive=/g)||[]).length,1,'one B archive read is declared');
   execFileSync(process.execPath,['--check',new URL('../qa-purchase-documents-856.js',import.meta.url).pathname]);
+  const {__purchaseDocuments856TestFixtures}=await import('../qa-purchase-documents-856.js');
+  const eicarBytes=Buffer.from(__purchaseDocuments856TestFixtures.eicarPdf.slice(
+    __purchaseDocuments856TestFixtures.eicarPdf.indexOf(',')+1
+  ),'base64');
+  const eicarSignature=Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*','ascii');
+  const objectBody=number=>{
+    const marker=Buffer.from(number+' 0 obj\n','ascii');
+    const start=eicarBytes.indexOf(marker);
+    const end=eicarBytes.indexOf(Buffer.from('endobj','ascii'),start);
+    assert.ok(start>=0&&end>start,'PDF object '+number+' is present');
+    return eicarBytes.subarray(start,end);
+  };
+  const catalog=objectBody(3),page=objectBody(4),embedded=objectBody(5);
+  const names=objectBody(6),embeddedNames=objectBody(7);
+  assert.ok(catalog.includes(Buffer.from('/Names 6 0 R','ascii'))&&catalog.includes(Buffer.from('/Pages 2 0 R','ascii')),
+    'PDF catalog references the page tree and indirect Names dictionary');
+  assert.ok(page.includes(Buffer.from('/Parent 2 0 R','ascii')),
+    'PDF page references the actual Pages object');
+  assert.ok(names.includes(Buffer.from('/EmbeddedFiles 7 0 R','ascii'))&&
+    embeddedNames.includes(Buffer.from('/Names [(eicar.com) << /Type /Filespec','ascii'))&&
+    embeddedNames.includes(Buffer.from('/EF << /F 5 0 R >>','ascii')),
+    'PDF name tree contains a direct Filespec dictionary pointing to the attachment');
+  const embeddedStreamStart=embedded.indexOf(Buffer.from('stream\n','ascii'));
+  const embeddedStreamEnd=embedded.indexOf(Buffer.from('\nendstream','ascii'),embeddedStreamStart);
+  const eicarSignatureOffset=embedded.indexOf(eicarSignature);
+  assert.ok(embedded.includes(Buffer.from('/Type /EmbeddedFile','ascii'))&&
+    embedded.includes(Buffer.from('/Length 68','ascii'))&&
+    !embedded.includes(Buffer.from('/Params','ascii'))&&
+    !embedded.includes(Buffer.from('/Filter','ascii'))&&
+    embeddedStreamStart>=0&&embeddedStreamEnd>embeddedStreamStart&&
+    eicarSignatureOffset>embeddedStreamStart&&
+    eicarSignatureOffset+eicarSignature.length<=embeddedStreamEnd,
+    'PDF contains the exact EICAR bytes in the pypdf-compatible uncompressed EmbeddedFile stream');
   for(const fragment of [
     "const supportingPath='/api/procurement/purchase-documents/'+fileId+'/evidence';",
     "const supportingInput={business_id:a,client_request_key:supportingKey,file_name:supportingFileName,data_url:png};",
@@ -917,6 +950,16 @@ test('authenticated purchase-document wave covers supplementary evidence and exa
     "exact(restoredDetail.json?.supplementary_evidence?.length,1",
     "DELETE FROM merchant_purchase_document_evidence WHERE id=$1",
     "merchant_purchase_document_attachment_pending",
-    "supplementary_evidence_cleanup:true"
+    "supplementary_evidence_cleanup:true",
+    "exact(jpegUpload.status,201",
+    "exact(pdfUpload.status,201",
+    "exact(mismatch.status,400",
+    "exact(unsupported.status,400",
+    "exact(oversized.status,413",
+    "exact(infected.status,422",
+    "exact(wrongProfileArchive.status,403",
+    "exact(wrongProfileWrite.status,403",
+    "scan_status,'quarantined'",
+    "malware_quarantine_cleanup:true"
   ])assert.ok(qa.includes(fragment),'authenticated receipt acceptance is missing '+fragment);
 });
