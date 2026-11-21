@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const server=readFileSync(new URL('../server-orders.js',import.meta.url),'utf8');
+const ui=readFileSync(new URL('../public/merchant-voice-order-ui.js',import.meta.url),'utf8');
+const css=readFileSync(new URL('../public/merchant-voice-order.css',import.meta.url),'utf8');
+test('voice routes reuse the canonical Merchant role, private Catalog and the existing Orders owner',()=>{
+  assert.match(server,/installMerchantVoiceOrderRoutes\(app,/);
+  assert.match(server,/requireMerchant\s*,\s*catalogForBusiness/);
+  assert.match(server,/merchantCounterCatalog\(pool,\s*\{businessId\}\)/);
+  assert.match(server,/ensureVoiceOrderUsageSchema\(pool\)/);
+  assert.doesNotMatch(server,/app\.post\('\/api\/orders\/voice\/create/);
+});
+test('voice UI injection is gated by an explicit production setting and stays separate from active Orders UI',()=>{
+  assert.match(server,/ORDER_VOICE_UI_ENABLED==='1'/);
+  assert.match(server,/merchant-voice-order-ui\.js/);
+  assert.match(server,/merchant-voice-order\.css/);
+  assert.match(ui,/ordersWorkspace/);
+  assert.match(ui,/counterOrderForm/);
+  assert.match(ui,/SpeechRecognition/);
+  assert.match(ui,/abl:business-workspace-changed/);
+  assert.match(ui,/abl:auth-expired/);
+  assert.match(ui,/previous_draft/);
+});
+test('voice UI protects operator consent, offers editable text fallback and never calls order creation/payment',()=>{
+  assert.match(ui,/merchantVoiceConsent/);
+  assert.match(ui,/merchantVoiceText/);
+  assert.match(ui,/merchantVoiceStop/);
+  assert.match(ui,/merchantVoiceClear/);
+  assert.match(ui,/merchantVoiceReadback/);
+  assert.match(ui,/merchantVoiceQuote/);
+  assert.match(ui,/Check the recognized words, then tap Prepare draft/);
+  assert.match(ui,/state.open\|\|state.draft/);
+  assert.match(ui,/\/api\/orders\/voice\/quote/);
+  assert.match(ui,/SpeechSynthesisUtterance/);
+  assert.match(ui,/fetch\('\/api\/accounting\/workspaces/);
+  assert.doesNotMatch(ui,/\/api\/orders\/merchant\/create/);
+  assert.doesNotMatch(ui,/localStorage|sessionStorage/);
+  assert.doesNotMatch(ui,/MediaRecorder/);
+  assert.match(css,/min-height:44px/);
+});
