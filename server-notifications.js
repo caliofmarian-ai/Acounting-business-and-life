@@ -18,6 +18,7 @@ import { bootstrapResendWebhook,resendWebhookReadiness } from './resend-webhook-
 import { startEmbeddedAdminOperations,stopEmbeddedAdminOperations } from './server-admin-operations.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {ensureInventoryNotificationSchema,scanInventoryNotifications} from './inventory-notification-scanner.js';
+import {ensureCustomerSalesDocumentsSchema,registerCustomerSalesDocumentRoutes} from './customer-sales-documents.js';
 import {AUTH_SESSION_TTL_MS,verifyV2SessionTokenSignature} from './auth-session-core.js';
 import {sessionCredentialFromHeaders} from './session-cookie-core.js';
 
@@ -43,7 +44,8 @@ const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correla
 async function upstream(path,options={}){return authHardeningFetch(path,options)}
 export function isNotificationsOwnedPath(path=''){
   const pathname=String(path||'').split('?')[0];
-  return pathname==='/notifications.css'
+  return pathname==='/order-sales-documents-ui.js'
+    ||pathname==='/notifications.css'
     ||pathname==='/notifications-ui.js'
     ||pathname==='/notifications-sw.js'
     ||pathname==='/manifest.webmanifest'
@@ -78,7 +80,7 @@ export async function notificationsFetch(path,options={}){
     const r=await upstream(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n  <link rel="stylesheet" href="/notifications.css" />\n</head>')
-      .replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/notifications-ui.js"></script>\n  <script type="module" src="/knowledge-entry.js"></script>\n</body>');
+      .replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/notifications-ui.js"></script>\n  <script type="module" src="/knowledge-entry.js"></script>\n  <script type="module" src="/order-sales-documents-ui.js"></script>\n</body>');
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
   }
   return upstream(path,options);
@@ -464,6 +466,7 @@ app.post('/api/notifications/webhooks/resend',express.raw({type:'application/jso
 app.get('/health',async(req,res)=>{const r=await notificationsFetch('/health',{headers:req.headers});const payload=await r.json().catch(()=>({ok:false}));res.status(r.status).json(payload)});
 app.get('/notifications.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','notifications.css'),'utf8')));
 app.get('/notifications-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','notifications-ui.js'),'utf8')));
+app.get('/order-sales-documents-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','order-sales-documents-ui.js'),'utf8')));
 app.get('/notifications-sw.js',(_q,res)=>res.type('application/javascript').set('Service-Worker-Allowed','/').send(readFileSync(join(__dirname,'public','notifications-sw.js'),'utf8')));
 app.get('/manifest.webmanifest',(_q,res)=>res.type('application/manifest+json').send(readFileSync(join(__dirname,'public','manifest.webmanifest'),'utf8')));
 async function root(req,res){const r=await notificationsFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
@@ -568,6 +571,8 @@ app.get('/api/notifications/push/config',async(_req,res)=>res.json({enabled:Bool
 app.post('/api/notifications/push/subscribe',body,async(req,res,next)=>{try{const me=await identity(req),endpoint=clean(req.body?.endpoint,2000),p256dh=clean(req.body?.keys?.p256dh,1000),auth=clean(req.body?.keys?.auth,1000);if(!endpoint||!p256dh||!auth)return res.status(400).json({error:'Valid push subscription required'});await pool.query(`INSERT INTO push_subscriptions(account_id,endpoint,p256dh,auth,user_agent,last_seen_at,revoked_at) VALUES($1,$2,$3,$4,$5,NOW(),NULL) ON CONFLICT(endpoint) DO UPDATE SET account_id=EXCLUDED.account_id,p256dh=EXCLUDED.p256dh,auth=EXCLUDED.auth,user_agent=EXCLUDED.user_agent,last_seen_at=NOW(),revoked_at=NULL`,[me.account.id,endpoint,p256dh,auth,clean(req.headers['user-agent'],400)]);res.json({ok:true})}catch(e){next(e)}});
 app.delete('/api/notifications/push/subscriptions',async(req,res,next)=>{try{const me=await identity(req);await pool.query(`UPDATE push_subscriptions SET revoked_at=NOW() WHERE account_id=$1 AND revoked_at IS NULL`,[me.account.id]);res.json({ok:true})}catch(e){next(e)}});
 
+registerCustomerSalesDocumentRoutes({app,pool,body,identity});
+
 app.use((req,res,next)=>{
   if(!adminApp)return res.status(503).json({error:'Admin + Support runtime is not ready'});
   return adminApp(req,res,next);
@@ -597,6 +602,7 @@ export async function startEmbeddedNotifications(){
       adminApp=await startEmbeddedAdminOperations();
       adminReady=true;
       await ensureNotificationSchema(pool);
+      await ensureCustomerSalesDocumentsSchema(pool);
       await ensureInventoryNotificationSchema(pool);
       await bootstrapResendObservability();
       workerTimer=setInterval(runWorker,8000);

@@ -1,0 +1,1347 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {
+  commercialOrderDocument,orderDocumentDigest,salesDocumentMessage,salesDocumentPrintHtml,
+  privateCustomerSalesDocumentResponse,registerCustomerSalesDocumentRoutes,customerSalesDocumentInternals,
+  readConsistentOrderForDocument
+} from '../customer-sales-documents.js';
+
+
+test('immutable sales document reads one read-only repeatable-read PostgreSQL snapshot',async()=>{
+  const calls=[];
+  let released=0,poolReads=0,liveRevision='before';
+  const historicalOrder=makeOrder();
+  const client={
+    async query(sql){
+      calls.push(sql);
+      if(sql.startsWith('BEGIN TRANSACTION'))return{rowCount:0,rows:[]};
+      if(sql==='COMMIT')return{rowCount:0,rows:[]};
+      if(sql.includes('FROM orders o JOIN businesses')){
+        liveRevision='after';
+        return{rowCount:1,rows:[{...historicalOrder}]};
+      }
+      if(sql.includes('FROM order_items'))return{rowCount:1,rows:historicalOrder.items};
+      if(sql.includes('FROM order_payments'))return{rowCount:0,rows:[]};
+      if(sql.includes('FROM order_status_events'))return{rowCount:0,rows:[]};
+      throw Error('Unexpected SQL in immutable read: '+sql);
+    },
+    release(){released++}
+  };
+  const pool={
+    connect:async()=>client,
+    async query(){poolReads++;throw Error('Split pool query is forbidden for immutable evidence')}
+  };
+  const detail=await readConsistentOrderForDocument(pool,123);
+  assert.equal(liveRevision,'after','the fixture represents a concurrent newer revision');
+  assert.equal(detail.total,historicalOrder.total);
+  assert.equal(detail.items[0].name_snapshot,'Bread & eggs');
+  assert.equal(commercialOrderDocument(detail).total,145);
+  assert.equal(calls[0],'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  assert.equal(calls.at(-1),'COMMIT');
+  assert.equal(calls.filter(x=>x.startsWith('SELECT')).length,4);
+  assert.equal(poolReads,0,'all order/line/payment/status SELECTs use one transaction client');
+  assert.equal(released,1);
+});
+
+test('failed immutable order read rolls back and releases its dedicated client',async()=>{
+  const calls=[];let releases=0;
+  const client={
+    async query(sql){
+      calls.push(sql);
+      if(sql==='BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'||sql==='ROLLBACK')
+        return{rowCount:0,rows:[]};
+      throw new Error('order read failed');
+    },
+    release(){releases++}
+  };
+  await assert.rejects(()=>readConsistentOrderForDocument({connect:async()=>client},123),
+    /order read failed/);
+  assert.deepEqual(calls,['BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+    'SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1',
+    'ROLLBACK']);
+  assert.equal(releases,1);
+});
+
+const read=x=>readFileSync(new URL('../'+x,import.meta.url),'utf8');
+const makeOrder=()=>({
+  id:123,business_id:44,customer_account_id:81,
+  business_name:'Shop & Market',
+  order_number:'BL-20261030-00123',
+  order_status:'completed',payment_status:'paid',
+  payment_method:'cash',currency_code:'PHP',
+  created_at:'2026-10-30T06:00:00Z',subtotal:'130.00',delivery_fee:'15.00',
+  total:'145.00',paid_amount:'145.00',outstanding_amount:'0',
+  items:[{id:1,name_snapshot:'Bread & eggs',quantity:'2',unit_price_snapshot:'65.00',line_total:'130.00'}]
+});
+
+test('Merchant-recorded payment has separate commercial label, not automatic fiscal authority',()=>{
+  const x=commercialOrderDocument(makeOrder(),new Date('2026-10-30T08:00:00Z'));
+  assert.equal(x.document_class,'payment_record');
+  assert.equal(x.official_tax_invoice,false);
+  assert.equal(x.fiscal_status,'internal_evidence');
+  assert.equal(x.merchant_recorded_payment,145);
+  assert.equal(x.amount_due,0);
+  assert.equal(x.items.length,1);
+  assert.match(x.disclaimer,/not a BIR-issued/i);
+  const msg=salesDocumentMessage(x);
+  assert.equal(msg.total,'145.00');
+  assert.match(msg.item_summary,/Bread & eggs/);
+  assert.match(msg.document_disclaimer,/not a BIR tax invoice/);
+});
+
+test('exact NUMERIC(12,2) cents survive high-value immutable order evidence',()=>{
+  const order=makeOrder();
+  const largeOrder=amount=>({
+    ...order,
+    subtotal:amount,delivery_fee:'0.00',total:amount,
+    paid_amount:amount,outstanding_amount:'0.00',
+    items:[{...order.items[0],quantity:'1',unit_price_snapshot:amount,line_total:amount}]
+  });
+  for(const amount of ['9900000003.03','9999999999.99',9900000003.03]){
+    const snapshot=commercialOrderDocument(largeOrder(amount));
+    assert.equal(snapshot.total,Number(amount));
+    assert.equal(snapshot.merchant_recorded_payment,Number(amount));
+    assert.equal(snapshot.items[0].line_total,Number(amount));
+    assert.match(salesDocumentPrintHtml(snapshot),/Total: PHP/);
+  }
+  const split=commercialOrderDocument({
+    ...largeOrder('9900000003.03'),
+    paid_amount:'9900000003.02',outstanding_amount:'0.01'
+  });
+  assert.equal(Math.round(split.merchant_recorded_payment*100)+Math.round(split.amount_due*100),
+    Math.round(split.total*100),'partial high-value payment stays balanced in integer cents');
+  for(const amount of ['10000000000.00','9900000003.031',[-1],true,'+9900000003.03']){
+    assert.throws(()=>commercialOrderDocument(largeOrder(amount)),
+      /monetary evidence is invalid/,'reject unrepresentable/invalid decimal '+String(amount));
+  }
+});
+
+test('Merchant completed an unpaid order: show order summary, never paid',()=>{
+  const x=commercialOrderDocument({
+    ...makeOrder(),payment_status:'unpaid',paid_amount:0,outstanding_amount:145
+  });
+  assert.equal(x.document_class,'order_summary');
+  assert.equal(x.merchant_recorded_payment,0);
+  assert.equal(x.amount_due,145);
+});
+
+test('Cannot issue purchase document for a cancelled order or unfinalized unpaid order',()=>{
+  assert.throws(()=>commercialOrderDocument({...makeOrder(),order_status:'cancelled'}),/Cancelled orders/);
+  assert.throws(()=>commercialOrderDocument({...makeOrder(),order_status:'awaiting_payment',paid_amount:0,outstanding_amount:145}),/after recorded payment or order completion/);
+  assert.throws(()=>commercialOrderDocument({...makeOrder(),customer_account_id:null}),/Customer account/);
+});
+
+test('Economic snapshot digest stays constant across document generation timestamps',()=>{
+  const a=commercialOrderDocument(makeOrder(),new Date('2026-10-30T09:00:00Z'));
+  const b=commercialOrderDocument(makeOrder(),new Date('2026-10-30T10:00:00Z'));
+  assert.equal(orderDocumentDigest(a),orderDocumentDigest(b));
+  const c=commercialOrderDocument({...makeOrder(),paid_amount:120,outstanding_amount:25});
+  assert.notEqual(orderDocumentDigest(a),orderDocumentDigest(c));
+});
+
+test('Immutable order date requires an unambiguous real instant, stable for PostgreSQL Date',()=>{
+  const base=makeOrder();
+  for(const value of [undefined,null,'','2026-10-30T06:00:00','2026-10-30 06:00:00Z',
+    '2026-02-30T06:00:00Z','2025-02-29T06:00:00Z','2026-13-01T06:00:00Z',
+    '2026-12-01T25:00:00Z','not-a-date',new Date('invalid')]){
+    assert.throws(()=>commercialOrderDocument({...base,created_at:value}),
+      /Order date evidence is invalid/,'invalid/ambiguous timestamp: '+String(value));
+  }
+  const explicit='2026-10-30T06:00:00Z';
+  const asText=commercialOrderDocument({...base,created_at:explicit});
+  const asPgDate=commercialOrderDocument({...base,created_at:new Date(explicit)});
+  assert.equal(asText.created_at,explicit);
+  assert.equal(asPgDate.created_at,'2026-10-30T06:00:00.000Z');
+  assert.equal(asPgDate.created_at,new Date(explicit).toISOString());
+  assert.equal(orderDocumentDigest(asPgDate),
+    orderDocumentDigest(commercialOrderDocument({...base,created_at:new Date(explicit)})));
+  const offset=commercialOrderDocument({...base,created_at:'2026-10-30T14:00:00+08:00'});
+  assert.equal(offset.created_at,'2026-10-30T14:00:00+08:00');
+  assert.match(salesDocumentPrintHtml(offset),/Order date: 30 Oct 2026, 14:00 PHT/);
+  assert.equal(commercialOrderDocument({...base,created_at:'2024-02-29T06:00:00Z'}).created_at,
+    '2024-02-29T06:00:00Z','leap-year dates remain valid');
+});
+
+test('Printable order and record timestamps use Asia/Manila and preserve date rollover',()=>{
+  const snapshot=commercialOrderDocument(makeOrder(),new Date('2026-10-30T08:00:00.000Z'));
+  const html=salesDocumentPrintHtml(snapshot);
+  assert.match(html,/Order date: 30 Oct 2026, 14:00 PHT \(UTC\+08:00\)/);
+  assert.match(html,/Record date: 30 Oct 2026, 16:00 PHT \(UTC\+08:00\)/);
+  assert.doesNotMatch(html,/2026-10-30T06:00:00Z/);
+  assert.equal(snapshot.created_at,'2026-10-30T06:00:00Z','immutable source time stays UTC');
+  const nextDay=commercialOrderDocument({...makeOrder(),created_at:'2026-12-31T20:00:00Z'},
+    new Date('2026-12-31T20:30:00Z'));
+  assert.match(salesDocumentPrintHtml(nextDay),/Order date: 01 Jan 2027, 04:00 PHT/);
+  const invalid=salesDocumentPrintHtml({...snapshot,created_at:'<script>alert(1)</script>'});
+  assert.match(invalid,/Order date: Date unavailable/);
+  assert.doesNotMatch(invalid,/<script>/);
+});
+
+test('Printable Customer document escapes untrusted Merchant and Inventory text',()=>{
+  const x=commercialOrderDocument({
+    ...makeOrder(),business_name:'<script>alert(1)</script>',
+    items:[{...makeOrder().items[0],name_snapshot:'<img src=x onerror=alert(1)>'}]
+  });
+  const html=salesDocumentPrintHtml(x);
+  assert.doesNotMatch(html,/<script>/);
+  assert.doesNotMatch(html,/<img src=x/);
+  assert.match(html,/&lt;script&gt;/);
+  assert.match(html,/&lt;img src=x/);
+});
+
+test('Commercial order documents reject contradictory recorded line, subtotal and delivery totals',()=>{
+  const original=makeOrder();
+  const mismatchLine={...original,items:[{...original.items[0],line_total:'129.99'}]};
+  assert.throws(()=>commercialOrderDocument(mismatchLine),
+    /Order line, subtotal or delivery monetary evidence is inconsistent/);
+  const subtotalOnly={...original,subtotal:'129.99',
+    items:[{...original.items[0],line_total:'129.99'}]};
+  assert.throws(()=>commercialOrderDocument(subtotalOnly),
+    /Order line, subtotal or delivery monetary evidence is inconsistent/);
+  assert.throws(()=>commercialOrderDocument({...original,delivery_fee:'14.99'}),
+    /Order line, subtotal or delivery monetary evidence is inconsistent/);
+  const split=commercialOrderDocument({...original,items:[
+    {...original.items[0],id:1,quantity:'1',unit_price_snapshot:'70.00',line_total:'70.00'},
+    {...original.items[0],id:2,quantity:'1',unit_price_snapshot:'60.00',line_total:'60.00'}
+  ]});
+  assert.equal(split.items.length,2);
+  assert.equal(split.subtotal,130);
+  assert.equal(split.total,145);
+  const tiny=commercialOrderDocument({...original,
+    subtotal:'0.03',delivery_fee:'0.02',total:'0.05',
+    paid_amount:'0.05',outstanding_amount:'0.00',items:[
+      {...original.items[0],id:1,quantity:'1',unit_price_snapshot:'0.01',line_total:'0.01'},
+      {...original.items[0],id:2,quantity:'1',unit_price_snapshot:'0.02',line_total:'0.02'}
+    ]});
+  assert.equal(tiny.total,0.05,'cent-exact multi-line amounts are not compared as floats');
+  const variant=commercialOrderDocument({...original,items:[
+    {...original.items[0],unit_price_snapshot:'60.00',line_total:'130.00'}
+  ]});
+  assert.equal(variant.items[0].line_total,130,
+    'modifier/variant pricing uses the recorded final line price, not a guessed base price');
+});
+
+test('Commercial order identity is literal, never coerced from arrays, booleans or wrappers',()=>{
+  const base=makeOrder();
+  const canonical=commercialOrderDocument({...base,
+    id:'123',business_id:'44',customer_account_id:'81',
+    items:[{...base.items[0],id:'1'}]
+  });
+  assert.equal(canonical.source_order_id,123);
+  assert.equal(canonical.business_id,44);
+  assert.equal(canonical.customer_account_id,81);
+  assert.equal(canonical.items[0].item_id,1);
+  const invalid=[true,false,[1],{toString:()=> '1'},new Number(1),
+    new String('1'),'01','1e0',' 1 ','0x01',1.5,Number.MAX_SAFE_INTEGER+1];
+  for(const bad of invalid){
+    for(const field of ['id','business_id','customer_account_id']){
+      assert.throws(()=>commercialOrderDocument({...base,[field]:bad}),
+        error=>error.status>=400&&error.status<500,
+        field+' must reject a nonliteral economic identity');
+    }
+    assert.throws(()=>commercialOrderDocument({...base,
+      items:[{...base.items[0],id:bad}]
+    }),error=>error.status===400&&/Order line/.test(error.message));
+  }
+  for(const malformed of [undefined,null,{},'not a row',[],[null],[false],[[1]]]){
+    assert.throws(()=>commercialOrderDocument({...base,items:malformed}),
+      error=>error.status===409&&/Order line item evidence/.test(error.message),
+      'malformed line data must be a controlled conflict, not a 500');
+  }
+});
+
+test('Merchant-only send and private Customer read must enforce order and business identity',()=>{
+  const core=read('customer-sales-documents.js');
+  const server=read('server-notifications.js');
+  const notif=read('notification-core.js');
+  assert.match(core,/profile_business_bindings b ON b.account_id=a.id AND b.role='merchant' AND b.status='active'/);
+  assert.match(core,/JOIN business_memberships m/);
+  assert.match(core,/a.active_role='merchant'/);
+  assert.match(core,/Number\(document.customer_account_id\)===actor/);
+  assert.match(core,/Number\(order.business_id\)!==businessId/);
+  assert.match(core,/customer.rows\[0\].email_verified_at/);
+  assert.match(core,/SELECT id FROM customer_sales_documents WHERE id=\$1 FOR UPDATE/);
+  assert.match(core,/client_request_key/);
+  assert.match(core,/queue_status='pending'/);
+  assert.match(core,/queue_status='queued' AND created_at>NOW\(\)-INTERVAL '5 minutes'/);
+  assert.match(core,/mandatory:true,emailDefault:true,pushDefault:false/);
+  assert.match(core,/INSERT INTO customer_sales_documents/);
+  assert.match(core,/not a BIR-issued/i);
+  assert.match(server,/ensureCustomerSalesDocumentsSchema\(pool\)/);
+  assert.match(server,/registerCustomerSalesDocumentRoutes/);
+  assert.match(server,/order-sales-documents-ui.js/);
+  assert.match(notif,/event_code==='order.billing_document'&&!account.rows\[0\]\?\.email_verified_at/);
+});
+
+test('Email is a notification event, not new sale/paid money',()=>{
+  const core=read('customer-sales-documents.js');
+  assert.doesNotMatch(core,/INSERT INTO (order_payments|transactions|orders)/);
+  assert.doesNotMatch(core,/UPDATE orders SET/);
+  const notifications=read('notification-core.js');
+  assert.match(notifications,/\['order.billing_document','en-PH'/);
+  assert.match(notifications,/\['order.billing_document','fil-PH'/);
+});
+
+test('Immutable order documents reject truncation aliases and malformed currency evidence',()=>{
+  const base=makeOrder();
+  const valid=commercialOrderDocument(base);
+  const cases=[
+    {order_number:'O'.repeat(100)+'A'},
+    {business_name:'M'.repeat(200)+'A'},
+    {items:[{...base.items[0],name_snapshot:'P'.repeat(200)+'A'}]}
+  ];
+  for(const change of cases){
+    assert.throws(()=>commercialOrderDocument({...base,...change}),
+      /evidence exceeds supported length/,
+      'distinct literal source must never collapse into the same immutable snapshot');
+  }
+  const literal=commercialOrderDocument({...base,business_name:' '+base.business_name});
+  assert.notEqual(orderDocumentDigest(valid),orderDocumentDigest(literal),
+    'a changed Merchant name must not be trimmed into a prior document identity');
+  assert.equal(literal.business_name,' '+base.business_name);
+  for(const currency of ['PHPP',' PHP','PHP ','PH\\n',0,false,{},'']){
+    assert.throws(()=>commercialOrderDocument({...base,currency_code:currency}),
+      /Order currency evidence is invalid/,'invalid currency: '+String(currency));
+  }
+  assert.equal(commercialOrderDocument({...base,currency_code:'php'}).currency_code,'PHP');
+  assert.equal(commercialOrderDocument({...base,currency_code:null}).currency_code,'PHP',
+    'older missing currency evidence preserves the documented PH fallback');
+});
+
+test('Commercial records reject blank or non-text economic labels without aliasing valid identity',()=>{
+  const original=makeOrder();
+  for(const missing of [undefined,null,'','   ',42,{},false]){
+    assert.throws(()=>commercialOrderDocument({...original,business_name:missing}),
+      /Merchant name evidence is missing/,'Merchant identity: '+String(missing));
+    assert.throws(()=>commercialOrderDocument({...original,
+      items:[{...original.items[0],name_snapshot:missing}]}),
+      /Order line name evidence is missing/,'Product identity: '+String(missing));
+  }
+  for(const empty of ['','   ']){
+    if(empty===''){
+      assert.equal(commercialOrderDocument({...original,order_number:empty}).order_number,
+        String(original.id),'legacy missing order number may use stable numeric order ID');
+    }else{
+      assert.throws(()=>commercialOrderDocument({...original,order_number:empty}),
+        /Order number evidence is missing/);
+    }
+  }
+  const fallback=commercialOrderDocument({...original,order_number:null});
+  assert.equal(fallback.order_number,String(original.id));
+  const literal=commercialOrderDocument({...original,business_name:' '+original.business_name});
+  assert.equal(literal.business_name,' '+original.business_name);
+  assert.notEqual(orderDocumentDigest(literal),
+    orderDocumentDigest(commercialOrderDocument(original)),
+    'valid economic text retains its exact significant source bytes');
+});
+
+test('Malformed economic evidence is rejected before snapshot, email, or print',()=>{
+  const invalid=[null,undefined,true,NaN,Infinity,-Infinity,'','unavailable','Infinity','NaN',
+    '0x10','1e3','0.001','145.005','-1','10000000000.00','01.00'];
+  for(const field of ['paid_amount','outstanding_amount','total','subtotal','delivery_fee']){
+    for(const value of invalid)
+      assert.throws(()=>commercialOrderDocument({...makeOrder(),[field]:value}),
+        /monetary evidence is invalid/,field+' = '+String(value));
+  }
+  for(const field of ['unit_price_snapshot','line_total']){
+    for(const value of invalid)
+      assert.throws(()=>commercialOrderDocument({...makeOrder(),
+        items:[{...makeOrder().items[0],[field]:value}]}),
+        /monetary evidence is invalid/,field+' = '+String(value));
+  }
+  assert.throws(()=>commercialOrderDocument({...makeOrder(),paid_amount:'145.01',outstanding_amount:'0'}),
+    /monetary evidence is inconsistent/);
+  assert.throws(()=>commercialOrderDocument({...makeOrder(),paid_amount:'120',outstanding_amount:'0'}),
+    /monetary evidence is inconsistent/);
+  const snapshot=commercialOrderDocument(makeOrder());
+  for(const field of ['total','merchant_recorded_payment','amount_due','subtotal','delivery_fee']){
+    const damaged={...snapshot,[field]:'not-a-number'};
+    assert.throws(()=>salesDocumentPrintHtml(damaged),/monetary evidence is invalid/);
+    if(['total','merchant_recorded_payment','amount_due'].includes(field))
+      assert.throws(()=>salesDocumentMessage(damaged),/monetary evidence is invalid/);
+  }
+});
+
+test('Exact-cent full, partial, unpaid and zero-cost completed orders remain non-fiscal',()=>{
+  const unpaid=commercialOrderDocument({...makeOrder(),paid_amount:'0.00',
+    outstanding_amount:'145.00',payment_status:'unpaid'});
+  assert.equal(unpaid.document_class,'order_summary');
+  const partial=commercialOrderDocument({...makeOrder(),paid_amount:'70.05',
+    outstanding_amount:'74.95',payment_status:'partial'});
+  assert.equal(partial.document_class,'payment_record');
+  assert.equal(partial.merchant_recorded_payment,70.05);
+  assert.equal(partial.amount_due,74.95);
+  assert.equal(salesDocumentMessage(partial).paid,'70.05');
+  assert.equal(commercialOrderDocument(makeOrder()).merchant_recorded_payment,145);
+  const zero=commercialOrderDocument({...makeOrder(),subtotal:'0.00',delivery_fee:'0.00',
+    total:'0.00',paid_amount:'0.00',outstanding_amount:'0.00',
+    items:[{...makeOrder().items[0],unit_price_snapshot:'0.00',line_total:'0.00'}]});
+  assert.equal(zero.document_class,'order_summary');
+  assert.equal(zero.total,0);
+});
+
+
+test('Order item quantities preserve NUMERIC(12,3) values without coercion or precision loss',()=>{
+  for(const valid of ['2','0.125',0.125,'999999999.999']){
+    const snapshot=commercialOrderDocument({...makeOrder(),
+      items:[{...makeOrder().items[0],quantity:valid}]});
+    assert.equal(snapshot.items[0].quantity,Number(valid));
+  }
+  for(const invalid of [null,undefined,true,false,NaN,Infinity,'',' 2 ','0x10','1e3',
+    '+2','01.000','0','0.000','0.0001','1.0000','1000000000','-1',[],{}]){
+    assert.throws(()=>commercialOrderDocument({...makeOrder(),
+      items:[{...makeOrder().items[0],quantity:invalid}]}),
+    /Order quantity evidence is invalid/,'quantity = '+String(invalid));
+  }
+});
+
+test('Receipt idempotency keys never truncate or coerce into an existing retry key',async()=>{
+  let dbReads=0;
+  const run=documentRouteHarness({
+    identity:async()=>({account:{id:81}}),
+    pool:{query:async()=>{dbReads++;throw Error('Merchant database gate reached')}}
+  });
+  for(const invalid of ['a'.repeat(101),'a'.repeat(100)+'b',123456789012345,{}]){
+    const result=await run('/orders/123/send',{params:{id:'123'},
+      body:{business_id:44,client_request_key:invalid}});
+    assert.equal(result.error?.status,400);
+    assert.match(result.error?.message||'',/client_request_key/);
+    assert.equal(result.response,null);
+  }
+  assert.equal(dbReads,0,'invalid keys must not initiate business reads');
+  const valid=await run('/orders/123/send',{params:{id:'123'},
+    body:{business_id:44,client_request_key:'a'.repeat(100)}});
+  assert.match(valid.error?.message||'',/Merchant database gate reached/);
+  assert.equal(dbReads,1,'a valid 100-character key reaches authorization');
+});
+
+test('Padded or control-character email retry keys cannot alias the same stored send',async()=>{
+  // The two literal client keys are different; trimming one into the other
+  // would acknowledge an unrelated send rather than reject invalid input.
+  const key='retry_20261102_safe_12345';
+  let dbReads=0;
+  const run=documentRouteHarness({
+    identity:async()=>({account:{id:81}}),
+    pool:{query:async()=>{dbReads++;throw Error('Reached Merchant permission query')}}
+  });
+  for(const supplied of [' '+key,key+' ',key+'\n','\t'+key,key+'\r\n',key+'\u0000']){
+    const result=await run('/orders/123/send',{params:{id:'123'},
+      body:{business_id:44,client_request_key:supplied}});
+    assert.equal(result.error?.status,400,'invalid literal key must be rejected');
+    assert.match(result.error?.message||'',/client_request_key/);
+    assert.equal(result.response,null);
+  }
+  assert.equal(dbReads,0,'nonliteral keys must not access Merchant or financial data');
+  const good=await run('/orders/123/send',{params:{id:'123'},
+    body:{business_id:44,client_request_key:key}});
+  assert.match(good.error?.message||'',/Reached Merchant permission query/);
+  assert.equal(dbReads,1,'unaltered valid key proceeds to regular authorization');
+});
+
+test('All signed-in document endpoints are no-store and conditional GETs cannot 304',()=>{
+  const routes={use:[],get:[],post:[]};
+  const app={
+    use:(path,fn)=>routes.use.push({path,fn}),
+    get:(path,...handlers)=>routes.get.push({path,handlers}),
+    post:(path,...handlers)=>routes.post.push({path,handlers})
+  };
+  registerCustomerSalesDocumentRoutes({app,pool:{},body:()=>{},identity:()=>{}});
+  assert.equal(routes.use.length,1);
+  assert.equal(routes.use[0].path,'/api/notifications/order-sales-documents');
+  assert.equal(routes.use[0].fn,privateCustomerSalesDocumentResponse);
+  assert.equal(routes.get.length,5);
+  assert.equal(routes.post.length,1);
+  const headers={},vary=[];
+  const req={headers:{'if-none-match':'W/"old-private-body"',
+    'if-modified-since':'Fri, 30 Oct 2026 00:00:00 GMT'}};
+  const res={set(obj){Object.assign(headers,obj);return this},
+    vary(name){vary.push(name);return this}};
+  let called=0;
+  privateCustomerSalesDocumentResponse(req,res,()=>{called++});
+  assert.equal(called,1);
+  assert.equal(headers['Cache-Control'],'private, no-store, max-age=0');
+  assert.equal(headers['Pragma'],'no-cache');
+  assert.equal(headers['X-Content-Type-Options'],'nosniff');
+  assert.deepEqual(vary,['Cookie','Authorization']);
+  assert.equal(req.headers['if-none-match'],undefined);
+  assert.equal(req.headers['if-modified-since'],undefined);
+});
+
+function documentRouteHarness({pool,identity}){
+  const registered={};
+  const app={
+    use(){},
+    get:(path,...handlers)=>{registered[path]=handlers.at(-1)},
+    post:(path,...handlers)=>{registered[path]=handlers.at(-1)}
+  };
+  registerCustomerSalesDocumentRoutes({app,pool,identity,body:(_req,_res,next)=>next()});
+  return async (path,req={})=>{
+    let error=null,response=null;
+    const res={
+      json(v){response=v;return this},
+      send(v){response=v;return this},
+      set(){return this},
+      status(){return this},
+      type(){return this}
+    };
+    const base='/api/notifications/order-sales-documents';
+    const route=path.endsWith('/print')?'/:id/print'
+      :/^\/orders\/\d+\/send$/.test(path)?'/orders/:id/send':'/:id';
+    const handler=registered[base+path]||registered[base+route];
+    if(typeof handler!=='function')throw new Error('Missing document test route: '+path);
+    await handler({headers:{},query:{},params:{id:'72'},...req},res,e=>{error=e});
+    return{error,response};
+  };
+}
+function heldQuery(){
+  let started,release;
+  return{
+    started:new Promise(resolve=>{started=resolve}),
+    wait:new Promise(resolve=>{release=resolve}),
+    onRead:()=>started(),
+    release:()=>release()
+  };
+}
+test('Customer private list drops delayed data after account switch',async()=>{
+  const hold=heldQuery();
+  let identityCount=0;
+  const run=documentRouteHarness({
+    identity:async()=>({account:{id:++identityCount===1?81:82}}),
+    pool:{query:async()=>{hold.onRead();await hold.wait;
+      return{rows:[{id:72,order_id:123,business_id:44,customer_account_id:81,snapshot_json:{total:145}}]}}}
+  });
+  const pending=run('/my');
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,401);
+  assert.equal(result.response,null);
+  assert.equal(identityCount,2);
+});
+test('Merchant private lists reject permission revoked during database read',async()=>{
+  for(const path of ['/business','/merchant-orders']){
+    const hold=heldQuery();
+    let permissionReads=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:81}}),
+      pool:{query:async sql=>{
+        if(sql.includes('FROM accounts a')){
+          return{rowCount:++permissionReads===1?1:0};
+        }
+        hold.onRead();await hold.wait;
+        return{rows:[{id:72,order_id:123,business_id:44,customer_account_id:72,
+          snapshot_json:{total:145}}]};
+      }}
+    });
+    const pending=run(path,{query:{business_id:'44'}});
+    await hold.started;
+    hold.release();
+    const result=await pending;
+    assert.equal(result.error?.status,403,path);
+    assert.equal(result.response,null,path);
+    assert.equal(permissionReads,2,path);
+  }
+});
+test('Document detail and printable view reject account changed mid read',async()=>{
+  for(const path of ['/72','/72/print']){
+    const hold=heldQuery();
+    let identityCount=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:++identityCount===1?81:82}}),
+      pool:{query:async()=>{hold.onRead();await hold.wait;
+        return{rowCount:1,rows:[{id:72,order_id:123,business_id:44,
+          customer_account_id:81,snapshot_json:{order_number:'BL-123'}}]}}}
+    });
+    const pending=run(path);
+    await hold.started;
+    hold.release();
+    const result=await pending;
+    assert.equal(result.error?.status,401,path);
+    assert.equal(result.response,null,path);
+    assert.equal(identityCount,2,path);
+  }
+});
+test('Merchant document detail/print recheck binding after slow private lookup',async()=>{
+  for(const path of ['/72','/72/print']){
+    let permissionReads=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:81}}),
+      pool:{query:async sql=>sql.includes('FROM accounts a')
+        ?{rowCount:++permissionReads===1?1:0}
+        :{rowCount:1,rows:[{id:72,order_id:123,business_id:44,
+            customer_account_id:99,snapshot_json:{order_number:'BL-123'}}]}}
+    });
+    const result=await run(path);
+    assert.equal(result.error?.status,403,path);
+    assert.equal(result.response,null,path);
+    assert.equal(permissionReads,2,path);
+  }
+});
+
+test('Merchant list read A cannot return after workspace switches to B with both memberships still active',async()=>{
+  for(const path of ['/business','/merchant-orders']){
+    const hold=heldQuery();
+    let selected=44,permissions=0,preferenceReads=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:81}}),
+      pool:{query:async sql=>{
+        if(sql.includes('FROM accounts a')){permissions++;return{rowCount:1}}
+        if(sql.includes('FROM account_business_preferences')){
+          preferenceReads++;return{rows:[{business_id:selected}]};
+        }
+        if(sql.includes('FROM orders o')||sql.includes('FROM customer_sales_documents WHERE business_id=')){
+          hold.onRead();await hold.wait;
+          return{rows:[{id:72,order_id:123,business_id:44,customer_account_id:99,
+            snapshot_json:{order_number:'A-private-record'}}]};
+        }
+        throw Error('Unexpected SQL in Merchant read test: '+sql.slice(0,100));
+      }}
+    });
+    const pending=run(path,{query:{business_id:'44'}});
+    await hold.started;
+    selected=45; // Account preference changes while A's original read is pending.
+    hold.release();
+    const result=await pending;
+    assert.equal(result.error?.status,409,path);
+    assert.match(result.error?.message||'',/Merchant business changed/);
+    assert.equal(result.response,null,'A data must not be returned in B workspace');
+    assert.equal(permissions,2,'membership remains valid before and after read');
+    assert.equal(preferenceReads,1,'response requires selected workspace, not membership alone');
+  }
+});
+
+test('Merchant private detail and print deny late A document after switching selected business to B',async()=>{
+  for(const path of ['/72','/72/print']){
+    const hold=heldQuery();
+    let selected=44,permissions=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:81}}),
+      pool:{query:async sql=>{
+        if(sql.includes('FROM customer_sales_documents WHERE id=')){
+          hold.onRead();await hold.wait;
+          return{rowCount:1,rows:[{id:72,order_id:123,business_id:44,
+            customer_account_id:99,snapshot_json:commercialOrderDocument(makeOrder())}]};
+        }
+        if(sql.includes('FROM accounts a')){permissions++;return{rowCount:1}}
+        if(sql.includes('FROM account_business_preferences'))return{rows:[{business_id:selected}]};
+        throw Error('Unexpected SQL in Merchant document read: '+sql.slice(0,100));
+      }}
+    });
+    const pending=run(path);
+    await hold.started;
+    selected=45;
+    hold.release();
+    const result=await pending;
+    assert.equal(result.error?.status,409,path);
+    assert.equal(result.response,null,path);
+    assert.equal(permissions,2,'A membership is still active; selected B must block A');
+  }
+});
+
+test('Current Merchant business and the recipient Customer retain legitimate private document access',async()=>{
+  const snapshot=commercialOrderDocument(makeOrder());
+  let selected=44,preferences=0;
+  const doc={id:72,order_id:123,business_id:44,customer_account_id:99,snapshot_json:snapshot};
+  const pool={query:async sql=>{
+    if(sql.includes('FROM customer_sales_documents WHERE id='))return{rowCount:1,rows:[doc]};
+    if(sql.includes('FROM customer_sales_documents WHERE business_id='))return{rows:[doc]};
+    if(sql.includes('FROM accounts a'))return{rowCount:1};
+    if(sql.includes('FROM account_business_preferences')){
+      preferences++;return{rows:[{business_id:selected}]};
+    }
+    throw Error('Unexpected SQL in legitimate document read: '+sql.slice(0,100));
+  }};
+  const merchant=documentRouteHarness({pool,identity:async()=>({account:{id:81}})});
+  const view=await merchant('/72');
+  assert.equal(view.error,null);
+  assert.equal(view.response.document.order_id,123);
+  const list=await merchant('/business',{query:{business_id:'44'}});
+  assert.equal(list.error,null);
+  assert.equal(list.response.documents.length,1);
+  assert.equal(preferences,2);
+  selected=45;
+  const customer=documentRouteHarness({pool,identity:async()=>({account:{id:99}})});
+  const own=await customer('/72');
+  assert.equal(own.error,null,'Customer access must not depend on Merchant business selection');
+  const ownPrint=await customer('/72/print');
+  assert.equal(ownPrint.error,null);
+  assert.match(ownPrint.response,/Order BL-20261030-00123/);
+  assert.equal(preferences,2,'Customer reads never query Merchant workspace preference');
+});
+
+function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,authorized=()=>true,account=()=>81,activeBusiness=()=>44,recipient=()=>({email:'verified@example.test',email_verified_at:'2026-10-30'})}={}){
+  const state={permissions:0,identities:0,documentWrites:0,snapshotReads:0,queueStarts:0,queuePendingMarks:0,recipientReads:0,workspaceReads:0};
+  const order=makeOrder(),snapshot=commercialOrderDocument(order);
+  const pool={
+    query:async sql=>{
+      if(sql.includes('FROM accounts a'))
+        return{rowCount:authorized(++state.permissions)?1:0};
+      if(sql.includes('FROM account_business_preferences'))
+        return{rowCount:1,rows:[{business_id:activeBusiness(++state.workspaceReads)}]};
+      if(sql.includes('SELECT id FROM orders WHERE id='))
+        return{rowCount:1,rows:[{id:order.id}]};
+      if(sql.includes('SELECT o.*,b.name business_name'))
+        return{rowCount:1,rows:[order]};
+      if(sql.includes('FROM order_items'))
+        return{rowCount:1,rows:order.items};
+      if(sql.includes('FROM order_payments')||sql.includes('FROM order_status_events'))
+        return{rowCount:0,rows:[]};
+      if(sql.includes('SELECT email,email_verified_at FROM accounts')){
+        if(holdEmail){holdEmail.onRead();await holdEmail.wait;}
+        return{rowCount:1,rows:[recipient(++state.recipientReads)]};
+      }
+      if(sql.includes('INSERT INTO customer_sales_documents')){
+        state.documentWrites++;
+        if(holdInsert){holdInsert.onRead();await holdInsert.wait;}
+        return{rowCount:1,rows:[{id:72,order_id:order.id,business_id:order.business_id,
+          customer_account_id:order.customer_account_id,snapshot_json:snapshot}]};
+      }
+      if(sql.includes("UPDATE customer_sales_document_sends SET queue_status='queue_failed'")){
+        state.queuePendingMarks++;
+        return{rowCount:1};
+      }
+      throw Error('Unexpected SQL in send authorization test: '+sql.slice(0,100));
+    },
+    connect:async()=>{
+      // The order detail now uses a dedicated PostgreSQL repeatable-read
+      // transaction before the separate email queue transaction. Keep the
+      // fixture's existing deferred authorization hooks on its SELECTs.
+      if(!state.snapshotReads++){
+        return {
+          async query(sql){
+            if(sql.startsWith('BEGIN TRANSACTION')||sql==='COMMIT'||sql==='ROLLBACK')
+              return{rowCount:0,rows:[]};
+            return pool.query(sql);
+          },
+          release(){}
+        };
+      }
+      state.queueStarts++;
+      if(!holdQueue)throw Error('Unauthorized email queue was reached');
+      return{
+        query:async sql=>{
+          if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0};
+          if(sql.includes('FOR UPDATE')){
+            holdQueue.onRead();await holdQueue.wait;
+            return{rowCount:1,rows:[{id:72}]};
+          }
+          if(sql.includes('SELECT * FROM customer_sales_document_sends'))return{rowCount:0,rows:[]};
+          if(sql.includes('SELECT id FROM customer_sales_document_sends'))return{rowCount:0,rows:[]};
+          if(sql.includes('INSERT INTO customer_sales_document_sends'))return{
+            rowCount:1,rows:[{id:501,sent_by_account_id:81,customer_account_id:81,
+              queue_status:'pending',event_key:'test_event_501'}]
+          };
+          throw Error('Unexpected transactional SQL: '+sql.slice(0,100));
+        },release(){}
+      };
+    }
+  };
+  const run=documentRouteHarness({pool,identity:async()=>({account:{id:account(++state.identities)}})});
+  const send=()=>run('/orders/123/send',{params:{id:'123'},
+    body:{business_id:44,client_request_key:'verified_send_12345'}});
+  return{state,send};
+}
+
+test('Merchant receipt email revocation during verified-recipient read does not create or queue anything',async()=>{
+  const hold=heldQuery();
+  const {state,send}=sendRevocationHarness({holdEmail:hold,authorized:n=>n===1});
+  const pending=send();
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,403);
+  assert.equal(result.response,null);
+  assert.equal(state.permissions,2);
+  assert.equal(state.documentWrites,0);
+  assert.equal(state.queueStarts,0);
+});
+
+test('Merchant receipt email account switch during recipient lookup refuses side effects',async()=>{
+  const hold=heldQuery();
+  const {state,send}=sendRevocationHarness({holdEmail:hold,account:n=>n===1?81:82});
+  const pending=send();
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,401);
+  assert.equal(result.response,null);
+  assert.equal(state.identities,2);
+  assert.equal(state.documentWrites,0);
+  assert.equal(state.queueStarts,0);
+});
+
+test('Merchant receipt email revocation during document creation cannot enqueue mail',async()=>{
+  const hold=heldQuery();
+  const {state,send}=sendRevocationHarness({holdInsert:hold,authorized:n=>n<=2});
+  const pending=send();
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,403);
+  assert.equal(result.response,null);
+  assert.equal(state.permissions,3);
+  assert.equal(state.documentWrites,1);
+  assert.equal(state.queueStarts,0);
+});
+
+
+test('Merchant revocation during locked email queue wait rejects dispatch and clears newly pending attempt',async()=>{
+  const hold=heldQuery();
+  let allowed=true;
+  const {state,send}=sendRevocationHarness({holdQueue:hold,authorized:()=>allowed});
+  const pending=send();
+  await hold.started;
+  allowed=false;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,403);
+  assert.equal(result.response,null);
+  assert.equal(state.permissions,4);
+  assert.equal(state.queueStarts,1);
+  assert.equal(state.queuePendingMarks,1);
+});
+
+test('Account switch during locked send queue wait fails before emitting Customer email',async()=>{
+  const hold=heldQuery();
+  const {state,send}=sendRevocationHarness({holdQueue:hold,account:n=>n<=3?81:82});
+  const pending=send();
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,401);
+  assert.equal(result.response,null);
+  assert.equal(state.identities,4);
+  assert.equal(state.queueStarts,1);
+  assert.equal(state.queuePendingMarks,1);
+});
+
+test('Merchant workspace A to B switch during recipient lookup stops email before document creation',async()=>{
+  const hold=heldQuery();
+  let selected=44;
+  const {state,send}=sendRevocationHarness({holdEmail:hold,activeBusiness:()=>selected});
+  const pending=send();
+  await hold.started;
+  selected=45;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.match(result.error?.message||'',/Merchant business changed/);
+  assert.equal(result.response,null);
+  assert.equal(state.documentWrites,0);
+  assert.equal(state.queueStarts,0);
+});
+
+test('Merchant workspace switch during document insert refuses subsequent email queueing',async()=>{
+  const hold=heldQuery();
+  let selected=44;
+  const {state,send}=sendRevocationHarness({holdInsert:hold,activeBusiness:()=>selected});
+  const pending=send();
+  await hold.started;
+  selected=45;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.equal(result.response,null);
+  assert.equal(state.documentWrites,1,'saved immutable document is not an email');
+  assert.equal(state.queueStarts,0);
+});
+
+test('Merchant workspace switch during locked send attempt prevents queued email',async()=>{
+  const hold=heldQuery();
+  let selected=44;
+  const {state,send}=sendRevocationHarness({holdQueue:hold,activeBusiness:()=>selected});
+  const pending=send();
+  await hold.started;
+  selected=45;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.match(result.error?.message||'',/Merchant business changed/);
+  assert.equal(result.response,null);
+  assert.equal(state.queueStarts,1);
+  assert.equal(state.queuePendingMarks,1,'unsent pending attempt must not throttle valid requests');
+  assert.ok(state.workspaceReads>=3,'selected workspace is checked at each authorization boundary');
+});
+
+test('Recipient verification revoked during email queue row lock prevents dispatch',async()=>{
+  const hold=heldQuery();
+  let verified=true;
+  const {state,send}=sendRevocationHarness({
+    holdQueue:hold,
+    recipient:()=>({email:'verified@example.test',email_verified_at:verified?'2026-10-30':null})
+  });
+  const pending=send();
+  await hold.started;
+  verified=false;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.match(result.error.message,/verified email changed/);
+  assert.equal(result.response,null);
+  assert.equal(state.recipientReads,4);
+  assert.equal(state.queuePendingMarks,1);
+});
+
+test('Recipient email changed to another verified address during row lock prevents dispatch',async()=>{
+  const hold=heldQuery();
+  let email='verified@example.test';
+  const {state,send}=sendRevocationHarness({
+    holdQueue:hold,
+    recipient:()=>({email,email_verified_at:'2026-10-30'})
+  });
+  const pending=send();
+  await hold.started;
+  email='new-verified@example.test';
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.equal(result.response,null);
+  assert.equal(state.recipientReads,4);
+  assert.equal(state.queuePendingMarks,1);
+});
+
+test('Queued idempotency key cannot be replayed by another Merchant operator',async()=>{
+  let emitted=0,rollbacks=0;
+  const client={query:async sql=>{
+    if(sql==='ROLLBACK'){rollbacks++;return{rowCount:0};}
+    if(sql==='BEGIN'||sql==='COMMIT'||sql.includes('FOR UPDATE'))return{rowCount:0};
+    if(sql.includes('SELECT * FROM customer_sales_document_sends'))return{
+      rowCount:1,rows:[{id:501,sent_by_account_id:999,queue_status:'queued'}]
+    };
+    throw Error('Unexpected SQL: '+sql);
+  },release(){}};
+  const pool={connect:async()=>client};
+  await assert.rejects(customerSalesDocumentInternals.queueDocument(pool,{
+    document:{id:72,customer_account_id:81},actor:81,
+    requestKey:'safe_replay_12345',authorize:async()=>{},emit:async()=>{emitted++;return 1;}
+  }),e=>e.status===409&&/another Merchant operator/.test(e.message));
+  assert.equal(emitted,0);
+  assert.equal(rollbacks,1);
+});
+
+test('Already queued replay still requires fresh authorization after database lock',async()=>{
+  let emitted=0,releaseCount=0;
+  const client={query:async sql=>{
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)||sql.includes('FOR UPDATE'))return{rowCount:0};
+    if(sql.includes('SELECT * FROM customer_sales_document_sends'))return{
+      rowCount:1,rows:[{id:501,sent_by_account_id:81,queue_status:'queued'}]
+    };
+    throw Error('Unexpected SQL: '+sql);
+  },release(){releaseCount++;}};
+  const pool={connect:async()=>client};
+  await assert.rejects(customerSalesDocumentInternals.queueDocument(pool,{
+    document:{id:72,customer_account_id:81},actor:81,
+    requestKey:'safe_replay_12345',
+    authorize:async()=>{throw Object.assign(new Error('Merchant revoked'),{status:403})},
+    emit:async()=>{emitted++;return 1;}
+  }),e=>e.status===403);
+  assert.equal(emitted,0);
+  assert.equal(releaseCount,1);
+});
+
+function ambiguousDocumentQueue({failure}={}){
+  const snapshot=commercialOrderDocument(makeOrder());
+  const state={attempt:null,events:new Map(),downgrades:0,emissions:0};
+  let auditFails=failure==='audit',emitFails=failure==='emit';
+  const client={async query(sql,p=[]){
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0};
+    if(sql.includes('FOR UPDATE'))return{rowCount:1,rows:[{id:72}]};
+    if(sql.includes('SELECT * FROM customer_sales_document_sends')){
+      const found=state.attempt?.client_request_key===p[1];
+      return{rowCount:found?1:0,rows:found?[{...state.attempt}]:[]};
+    }
+    if(sql.includes('SELECT id FROM customer_sales_document_sends')){
+      assert.match(sql,/queue_status='pending'/);
+      assert.match(sql,/queue_status='queued' AND created_at>NOW\(\)-INTERVAL '5 minutes'/);
+      const age=Date.now()-Date.parse(state.attempt?.created_at||new Date().toISOString());
+      const pending=state.attempt&&(state.attempt.queue_status==='pending'||
+        (state.attempt.queue_status==='queued'&&age<5*60*1000));
+      return{rowCount:pending?1:0,rows:pending?[{id:501}]:[]};
+    }
+    if(sql.includes('INSERT INTO customer_sales_document_sends')){
+      state.attempt={id:501,sent_by_account_id:81,customer_account_id:81,
+        client_request_key:p[3],event_key:p[4],queue_status:'pending',
+        created_at:new Date().toISOString()};
+      return{rowCount:1,rows:[{...state.attempt}]};
+    }
+    throw Error('Unexpected transaction SQL: '+sql.slice(0,90));
+  },release(){}};
+  const pool={connect:async()=>client,async query(sql,p=[]){
+    if(sql.includes('SET queue_status=$1')){
+      if(auditFails){auditFails=false;throw Error('audit UPDATE failed after event COMMIT')}
+      state.attempt.queue_status=p[0];state.attempt.notification_event_id=p[1];
+      return{rowCount:1};
+    }
+    if(sql.includes("SET queue_status='queue_failed'")){
+      state.downgrades++;state.attempt.queue_status='queue_failed';
+      return{rowCount:1};
+    }
+    throw Error('Unexpected audit SQL: '+sql.slice(0,90));
+  }};
+  const send=key=>customerSalesDocumentInternals.queueDocument(pool,{
+    document:{id:72,order_id:123,customer_account_id:81,snapshot_json:snapshot},
+    actor:81,requestKey:key,authorize:async()=>{},
+    emit:async(_pool,{eventKey})=>{
+      state.emissions++;
+      const id=state.events.get(eventKey)??901;
+      state.events.set(eventKey,id); // committed event simulated
+      if(emitFails){emitFails=false;throw Error('lost connection after event COMMIT')}
+      return id;
+    }
+  });
+  return{state,send};
+}
+
+test('Committed email event survives failed audit UPDATE without duplicate dispatch',async()=>{
+  const {state,send}=ambiguousDocumentQueue({failure:'audit'});
+  await assert.rejects(send('audit_retry_key_12345'),e=>e.status===503&&/same request key/.test(e.message));
+  assert.equal(state.attempt.queue_status,'pending');
+  assert.equal(state.downgrades,0);
+  state.attempt.created_at=new Date(Date.now()-10*60*1000).toISOString();
+  await assert.rejects(send('different_key_12345'),e=>e.status===429);
+  assert.equal(state.events.size,1);
+  const retry=await send('audit_retry_key_12345');
+  assert.equal(retry.attempt.queue_status,'queued');
+  assert.equal(state.events.size,1);
+  assert.equal(state.downgrades,0);
+});
+
+test('Unknown emitter COMMIT result retains pending status for idempotent retry',async()=>{
+  const {state,send}=ambiguousDocumentQueue({failure:'emit'});
+  await assert.rejects(send('commit_retry_key_12345'),e=>e.status===503&&/same request key/.test(e.message));
+  assert.equal(state.attempt.queue_status,'pending');
+  assert.equal(state.downgrades,0);
+  assert.equal(state.events.size,1);
+  const retry=await send('commit_retry_key_12345');
+  assert.equal(retry.attempt.queue_status,'queued');
+  assert.equal(state.events.size,1);
+  assert.equal(state.emissions,2);
+});
+
+
+let emailRetryFixtureCounter=0;
+function emailRetryUiHarness(storage,{account=81,business=44,failOnce=false,role='merchant'}={}){
+  const src=read('public/order-sales-documents-ui.js');
+  const first=src.indexOf('  const pendingEmailKeys=new Map();');
+  const last=src.indexOf('  async function open(view){',first);
+  assert.ok(first>=0&&last>first,'execute real document-email client retry/send functions');
+  const chunk=src.slice(first,last);
+  const messages=[],posts=[],panel={};
+  const sessionStorage={
+    getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),
+    removeItem:k=>storage.delete(k)
+  };
+  const crypto={getRandomValues(bytes){
+    const seq=++emailRetryFixtureCounter;
+    bytes.fill(0);bytes[12]=(seq>>>24)&255;bytes[13]=(seq>>>16)&255;
+    bytes[14]=(seq>>>8)&255;bytes[15]=seq&255;
+    return bytes;
+  }};
+  const api=async(path,init={})=>{
+    if(path==='/api/accounting/workspaces')return{role,active_business_id:business};
+    if(path==='/api/me')return{account:{id:account}};
+    assert.ok(path.endsWith('/orders/123/send'),'unexpected email endpoint');
+    assert.equal(init.method,'POST');
+    posts.push(JSON.parse(init.body));
+    if(failOnce){failOnce=false;throw new Error('Email queue result uncertain; retry the same request key')}
+    return{already_queued:false,delivery_status:'queued'};
+  };
+  const make=new Function('api','modal','activeBusiness','sessionStorage','crypto','setMessage','merchant',
+    "const globalThis={crypto};const API='/api/notifications/order-sales-documents';"+chunk+';return send;');
+  const send=make(api,panel,business,sessionStorage,crypto,(v,bad)=>messages.push({v,bad}),async()=>{});
+  return{send:()=>send(123,{disabled:false}),posts,messages};
+}
+test('ambiguous email send reuses same key after UI reload, then clears only on acknowledged result',async()=>{
+  const storage=new Map();
+  const first=emailRetryUiHarness(storage,{failOnce:true});
+  await first.send();
+  assert.equal(first.posts.length,1);
+  assert.equal(storage.size,1);
+  const restored=emailRetryUiHarness(storage);
+  await restored.send();
+  assert.equal(restored.posts[0].client_request_key,first.posts[0].client_request_key);
+  assert.equal(storage.size,0);
+  assert.match(restored.messages.at(-1).v,/Email queued/);
+});
+test('a completed email queue request permits a distinct key for a later deliberate resend',async()=>{
+  const storage=new Map(),h=emailRetryUiHarness(storage);
+  await h.send();await h.send();
+  assert.equal(h.posts.length,2);
+  assert.notEqual(h.posts[0].client_request_key,h.posts[1].client_request_key);
+  assert.equal(storage.size,0);
+});
+test('pending email retry identities are isolated across accounts/businesses',async()=>{
+  const storage=new Map();
+  const a=emailRetryUiHarness(storage,{account:81,business:44,failOnce:true});
+  const b=emailRetryUiHarness(storage,{account:82,business:44,failOnce:true});
+  const c=emailRetryUiHarness(storage,{account:81,business:45,failOnce:true});
+  await a.send();await b.send();await c.send();
+  assert.equal(storage.size,3);
+  assert.equal(new Set([a,b,c].map(h=>h.posts[0].client_request_key)).size,3);
+  const recovered=emailRetryUiHarness(storage,{account:81,business:44});
+  await recovered.send();
+  assert.equal(recovered.posts[0].client_request_key,a.posts[0].client_request_key);
+  assert.equal(storage.size,2);
+});
+test('non-Merchant workspace cannot queue a document or create a retry key',async()=>{
+  const storage=new Map(),h=emailRetryUiHarness(storage,{role:'customer'});
+  await h.send();
+  assert.equal(h.posts.length,0);
+  assert.equal(storage.size,0);
+  assert.match(h.messages.at(-1).v,/Merchant business changed/);
+});
+
+
+function merchantDocumentEpochHarness(api){
+  // Execute the real UI function. Only the dialog and network are synthetic.
+  const source=read('public/order-sales-documents-ui.js');
+  const first=source.indexOf('  async function merchant(){');
+  const last=source.indexOf('  // A lost queue acknowledgment',first);
+  assert.ok(first>=0&&last>first,'execute actual Merchant document loader');
+  const chunk=source.slice(first,last);
+  const box={innerHTML:'',querySelectorAll:()=>[]};
+  const panel={querySelector:selector=>selector==='#osdContent'?box:null};
+  const make=new Function('api','modal','esc','date','peso','documentItem',
+    "let activeBusiness=null,documentLoadEpoch=0;const API='/api/notifications/order-sales-documents';"+
+    chunk+";return{merchant,state:()=>({business:activeBusiness,html:modal.querySelector('#osdContent').innerHTML})};");
+  return make(api,panel,value=>String(value),()=>'',value=>String(value),()=>'<span>record</span>');
+}
+function deferredDocumentUiResponse(){
+  let resolve;
+  const promise=new Promise(r=>{resolve=r});
+  return{promise,resolve};
+}
+function documentOrdersForUi(business,label){
+  return{orders:[{id:business,order_number:label,order_status:'completed',
+    created_at:'2026-10-30T06:00:00Z',total:10,paid_amount:10,customer_email_verified:true}]};
+}
+test('late Merchant workspace A cannot replace already-rendered business B documents',async()=>{
+  const firstContext=deferredDocumentUiResponse(),requested=[];
+  let contexts=0;
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces')
+      return ++contexts===1?firstContext.promise:{role:'merchant',active_business_id:22};
+    if(path.includes('/merchant-orders?')){
+      const business=Number(path.match(/business_id=(\d+)/)?.[1]);
+      requested.push(business);
+      return documentOrdersForUi(business,'Documents for business '+business);
+    }
+    if(path.includes('/business?'))return{documents:[]};
+    throw Error('Unexpected UI API: '+path);
+  };
+  const ui=merchantDocumentEpochHarness(api);
+  const old=ui.merchant(),newest=ui.merchant();
+  await newest;
+  assert.equal(ui.state().business,22);
+  firstContext.resolve({role:'merchant',active_business_id:11});
+  await old;
+  assert.equal(ui.state().business,22,'late A context must not reassign activeBusiness');
+  assert.match(ui.state().html,/Documents for business 22/);
+  assert.doesNotMatch(ui.state().html,/Documents for business 11/);
+  assert.deepEqual(requested,[22],'old A must not fetch or render private order data');
+});
+test('older same-business Merchant read cannot overwrite newer completed document load',async()=>{
+  const oldOrders=deferredDocumentUiResponse(),firstOrderRead=deferredDocumentUiResponse();
+  let orderReads=0;
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces')return{role:'merchant',active_business_id:44};
+    if(path.includes('/merchant-orders?')){
+      if(++orderReads===1){firstOrderRead.resolve();return oldOrders.promise}
+      return documentOrdersForUi(44,'NEWEST order view');
+    }
+    if(path.includes('/business?'))return{documents:[]};
+    throw Error('Unexpected UI API: '+path);
+  };
+  const ui=merchantDocumentEpochHarness(api);
+  const old=ui.merchant();
+  await firstOrderRead.promise;
+  await ui.merchant();
+  assert.match(ui.state().html,/NEWEST order view/);
+  oldOrders.resolve(documentOrdersForUi(44,'STALE order view'));
+  await old;
+  assert.equal(ui.state().business,44);
+  assert.match(ui.state().html,/NEWEST order view/);
+  assert.doesNotMatch(ui.state().html,/STALE order view/);
+});
+
+test('Merchant documents do not render business A after switching to B during a pending list load',async()=>{
+  const delayed=deferredDocumentUiResponse();
+  let selected=44,readCount=0,notifyStarted;
+  const started=new Promise(resolve=>{notifyStarted=resolve});
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces'){
+      readCount++;
+      return {role:'merchant',active_business_id:selected};
+    }
+    if(path.includes('/merchant-orders?')){notifyStarted();return delayed.promise}
+    if(path.includes('/business?'))return {documents:[]};
+    throw Error('Unexpected UI API: '+path);
+  };
+  const ui=merchantDocumentEpochHarness(api);
+  const old=ui.merchant();
+  await started;
+  selected=45; // Business changes without another document loader or profile-state event.
+  delayed.resolve(documentOrdersForUi(44,'PRIVATE BUSINESS A RECORD'));
+  await old;
+  assert.equal(readCount,2,'private records must be checked against the live Merchant workspace');
+  assert.equal(ui.state().business,null,'stale send authority must be discarded');
+  assert.match(ui.state().html,/Merchant workspace changed/);
+  assert.doesNotMatch(ui.state().html,/PRIVATE BUSINESS A RECORD/);
+});
+
+test('Merchant documents also suppress a late list when Merchant role is no longer active',async()=>{
+  const delayed=deferredDocumentUiResponse();
+  let role='merchant',notifyStarted;
+  const started=new Promise(resolve=>{notifyStarted=resolve});
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces')return {role,active_business_id:44};
+    if(path.includes('/merchant-orders?')){notifyStarted();return delayed.promise}
+    if(path.includes('/business?'))return {documents:[]};
+    throw Error('Unexpected UI API: '+path);
+  };
+  const ui=merchantDocumentEpochHarness(api);
+  const old=ui.merchant();
+  await started;
+  role='customer';
+  delayed.resolve(documentOrdersForUi(44,'PRIVATE MERCHANT RECORD'));
+  await old;
+  assert.equal(ui.state().business,null);
+  assert.match(ui.state().html,/Merchant workspace changed/);
+  assert.doesNotMatch(ui.state().html,/PRIVATE MERCHANT RECORD/);
+});
+
+function documentOpenFailureHarness(requests){
+  // Execute the actual UI open() function; dialog and requests are synthetic.
+  const source=read('public/order-sales-documents-ui.js');
+  const first=source.indexOf('  async function open(view){');
+  const last=source.indexOf('  function mount(){',first);
+  assert.ok(first>=0&&last>first,'execute actual document dialog opener');
+  const chunk=source.slice(first,last);
+  const make=new Function('requests',
+    "let modal=null,mode='',documentLoadEpoch=0;"+
+    "const shell=()=>{modal={content:{textContent:'Loading...'},querySelector(x){return x==='#osdContent'?this.content:null}};};"+
+    "const setMessage=(m,error)=>{if(modal){modal.error=m;modal.isError=error}};"+
+    "const customer=()=>{documentLoadEpoch++;return requests.shift()()};"+
+    "const merchant=customer;"+chunk+
+    "const close=()=>{documentLoadEpoch++;modal=null};"+
+    "const fresh=text=>{documentLoadEpoch++;if(modal)modal.content.textContent=text};"+
+    "return {open,close,fresh,state:()=>({modal,epoch:documentLoadEpoch})};");
+  return make(requests);
+}
+function deferredDocumentFailure(){
+  let reject;
+  const promise=new Promise((_,fail)=>{reject=fail});
+  return{promise,reject};
+}
+test('late dialog-load error after close and reopen never replaces the new Customer records',async()=>{
+  const old=deferredDocumentFailure();
+  const ui=documentOpenFailureHarness([()=>old.promise,()=>Promise.resolve()]);
+  const oldOpen=ui.open('customer');
+  const oldDialog=ui.state().modal;
+  ui.close();
+  await ui.open('customer');
+  assert.notEqual(ui.state().modal,oldDialog);
+  ui.state().modal.content.textContent='NEW Customer records';
+  old.reject(new Error('OLD Merchant business load failed'));
+  await oldOpen;
+  assert.equal(ui.state().modal.content.textContent,'NEW Customer records');
+  assert.equal(ui.state().modal.error,undefined);
+});
+test('superseded load error in the same document dialog cannot replace newer successful content',async()=>{
+  const old=deferredDocumentFailure();
+  const ui=documentOpenFailureHarness([()=>old.promise]);
+  const pending=ui.open('merchant');
+  ui.fresh('CURRENT Merchant documents');
+  old.reject(new Error('STALE order list failure'));
+  await pending;
+  assert.equal(ui.state().modal.content.textContent,'CURRENT Merchant documents');
+  assert.equal(ui.state().modal.error,undefined);
+});
+test('the latest document dialog error remains visible and actionable',async()=>{
+  const ui=documentOpenFailureHarness([()=>Promise.reject(new Error('Current document fetch failed'))]);
+  await ui.open('customer');
+  assert.equal(ui.state().modal.error,'Current document fetch failed');
+  assert.equal(ui.state().modal.isError,true);
+  assert.equal(ui.state().modal.content.textContent,'Unable to load purchase documents.');
+});
+
+
+test('Archived purchase records show Philippine civil date and saved currency without fictitious zero',()=>{
+  const source=read('public/order-sales-documents-ui.js');
+  const start=source.indexOf('  const date=value=>');
+  const end=source.indexOf('  async function api(',start);
+  assert.ok(start>=0&&end>start,'execute actual shipped date/currency helpers');
+  const {date,peso}=new Function(source.slice(start,end)+'return {date,peso};')();
+  const instant='2026-12-31T20:05:00Z';
+  const expected=new Intl.DateTimeFormat('en-PH',{
+    timeZone:'Asia/Manila',day:'2-digit',month:'2-digit',year:'numeric'
+  }).format(new Date(instant));
+  const utc=new Intl.DateTimeFormat('en-PH',{
+    timeZone:'UTC',day:'2-digit',month:'2-digit',year:'numeric'
+  }).format(new Date(instant));
+  assert.notEqual(expected,utc,'PH year crosses before UTC year');
+  assert.equal(date(instant),expected);
+  assert.equal(date(null),'Date unavailable');
+  assert.equal(date('invalid'),'Date unavailable');
+  assert.equal(peso('145.00','PHP'),'₱145.00');
+  assert.equal(peso('145.00','usd'),'USD 145.00');
+  assert.equal(peso('0.00','PHP'),'₱0.00');
+  assert.equal(peso(null,'PHP'),'Amount unavailable');
+  assert.equal(peso('invalid','PHP'),'Amount unavailable');
+  assert.equal(peso('145.00',null),'Amount unavailable');
+  for(const field of ['total','paid','amount_due'])
+    assert.ok(source.includes('peso(d.'+field+',d.currency_code)'),
+      'archive must use own saved currency for '+field);
+});
+
+function customerDocumentAccountHarness(api){
+  // Execute the actual Customer UI loader with private, synthetic responses.
+  const source=read('public/order-sales-documents-ui.js');
+  const first=source.indexOf('  async function customer(){');
+  const last=source.indexOf('  async function merchant(){',first);
+  assert.ok(first>=0&&last>first,'execute actual Customer document loader');
+  const chunk=source.slice(first,last);
+  const box={innerHTML:'',textContent:'Loading…'};
+  const panel={querySelector:key=>key==='#osdContent'?box:null};
+  const customer=new Function('api','modal','documentItem',
+    "let documentLoadEpoch=0;const API='/api/notifications/order-sales-documents';"+
+    chunk+";return customer;")(api,panel,d=>'<span>'+d.order_number+'</span>');
+  return {customer,box};
+}
+test('Customer document loader rejects private account A data after silent session change to B',async()=>{
+  const delayed=deferredDocumentUiResponse();
+  let signedIn=41,reads=0,readStarted;
+  const started=new Promise(resolve=>{readStarted=resolve});
+  const api=async path=>{
+    if(path==='/api/me'){reads++;return{account:{id:signedIn}}}
+    if(path==='/api/notifications/order-sales-documents/my'){
+      readStarted();
+      return delayed.promise;
+    }
+    throw new Error('Unexpected Customer document API '+path);
+  };
+  const ui=customerDocumentAccountHarness(api);
+  const pending=ui.customer();
+  await started;
+  signedIn=42; // Authentication changes without the profile-state event.
+  delayed.resolve({documents:[{order_number:'PRIVATE ACCOUNT A ORDER'}]});
+  await pending;
+  assert.equal(reads,2,'recheck the active account after private read completes');
+  assert.match(ui.box.textContent,/Account changed/);
+  assert.doesNotMatch(ui.box.innerHTML,/PRIVATE ACCOUNT A ORDER/);
+});
+test('Customer document loader still displays own documents after unchanged account recheck',async()=>{
+  const paths=[];
+  const api=async path=>{
+    paths.push(path);
+    if(path==='/api/me')return{account:{id:'41'}};
+    if(path==='/api/notifications/order-sales-documents/my')
+      return{documents:[{order_number:'CURRENT CUSTOMER ORDER'}]};
+    throw new Error('Unexpected Customer document API '+path);
+  };
+  const ui=customerDocumentAccountHarness(api);
+  await ui.customer();
+  assert.match(ui.box.innerHTML,/CURRENT CUSTOMER ORDER/);
+  assert.deepEqual(paths,['/api/me','/api/notifications/order-sales-documents/my','/api/me']);
+});

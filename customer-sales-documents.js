@@ -1,0 +1,501 @@
+import crypto from 'node:crypto';
+import {readOrderDetail} from './orders-read-core.js';
+import {emitNotificationEvent} from './notification-core.js';
+
+const err=(status,message)=>Object.assign(new Error(message),{status});
+const id=(v,label='Identifier')=>{
+  // Economic identity comes from explicit database/HTTP identifiers, never
+  // implicit Number() coercion of arrays, booleans or user-defined objects.
+  const raw=typeof v==='string'?v:
+    (typeof v==='number'&&Number.isSafeInteger(v)?String(v):null);
+  if(!raw||!/^[1-9][0-9]*$/.test(raw))throw err(400,label+' must be a positive integer');
+  const n=Number(raw);
+  if(!Number.isSafeInteger(n))throw err(400,label+' must be a positive integer');
+  return n;
+};
+// NUMERIC(12,2) order values must be exact evidence, never silently coerced or rounded.
+const money=(value,label='Amount')=>{
+  if(typeof value!=='number'&&typeof value!=='string')throw err(409,label+' monetary evidence is invalid');
+  const raw=String(value);
+  if(!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(raw))throw err(409,label+' monetary evidence is invalid');
+  // NUMERIC(12,2) cents must be parsed as integers: multiplying a floating
+  // point amount by 100 can reject valid SQL decimal evidence near its limit.
+  const [whole,fraction='']=raw.split('.');
+  const cents=Number(whole)*100+Number(fraction.padEnd(2,'0'));
+  if(!Number.isSafeInteger(cents)||cents<0||cents>999999999999)
+    throw err(409,label+' monetary evidence is invalid');
+  return cents/100;
+};
+// Order line quantity is NUMERIC(12,3). Do not coerce booleans, hex, exponent
+// notation or overprecision values into immutable commercial evidence.
+const orderQuantity=value=>{
+  if(typeof value!=='number'&&typeof value!=='string')throw err(409,'Order quantity evidence is invalid');
+  const raw=String(value);
+  if(!/^(?:0|[1-9]\d{0,8})(?:\.\d{1,3})?$/.test(raw))throw err(409,'Order quantity evidence is invalid');
+  const n=Number(raw);
+  if(!Number.isFinite(n)||n<=0)throw err(409,'Order quantity evidence is invalid');
+  return n;
+};
+const short=(v,max=250)=>String(v??'').trim().slice(0,max);
+// Identifying economic source text must never be silently truncated before
+// immutable snapshot hashing: two distinct labels must not alias a document.
+const evidenceText=(value,max,label)=>{
+  // Business and purchased-product identity must exist in a commercial record.
+  // Keep valid text literal for hashing; trimming it would alias distinct evidence.
+  if(typeof value!=='string'||!value.trim())throw err(409,label+' evidence is missing');
+  if(value.length>max)throw err(409,label+' evidence exceeds supported length');
+  return value;
+};
+const evidenceCurrency=value=>{
+  const raw=value??'PHP';
+  if(typeof raw!=='string'||!/^[A-Za-z]{3}$/.test(raw))
+    throw err(409,'Order currency evidence is invalid');
+  return raw.toUpperCase();
+};
+// Order timestamps are economic evidence; never issue an immutable record
+// with an absent/ambiguous date or a process-timezone-dependent Date string.
+const orderSourceTime=value=>{
+  if(value instanceof Date){
+    if(!Number.isFinite(value.getTime()))throw err(409,'Order date evidence is invalid');
+    return value.toISOString();
+  }
+  if(typeof value!=='string')throw err(409,'Order date evidence is invalid');
+  // Require an explicit UTC/offset instant; a timezone-free value changes
+  // meaning between Node deployments and breaks source digest identity.
+  const match=/^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/.exec(value);
+  if(!match)throw err(409,'Order date evidence is invalid');
+  const year=Number(match[1]),month=Number(match[2]),day=Number(match[3]);
+  const leap=year%4===0&&(year%100!==0||year%400===0);
+  const days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+  if(year<1||month<1||month>12||day<1||day>days[month-1]||
+     !Number.isFinite(new Date(value).getTime()))
+    throw err(409,'Order date evidence is invalid');
+  // Keep valid literal source text for immutable digest compatibility.
+  return value;
+};
+const cleanHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+// Idempotency keys must never be truncated: distinct requests must not alias.
+const clientKey=value=>{
+  const key=typeof value==='string'?value:'';
+  if(!/^[a-zA-Z0-9_-]{12,100}$/.test(key))throw err(400,'client_request_key is required for safe email retries');
+  return key;
+};
+
+// Orders, line items and payment/status evidence are loaded by separate SQL
+// statements. A read-committed pool read could combine two committed revisions
+// when another operator updates an order between SELECTs; the immutable
+// document must instead come from one stable read-only PostgreSQL snapshot.
+export async function readConsistentOrderForDocument(pool,orderId){
+  const client=await pool.connect();
+  let transactionOpen=false;
+  try{
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    transactionOpen=true;
+    const order=await readOrderDetail(client,orderId);
+    await client.query('COMMIT');
+    transactionOpen=false;
+    return order;
+  }catch(e){
+    if(transactionOpen)await client.query('ROLLBACK').catch(()=>{});
+    throw e;
+  }finally{
+    client.release();
+  }
+}
+
+export function commercialOrderDocument(order,clock=new Date()){
+  if(!order?.id||!order?.business_id)throw err(404,'Order not found');
+  if(!id(order.customer_account_id,'Customer account'))throw err(422,'Only registered Customers may receive order documents');
+  if(order.order_status==='cancelled')throw err(409,'Cancelled orders need separate refund/credit evidence');
+  const paid=money(order.paid_amount,'Recorded payment');
+  const outstanding=money(order.outstanding_amount,'Outstanding amount');
+  const total=money(order.total,'Total');
+  const subtotal=money(order.subtotal,'Subtotal'),deliveryFee=money(order.delivery_fee,'Delivery fee');
+  if(Math.round(paid*100)+Math.round(outstanding*100)!==Math.round(total*100))
+    throw err(409,'Order monetary evidence is inconsistent');
+  if(paid<=0&&order.order_status!=='completed')throw err(409,'Document is available after recorded payment or order completion');
+  if(!Array.isArray(order.items)||!order.items.length)
+    throw err(409,'Order line item evidence is unavailable');
+  const items=order.items.map(item=>{
+    if(!item||typeof item!=='object'||Array.isArray(item))
+      throw err(409,'Order line item evidence is invalid');
+    return {
+      item_id:id(item.id,'Order line'),
+      name:evidenceText(item.name_snapshot,200,'Order line name'),
+      quantity:orderQuantity(item.quantity),
+      unit_price:money(item.unit_price_snapshot),
+      line_total:money(item.line_total)
+    };
+  });
+  // Current canonical Orders persists subtotal = sum(recorded line_total) and
+  // total = subtotal + delivery_fee. Do not issue an immutable document whose
+  // visible line breakdown contradicts the recorded commercial total.
+  // Compare integer cents to avoid float drift; do not recalculate unit prices
+  // because Catalog modifiers and variants are included in saved line totals.
+  const cents=value=>Math.round(value*100);
+  const lineSumCents=items.reduce((sum,line)=>sum+cents(line.line_total),0);
+  if(lineSumCents!==cents(subtotal)||cents(subtotal)+cents(deliveryFee)!==cents(total))
+    throw err(409,'Order line, subtotal or delivery monetary evidence is inconsistent');
+  const kind=paid>0?'payment_record':'order_summary';
+  return {
+    document_class:kind,fiscal_status:'internal_evidence',jurisdiction:'PH',
+    source_order_id:id(order.id),order_number:evidenceText(order.order_number||String(order.id),100,'Order number'),
+    business_id:id(order.business_id),business_name:evidenceText(order.business_name,200,'Merchant name'),
+    customer_account_id:id(order.customer_account_id),
+    currency_code:evidenceCurrency(order.currency_code),
+    created_at:orderSourceTime(order.created_at),
+    document_created_at:clock.toISOString(),
+    order_status:short(order.order_status,40),
+    payment_status:short(order.payment_status,40),
+    payment_method:short(order.payment_method,40),
+    merchant_recorded_payment:paid,
+    payment_source_description:paid>0?'Merchant-recorded payment; external settlement not independently asserted':'No payment recorded',
+    subtotal,delivery_fee:deliveryFee,
+    total,amount_due:outstanding,items,
+    official_tax_invoice:false,
+    disclaimer:'Commercial order and payment evidence only. Not a BIR-issued or BIR-validated tax invoice.'
+  };
+}
+export function orderDocumentDigest(snapshot){
+  // The timestamp does not change the identity of the economic document.
+  const {...business}=snapshot;
+  delete business.document_created_at;
+  return crypto.createHash('sha256').update(JSON.stringify(business)).digest('hex');
+}
+export function salesDocumentMessage(snapshot){
+  const display=amount=>new Intl.NumberFormat('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(money(amount,'Saved document amount'));
+  const items=snapshot.items.map(x=>x.name+' × '+x.quantity+' = '+display(x.line_total));
+  let list=items.join('; ');
+  if(list.length>340)list=list.slice(0,330)+'… (open your account for all lines)';
+  return {
+    order_number:snapshot.order_number,
+    business_name:snapshot.business_name,
+    document_label:snapshot.document_class==='payment_record'?'Merchant payment record':'Order summary',
+    item_summary:list,
+    currency:snapshot.currency_code,
+    total:display(snapshot.total),
+    paid:display(snapshot.merchant_recorded_payment),
+    due:display(snapshot.amount_due),
+    document_disclaimer:'This is a commercial order/payment record, not a BIR tax invoice.'
+  };
+}
+// Philippines documents must show civil time in Asia/Manila, not raw UTC.
+// Preserve the source ISO evidence in the immutable snapshot for audit.
+const philippineDocumentTime=value=>{
+  const date=typeof value==='string'&&value.trim()?new Date(value):null;
+  if(!date||!Number.isFinite(date.getTime()))return 'Date unavailable';
+  const local=new Intl.DateTimeFormat('en-GB',{
+    timeZone:'Asia/Manila',day:'2-digit',month:'short',year:'numeric',
+    hour:'2-digit',minute:'2-digit',hourCycle:'h23'
+  }).format(date);
+  return local+' PHT (UTC+08:00)';
+};
+export function salesDocumentPrintHtml(snapshot){
+  const esc=cleanHtml,mon=v=>esc(snapshot.currency_code)+' '+money(v,'Saved document amount').toFixed(2);
+  const lines=snapshot.items.map(item=>
+    '<tr><td>'+esc(item.name)+'</td><td>'+esc(item.quantity)+'</td><td>'+mon(item.unit_price)+'</td><td>'+mon(item.line_total)+'</td></tr>'
+  ).join('');
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Order '+esc(snapshot.order_number)+'</title>'+
+    '<style>body{font-family:system-ui,Arial;max-width:740px;margin:30px auto;padding:16px;color:#182633}h1{margin:0 0 6px;font-size:24px}small{color:#52606e}table{width:100%;border-collapse:collapse;margin-top:18px}td,th{padding:10px 6px;border-bottom:1px solid #e5ebee;text-align:left}th:last-child,td:last-child{text-align:right}.totals{text-align:right;margin:16px 0}.disclaimer{border-top:1px solid #dae2e6;padding:14px 0;color:#566475;font-size:13px}@media print{body{margin:0;padding:0}}</style></head><body>'+
+    '<h1>'+esc(snapshot.document_class==='payment_record'?'Merchant payment record':'Order summary')+'</h1>'+
+    '<p><strong>'+esc(snapshot.business_name)+'</strong><br>Order '+esc(snapshot.order_number)+'<br><small>Order date: '+esc(philippineDocumentTime(snapshot.created_at))+'<br>Record date: '+esc(philippineDocumentTime(snapshot.document_created_at))+'</small></p>'+
+    '<table><thead><tr><th>Product</th><th>Qty</th><th>Unit</th><th>Line</th></tr></thead><tbody>'+lines+'</tbody></table>'+
+    '<div class="totals"><p>Merchandise: '+mon(snapshot.subtotal)+'</p><p>Delivery: '+mon(snapshot.delivery_fee)+'</p><p><strong>Total: '+mon(snapshot.total)+'</strong></p><p>Merchant-recorded payment: '+mon(snapshot.merchant_recorded_payment)+'</p><p>Outstanding: '+mon(snapshot.amount_due)+'</p></div>'+
+    '<div class="disclaimer">'+esc(snapshot.disclaimer)+'<p>Recorded payment is not independently verified bank settlement. This document does not create or modify an accounting transaction.</p></div></body></html>';
+}
+
+export async function ensureCustomerSalesDocumentsSchema(pool){
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS customer_sales_documents(
+      id BIGSERIAL PRIMARY KEY,
+      order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE RESTRICT,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
+      customer_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      document_class TEXT NOT NULL CHECK(document_class IN ('payment_record','order_summary')),
+      source_sha256 CHAR(64) NOT NULL,
+      snapshot_json JSONB NOT NULL,
+      created_by_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(order_id,source_sha256)
+    );
+    CREATE INDEX IF NOT EXISTS customer_sales_documents_customer_idx
+      ON customer_sales_documents(customer_account_id,created_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS customer_sales_documents_business_idx
+      ON customer_sales_documents(business_id,created_at DESC,id DESC);
+    CREATE TABLE IF NOT EXISTS customer_sales_document_sends(
+      id BIGSERIAL PRIMARY KEY,
+      document_id BIGINT NOT NULL REFERENCES customer_sales_documents(id) ON DELETE RESTRICT,
+      sent_by_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      customer_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      client_request_key TEXT NOT NULL,
+      event_key TEXT NOT NULL UNIQUE,
+      notification_event_id BIGINT REFERENCES notification_events(id) ON DELETE SET NULL,
+      queue_status TEXT NOT NULL DEFAULT 'pending' CHECK(queue_status IN ('pending','queued','queue_failed')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(document_id,client_request_key)
+    );
+  `);
+}
+const documentPublic=row=>({
+  id:Number(row.id),order_id:Number(row.order_id),business_id:Number(row.business_id),
+  document_class:row.document_class,created_at:row.created_at,
+  order_number:row.snapshot_json?.order_number,company_name:row.snapshot_json?.business_name,
+  currency_code:row.snapshot_json?.currency_code,
+  total:row.snapshot_json?.total,paid:row.snapshot_json?.merchant_recorded_payment,
+  amount_due:row.snapshot_json?.amount_due,fiscal_status:'internal_evidence'
+});
+async function merchantPermission(pool,accountId,businessId){
+  const q=await pool.query(`
+    SELECT 1 FROM accounts a
+    JOIN profiles p ON p.account_id=a.id AND p.role='merchant' AND p.enabled=TRUE
+    JOIN profile_business_bindings b ON b.account_id=a.id AND b.role='merchant' AND b.status='active' AND b.business_id=$2
+    JOIN business_memberships m ON m.account_id=a.id AND m.business_id=b.business_id AND m.active=TRUE
+    WHERE a.id=$1 AND a.active_role='merchant'
+  `,[accountId,businessId]);
+  return Boolean(q.rowCount);
+}
+async function requireMerchantBusiness(pool,actor,businessId){
+  if(!(await merchantPermission(pool,actor,businessId)))throw err(403,'Merchant business is not available');
+}
+// A Merchant may belong to businesses A and B at once. A late read of A
+// cannot be returned after the account selects B, even if A remains authorized.
+async function requireSelectedMerchantBusiness(pool,actor,businessId){
+  const q=await pool.query(
+    "SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role='merchant'",
+    [actor]
+  );
+  if(Number(q.rows[0]?.business_id)!==businessId)
+    throw err(409,'Merchant business changed; reopen documents');
+}
+// A private DB read may finish after logout, account/workspace switch or
+// Merchant revocation. Recheck every access boundary before its response.
+async function requireCurrentDocumentReader(req,identity,actor,pool,document=null,businessId=null){
+  const current=id((await identity(req)).account.id,'Account');
+  if(current!==actor)throw err(401,'Document session changed');
+  const merchantBusiness=document&&Number(document.customer_account_id)!==actor
+    ?Number(document.business_id):businessId;
+  if(merchantBusiness!==null){
+    await requireMerchantBusiness(pool,actor,merchantBusiness);
+    await requireSelectedMerchantBusiness(pool,actor,merchantBusiness);
+  }
+}
+async function authorizedDocument(pool,actor,documentId){
+  const q=await pool.query('SELECT * FROM customer_sales_documents WHERE id=$1',[id(documentId)]);
+  if(!q.rowCount)throw err(404,'Document not found');
+  const document=q.rows[0];
+  if(Number(document.customer_account_id)===actor)return document;
+  if(await merchantPermission(pool,actor,Number(document.business_id)))return document;
+  throw err(404,'Document not found');
+}
+async function createOrFind(pool,{order,actor}){
+  const snapshot=commercialOrderDocument(order),hash=orderDocumentDigest(snapshot);
+  const insert=await pool.query(`
+    INSERT INTO customer_sales_documents(
+      order_id,business_id,customer_account_id,document_class,source_sha256,snapshot_json,created_by_account_id
+    ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)
+    ON CONFLICT(order_id,source_sha256) DO NOTHING RETURNING *
+  `,[order.id,order.business_id,order.customer_account_id,snapshot.document_class,hash,JSON.stringify(snapshot),actor]);
+  if(insert.rowCount)return insert.rows[0];
+  const row=await pool.query('SELECT * FROM customer_sales_documents WHERE order_id=$1 AND source_sha256=$2',[order.id,hash]);
+  return row.rows[0];
+}
+async function queueDocument(pool,{document,actor,requestKey,authorize,emit=emitNotificationEvent}){
+  if(typeof authorize!=='function')throw new Error('Current Merchant authorization is required before email queueing');
+  const customerId=id(document.customer_account_id),client=await pool.connect();
+  let attempt,insertedNew=false;
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT id FROM customer_sales_documents WHERE id=$1 FOR UPDATE',[document.id]);
+    const existing=await client.query(
+      'SELECT * FROM customer_sales_document_sends WHERE document_id=$1 AND client_request_key=$2',
+      [document.id,requestKey]
+    );
+    if(existing.rowCount){
+      attempt=existing.rows[0];
+      // Idempotency is per sending operator, not a cross-operator lookup token.
+      if(Number(attempt.sent_by_account_id)!==actor)
+        throw err(409,'Request key belongs to another Merchant operator');
+      await client.query('COMMIT');
+    }else{
+      const recent=await client.query(`
+        SELECT id FROM customer_sales_document_sends
+         WHERE document_id=$1 AND (
+           queue_status='pending'
+           OR (queue_status='queued' AND created_at>NOW()-INTERVAL '5 minutes')
+         ) LIMIT 1
+      `,[document.id]);
+      if(recent.rowCount)throw err(429,'A document email was requested recently. Try again later.');
+      const eventKey='order-sales-document:'+document.id+':'+crypto.randomUUID();
+      const added=await client.query(`
+        INSERT INTO customer_sales_document_sends(document_id,sent_by_account_id,customer_account_id,client_request_key,event_key)
+        VALUES($1,$2,$3,$4,$5) RETURNING *
+      `,[document.id,actor,customerId,requestKey,eventKey]);
+      attempt=added.rows[0];
+      insertedNew=true;
+      await client.query('COMMIT');
+    }
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    throw e;
+  }finally{client.release()}
+  // The document lock, idempotency lookup and COMMIT may have waited for a
+  // concurrent operation. The earlier route check cannot authorize an email
+  // after a session switch or a revoked Merchant membership during that wait.
+  try{
+    await authorize();
+  }catch(e){
+    // A newly created unsent attempt must not throttle a legitimate operator.
+    // Never mutate an existing attempt: its original sender may be enqueueing.
+    if(insertedNew)await pool.query(
+      "UPDATE customer_sales_document_sends SET queue_status='queue_failed' WHERE id=$1 AND queue_status='pending'",
+      [attempt.id]
+    ).catch(()=>{});
+    throw e;
+  }
+  if(attempt.queue_status==='queued')return{attempt,already_queued:true};
+  const message=salesDocumentMessage(document.snapshot_json);
+  try{
+    const eventId=await emit(pool,{
+      eventKey:attempt.event_key,eventCode:'order.billing_document',
+      sourceService:'sales_documents',entityType:'order',
+      entityId:String(document.order_id),correlationId:attempt.event_key,
+      category:'operational',priority:'normal',mandatory:true,emailDefault:true,pushDefault:false,
+      data:message,recipients:[{accountId:customerId,roleHint:'customer'}]
+    });
+    if(!eventId)throw new Error('Notification could not be queued');
+    await pool.query('UPDATE customer_sales_document_sends SET queue_status=$1,notification_event_id=$2 WHERE id=$3',
+      ['queued',eventId,attempt.id]);
+    return{attempt:{...attempt,queue_status:'queued',notification_event_id:eventId},already_queued:false};
+  }catch(e){
+    // emitNotificationEvent uses a separate committed transaction. The audit
+    // UPDATE may fail after the receipt is already queued for delivery.
+    // Marking a possibly committed send queue_failed lets a new request key
+    // bypass the duplicate guard and create an unintended second email.
+    // Keep pending on an uncertain result and retry the SAME idempotency key.
+    throw err(503,'Email queue result is uncertain; retry with the same request key');
+  }
+}
+// Private Customer/Merchant records cannot be reused as a conditional 304.
+// Ignore old validators only for this authenticated, no-store route family.
+export function privateCustomerSalesDocumentResponse(req,res,next){
+  res.set({
+    'Cache-Control':'private, no-store, max-age=0',
+    'Pragma':'no-cache',
+    'Expires':'0',
+    'X-Content-Type-Options':'nosniff'
+  });
+  res.vary('Cookie');
+  res.vary('Authorization');
+  if(req.headers){
+    delete req.headers['if-none-match'];
+    delete req.headers['if-modified-since'];
+  }
+  next();
+}
+export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
+  app.use('/api/notifications/order-sales-documents',privateCustomerSalesDocumentResponse);
+  app.get('/api/notifications/order-sales-documents/my',async(req,res,next)=>{
+    try{
+      const actor=id((await identity(req)).account.id,'Account');
+      const q=await pool.query(`
+        SELECT * FROM customer_sales_documents
+         WHERE customer_account_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100
+      `,[actor]);
+      await requireCurrentDocumentReader(req,identity,actor,pool);
+      res.json({documents:q.rows.map(documentPublic)});
+    }catch(e){next(e)}
+  });
+  app.get('/api/notifications/order-sales-documents/merchant-orders',async(req,res,next)=>{
+    try{
+      const actor=id((await identity(req)).account.id,'Account');
+      const businessId=id(req.query.business_id,'business_id');
+      await requireMerchantBusiness(pool,actor,businessId);
+      const q=await pool.query(`
+        SELECT o.id,o.order_number,o.created_at,o.order_status,o.payment_status,
+          o.total,o.paid_amount,o.outstanding_amount,o.customer_account_id,
+          COALESCE(a.email_verified_at IS NOT NULL,FALSE) customer_email_verified,
+          EXISTS(SELECT 1 FROM customer_sales_documents d WHERE d.order_id=o.id) has_document
+        FROM orders o LEFT JOIN accounts a ON a.id=o.customer_account_id
+        WHERE o.business_id=$1 AND o.customer_account_id IS NOT NULL AND o.order_status<>'cancelled'
+          AND (o.paid_amount>0 OR o.order_status='completed')
+        ORDER BY o.created_at DESC,o.id DESC LIMIT 100
+      `,[businessId]);
+      await requireCurrentDocumentReader(req,identity,actor,pool,null,businessId);
+      res.json({orders:q.rows});
+    }catch(e){next(e)}
+  });
+  app.get('/api/notifications/order-sales-documents/business',async(req,res,next)=>{
+    try{
+      const actor=id((await identity(req)).account.id,'Account');
+      const businessId=id(req.query.business_id,'business_id');
+      await requireMerchantBusiness(pool,actor,businessId);
+      const q=await pool.query('SELECT * FROM customer_sales_documents WHERE business_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100',[businessId]);
+      await requireCurrentDocumentReader(req,identity,actor,pool,null,businessId);
+      res.json({documents:q.rows.map(documentPublic)});
+    }catch(e){next(e)}
+  });
+  app.post('/api/notifications/order-sales-documents/orders/:id/send',body,async(req,res,next)=>{
+    try{
+      const actor=id((await identity(req)).account.id,'Account');
+      const businessId=id(req.body?.business_id,'business_id');
+      const requestKey=clientKey(req.body?.client_request_key);
+      await requireMerchantBusiness(pool,actor,businessId);
+      const orderId=id(req.params.id,'Order');
+      const ownOrder=await pool.query('SELECT id FROM orders WHERE id=$1 AND business_id=$2',[orderId,businessId]);
+      if(!ownOrder.rowCount)throw err(404,'Order not found for this Merchant');
+      const order=await readConsistentOrderForDocument(pool,orderId);
+      if(!order||Number(order.business_id)!==businessId)throw err(404,'Order not found for this Merchant');
+      if(!order.customer_account_id)throw err(422,'Only registered Customers may receive an email document');
+      const customer=await pool.query('SELECT email,email_verified_at FROM accounts WHERE id=$1',[order.customer_account_id]);
+      const verifiedRecipientEmail=String(customer.rows[0]?.email??'').trim();
+      if(!customer.rowCount||!customer.rows[0].email_verified_at||
+        verifiedRecipientEmail.length>200||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verifiedRecipientEmail))
+        throw err(409,'Customer verified email is required for receipt email');
+      // Merchant authority AND the intended Customer's verified email must remain
+      // unchanged across document inserts and a potentially long queue row-lock wait.
+      // The notification worker still independently controls eventual delivery.
+      const requireCurrentSender=async()=>{
+        await requireCurrentDocumentReader(req,identity,actor,pool);
+        await requireMerchantBusiness(pool,actor,businessId);
+        // Binding to a business is not evidence that it is still the selected
+        // workspace: the same Merchant may switch A -> B while this send waits.
+        const selected=await pool.query(
+          "SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role='merchant'",
+          [actor]
+        );
+        if(Number(selected.rows[0]?.business_id)!==businessId)
+          throw err(409,'Merchant business changed; reopen documents before sending');
+        const current=await pool.query('SELECT email,email_verified_at FROM accounts WHERE id=$1',[order.customer_account_id]);
+        if(!current.rowCount||!current.rows[0].email_verified_at||
+          String(current.rows[0].email??'').trim()!==verifiedRecipientEmail)
+          throw err(409,'Customer verified email changed; reopen documents before sending');
+      };
+      await requireCurrentSender();
+      const document=await createOrFind(pool,{order,actor});
+      await requireCurrentSender();
+      const result=await queueDocument(pool,{document,actor,requestKey,authorize:requireCurrentSender});
+      res.status(result.already_queued?200:202).json({
+        document:documentPublic(document),
+        delivery_status:result.attempt.queue_status,
+        already_queued:result.already_queued,
+        message:'This is a commercial order/payment record; fiscal Invoice validity is not asserted'
+      });
+    }catch(e){next(e)}
+  });
+  app.get('/api/notifications/order-sales-documents/:id',async(req,res,next)=>{
+    try{
+      const actor=id((await identity(req)).account.id,'Account'),doc=await authorizedDocument(pool,actor,req.params.id);
+      await requireCurrentDocumentReader(req,identity,actor,pool,doc);
+      res.json({document:documentPublic(doc),snapshot:doc.snapshot_json});
+    }catch(e){next(e)}
+  });
+  app.get('/api/notifications/order-sales-documents/:id/print',async(req,res,next)=>{
+    try{
+      const actor=id((await identity(req)).account.id,'Account'),doc=await authorizedDocument(pool,actor,req.params.id);
+      await requireCurrentDocumentReader(req,identity,actor,pool,doc);
+      res.set({'Cache-Control':'private, no-store, max-age=0','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"});
+      res.status(200).type('html').send(salesDocumentPrintHtml(doc.snapshot_json));
+    }catch(e){next(e)}
+  });
+}
+export const customerSalesDocumentInternals={merchantPermission,authorizedDocument,queueDocument};
